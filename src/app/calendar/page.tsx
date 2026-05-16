@@ -1,19 +1,36 @@
 import { getOrCreateDevUser } from "@/lib/dev-user";
 import { listTodos } from "@/lib/services/todo";
 import { listReminders } from "@/lib/services/reminder";
-import { listCategories } from "@/lib/services/category";
-import { DashboardClient } from "@/components/dashboard/dashboard-client";
+import { getEvents } from "@/lib/services/calendar";
+import { CalendarClient } from "@/components/calendar/calendar-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function Dashboard() {
+export default async function CalendarPage() {
   const user = await getOrCreateDevUser();
 
-  const [todos, reminders, categories] = await Promise.all([
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+
+  const [todos, reminders] = await Promise.all([
     listTodos(user.id),
     listReminders(user.id, { status: "pending" }),
-    listCategories(user.id),
   ]);
+
+  let googleEvents: Array<{ id: string; title: string; startTime: string; endTime: string }> = [];
+  if (user.googleRefreshToken) {
+    try {
+      googleEvents = await getEvents(
+        user.googleRefreshToken,
+        user.googleCalendarId ?? "primary",
+        monthStart,
+        monthEnd
+      );
+    } catch {
+      // Token may be expired or revoked — fail silently, show connect prompt
+    }
+  }
 
   const serializedTodos = todos.map((t) => ({
     id: t.id,
@@ -34,11 +51,11 @@ export default async function Dashboard() {
   }));
 
   return (
-    <DashboardClient
-      userName={user.telegramUsername}
+    <CalendarClient
       todos={serializedTodos}
       reminders={serializedReminders}
-      eventCount={0}
+      googleEvents={googleEvents}
+      hasGoogleCalendar={!!user.googleRefreshToken}
     />
   );
 }

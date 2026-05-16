@@ -147,7 +147,6 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
-    overscroll-behavior-y: contain;
   }
   html {
     @apply font-sans;
@@ -156,7 +155,7 @@
 
 /* Telegram mini-app viewport */
 @layer base {
-  html, body {
+  html {
     max-width: 100vw;
     overflow-x: hidden;
   }
@@ -231,5 +230,5 @@
 
 /* Safe area for mobile */
 .safe-bottom {
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 6rem);
 }

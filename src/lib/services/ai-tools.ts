@@ -96,6 +96,20 @@ export const AI_TOOLS = [
     },
   },
   {
+    name: "create_calendar_event",
+    description: "Create a new event on the user's Google Calendar",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Event title/summary" },
+        start_time: { type: "string", description: "ISO 8601 datetime for event start" },
+        end_time: { type: "string", description: "ISO 8601 datetime for event end" },
+        description: { type: "string", description: "Optional event description" },
+      },
+      required: ["title", "start_time", "end_time"],
+    },
+  },
+  {
     name: "suggest_schedule",
     description: "Suggest optimal times to work on pending todos based on free calendar slots",
     parameters: {
@@ -131,7 +145,7 @@ User: ${user.telegramUsername}
 Timezone: ${user.timezone}
 Current time: ${new Date().toISOString()}
 
-You can create todos, set reminders, check the calendar, and suggest schedule optimizations.
+You can create todos, set reminders, create and check calendar events, and suggest schedule optimizations.
 When the user mentions a time without a date, assume today.
 When the user says "tomorrow", use the next calendar day in their timezone.
 Always confirm what you did after performing an action.

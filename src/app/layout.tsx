@@ -42,9 +42,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${cormorant.variable} ${dmSans.variable} ${geistMono.variable} h-full`}
+      className={`${cormorant.variable} ${dmSans.variable} ${geistMono.variable}`}
     >
-      <body className="noise-overlay min-h-full flex flex-col antialiased">
+      <body className="noise-overlay min-h-dvh antialiased">
         {children}
       </body>
     </html>

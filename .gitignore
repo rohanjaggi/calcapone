@@ -47,3 +47,6 @@ src/generated/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+#others
+.claude/

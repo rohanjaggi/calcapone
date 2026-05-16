@@ -15,7 +15,7 @@ export function getAuthUrl(state: string): string {
   return client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
-    scope: ["https://www.googleapis.com/auth/calendar.readonly"],
+    scope: ["https://www.googleapis.com/auth/calendar.events"],
     state,
   });
 }
@@ -24,6 +24,36 @@ export async function exchangeCode(code: string) {
   const client = getOAuthClient();
   const { tokens } = await client.getToken(code);
   return tokens;
+}
+
+export async function createEvent(
+  encryptedRefreshToken: string,
+  calendarId: string,
+  event: { title: string; startTime: string; endTime: string; description?: string }
+) {
+  const refreshToken = decrypt(encryptedRefreshToken);
+  if (!refreshToken) throw new Error("Could not decrypt refresh token");
+
+  const client = getOAuthClient();
+  client.setCredentials({ refresh_token: refreshToken });
+
+  const calendar = google.calendar({ version: "v3", auth: client });
+  const response = await calendar.events.insert({
+    calendarId: calendarId || "primary",
+    requestBody: {
+      summary: event.title,
+      description: event.description,
+      start: { dateTime: event.startTime },
+      end: { dateTime: event.endTime },
+    },
+  });
+
+  return {
+    id: response.data.id!,
+    title: response.data.summary ?? event.title,
+    startTime: response.data.start?.dateTime ?? event.startTime,
+    endTime: response.data.end?.dateTime ?? event.endTime,
+  };
 }
 
 export async function getEvents(

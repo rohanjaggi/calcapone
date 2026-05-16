@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react";
 import { Calendar, CheckCircle2, Bell, ArrowRight } from "lucide-react";
+import Link from "next/link";
 import type { TimelineItem } from "@/lib/mock-data";
 
 function formatTime(iso: string) {
@@ -126,10 +127,10 @@ export function DayTimeline({ items }: { items: TimelineItem[] }) {
         <h2 className="font-serif text-xl font-normal text-foreground">
           Today
         </h2>
-        <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <Link href="/calendar" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
           Full schedule
           <ArrowRight className="w-3 h-3" />
-        </button>
+        </Link>
       </div>
 
       <div className="relative space-y-3">

@@ -6,7 +6,7 @@ import { sendMessage } from "@/lib/services/telegram";
 import { createTodo, listTodos, updateTodo, deleteTodo } from "@/lib/services/todo";
 import { createReminder, listReminders, cancelReminder } from "@/lib/services/reminder";
 import { createCategory, listCategories } from "@/lib/services/category";
-import { getEvents } from "@/lib/services/calendar";
+import { getEvents, createEvent } from "@/lib/services/calendar";
 import type { TelegramUpdate } from "@/lib/services/telegram";
 import type { TodoStatus, Priority, RecurringType, ReminderStatus } from "@/generated/prisma/enums";
 
@@ -141,6 +141,21 @@ async function executeToolCall(
       );
       if (events.length === 0) return "No events in that time range.";
       return events.map((e) => `- ${e.title} (${e.startTime})`).join("\n");
+    }
+
+    case "create_calendar_event": {
+      if (!user.googleRefreshToken) return "Google Calendar not connected. Connect it in Settings.";
+      const event = await createEvent(
+        user.googleRefreshToken,
+        user.googleCalendarId ?? "primary",
+        {
+          title: args.title as string,
+          startTime: args.start_time as string,
+          endTime: args.end_time as string,
+          description: args.description as string | undefined,
+        }
+      );
+      return `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString()})`;
     }
 
     case "create_category": {

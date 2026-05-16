@@ -3,6 +3,9 @@
 import { motion } from "motion/react";
 import { ArrowRight, Circle, Loader2, CheckCircle2 } from "lucide-react";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { toggleTodoStatus } from "@/app/actions";
 import type { Todo } from "@/lib/mock-data";
 
 const priorityColors: Record<string, string> = {
@@ -105,15 +108,17 @@ function TodoItem({
 
 export function TodoSection({ todos }: { todos: Todo[] }) {
   const [items, setItems] = useState(todos);
+  const router = useRouter();
 
-  const handleToggle = (id: string) => {
+  const handleToggle = async (id: string) => {
+    const todo = items.find((t) => t.id === id);
+    if (!todo) return;
+    const newStatus = todo.status === "done" ? "pending" : "done";
     setItems((prev) =>
-      prev.map((t) =>
-        t.id === id
-          ? { ...t, status: t.status === "done" ? "pending" : "done" as const }
-          : t
-      )
+      prev.map((t) => (t.id === id ? { ...t, status: newStatus as Todo["status"] } : t))
     );
+    await toggleTodoStatus(id, newStatus as "pending" | "done");
+    router.refresh();
   };
 
   const activeTodos = items.filter((t) => t.status !== "done");
@@ -131,10 +136,10 @@ export function TodoSection({ todos }: { todos: Todo[] }) {
         <h2 className="font-serif text-xl font-normal text-foreground">
           Tasks
         </h2>
-        <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <Link href="/todos" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
           See all
           <ArrowRight className="w-3 h-3" />
-        </button>
+        </Link>
       </div>
 
       <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">

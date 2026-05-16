@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react";
 import { ArrowRight, Bell, Repeat } from "lucide-react";
+import Link from "next/link";
 import type { Reminder } from "@/lib/mock-data";
 
 function formatTimeUntil(iso: string) {
@@ -112,10 +113,10 @@ export function ReminderSection({ reminders }: { reminders: Reminder[] }) {
         <h2 className="font-serif text-xl font-normal text-foreground">
           Reminders
         </h2>
-        <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <Link href="/todos" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
           See all
           <ArrowRight className="w-3 h-3" />
-        </button>
+        </Link>
       </div>
 
       <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
