@@ -4,6 +4,7 @@ import { findOrCreateUser, decryptUserApiKey } from "@/lib/services/user";
 import { chatWithAi } from "@/lib/services/ai";
 import { sendMessage } from "@/lib/services/telegram";
 import { executeToolCall } from "@/lib/services/execute-tool";
+import { parseSlashCommand, handleCommand } from "@/lib/services/commands";
 import type { TelegramUpdate } from "@/lib/services/telegram";
 
 export async function POST(request: NextRequest) {
@@ -24,24 +25,40 @@ export async function POST(request: NextRequest) {
 
   const user = await findOrCreateUser(telegramId, username);
   const aiApiKey = decryptUserApiKey(user.aiApiKey);
+  const aiConfig = { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel };
 
   try {
-    const { text, toolCalls } = await chatWithAi(
-      message.text,
-      { telegramUsername: user.telegramUsername, timezone: user.timezone },
-      { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel }
-    );
+    const parsed = parseSlashCommand(message.text);
 
-    const results: string[] = [];
-
-    for (const call of toolCalls) {
-      const result = await executeToolCall(call.name, call.args, user.id, user);
-      if (result) results.push(result);
-    }
-
-    const response = [text, ...results].filter(Boolean).join("\n\n");
-    if (response) {
+    if (parsed) {
+      const response = await handleCommand(parsed, {
+        userId: user.id,
+        user: {
+          telegramUsername: user.telegramUsername,
+          timezone: user.timezone,
+          googleRefreshToken: user.googleRefreshToken,
+          googleCalendarId: user.googleCalendarId,
+        },
+        aiConfig,
+      });
       await sendMessage(chatId, response);
+    } else {
+      const { text, toolCalls } = await chatWithAi(
+        message.text,
+        { telegramUsername: user.telegramUsername, timezone: user.timezone },
+        aiConfig
+      );
+
+      const results: string[] = [];
+      for (const call of toolCalls) {
+        const result = await executeToolCall(call.name, call.args, user.id, user);
+        if (result) results.push(result);
+      }
+
+      const response = [text, ...results].filter(Boolean).join("\n\n");
+      if (response) {
+        await sendMessage(chatId, response);
+      }
     }
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : "Something went wrong";

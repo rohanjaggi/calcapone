@@ -3,13 +3,9 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import { AI_TOOLS, buildSystemPrompt } from "./ai-tools";
+import { PROVIDER_DEFAULTS } from "@/lib/models";
 
-export const PROVIDER_DEFAULTS: Record<string, string> = {
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-4-6-20250514",
-  gemini: "gemini-2.5-flash",
-  openrouter: "openai/gpt-4o",
-};
+export { PROVIDER_DEFAULTS };
 
 type AiConfig = {
   provider: string | null;

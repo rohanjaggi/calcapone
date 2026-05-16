@@ -3,7 +3,8 @@
 import { Greeting } from "@/components/dashboard/greeting";
 import { StatsRow } from "@/components/dashboard/stats-row";
 import { DayTimeline } from "@/components/dashboard/day-timeline";
-import { ItemsSection } from "@/components/dashboard/todo-section";
+import { AiInput } from "@/components/dashboard/ai-input";
+import { AiRecommendation } from "@/components/dashboard/ai-recommendation";
 import { NavBar } from "@/components/nav-bar";
 import type { Item, TimelineItem } from "@/lib/mock-data";
 
@@ -45,8 +46,9 @@ export function DashboardClient({ userName, items, eventCount }: Props) {
     <main className="safe-bottom pb-8">
       <Greeting name={userName} />
       <StatsRow taskCount={pendingItems} eventCount={eventCount} reminderCount={pendingReminders} />
+      <AiInput />
       <DayTimeline items={timeline} />
-      <ItemsSection items={items} />
+      <AiRecommendation items={items} />
       <NavBar />
     </main>
   );

@@ -6,24 +6,27 @@ vi.mock("@/lib/services/ai", () => ({
 vi.mock("@/lib/services/execute-tool", () => ({
   executeToolCall: vi.fn(),
 }));
-vi.mock("@/lib/services/item", () => ({ createItem: vi.fn() }));
+vi.mock("@/lib/services/item", () => ({ createItem: vi.fn(), listItems: vi.fn(), updateItem: vi.fn() }));
 vi.mock("@/lib/services/category", () => ({ listCategories: vi.fn(), createCategory: vi.fn() }));
-vi.mock("@/lib/services/calendar", () => ({ createEvent: vi.fn() }));
+vi.mock("@/lib/services/calendar", () => ({ createEvent: vi.fn(), getEvents: vi.fn() }));
 
-import { handleTodo, handleRemind, handleEvent } from "@/lib/services/commands/handlers";
+import { handleTodo, handleRemind, handleEvent, handleDone, handleToday, handleList } from "@/lib/services/commands/handlers";
 import type { CommandContext } from "@/lib/services/commands";
 import { chatWithAi } from "@/lib/services/ai";
 import { executeToolCall } from "@/lib/services/execute-tool";
-import { createItem } from "@/lib/services/item";
+import { createItem, listItems, updateItem } from "@/lib/services/item";
 import { listCategories, createCategory } from "@/lib/services/category";
-import { createEvent } from "@/lib/services/calendar";
+import { createEvent, getEvents } from "@/lib/services/calendar";
 
 const mockChatWithAi = vi.mocked(chatWithAi);
 const mockExecuteToolCall = vi.mocked(executeToolCall);
 const mockCreateItem = vi.mocked(createItem);
+const mockListItems = vi.mocked(listItems);
+const mockUpdateItem = vi.mocked(updateItem);
 const mockListCategories = vi.mocked(listCategories);
 const mockCreateCategory = vi.mocked(createCategory);
 const mockCreateEvent = vi.mocked(createEvent);
+const mockGetEvents = vi.mocked(getEvents);
 
 const ctx: CommandContext = {
   userId: "u1",
@@ -253,5 +256,171 @@ describe("handleEvent", () => {
 
     expect(result).toContain("Usage");
     expect(mockCreateItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleDone", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const makeItem = (id: string, title: string) => ({
+    id,
+    title,
+    userId: "u1",
+    categoryId: "c1",
+    description: null,
+    status: "pending" as const,
+    priority: "medium" as const,
+    dueDate: null,
+    dueTime: null,
+    remindAt: null,
+    recurring: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    category: { id: "c1", name: "General", userId: "u1", color: null, createdAt: new Date() },
+  });
+
+  it("returns usage hint when body is empty", async () => {
+    const result = await handleDone("", ctx);
+    expect(result).toContain("Usage");
+    expect(mockListItems).not.toHaveBeenCalled();
+  });
+
+  it("completes a matching item by fuzzy title", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Buy groceries"), makeItem("i2", "Call dentist")]);
+    mockUpdateItem.mockResolvedValue(makeItem("i1", "Buy groceries") as never);
+
+    const result = await handleDone("groceries", ctx);
+
+    expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { status: "done" });
+    expect(result).toContain("Buy groceries");
+    expect(result).toContain("Completed");
+  });
+
+  it("returns not-found message when no match", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Buy groceries")]);
+
+    const result = await handleDone("dentist", ctx);
+
+    expect(result).toContain("dentist");
+    expect(result).toContain("No pending task");
+    expect(mockUpdateItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleToday", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore" }).format(new Date());
+
+  const makeItem = (overrides: Partial<{
+    id: string;
+    title: string;
+    dueDate: string | null;
+    remindAt: Date | null;
+    dueTime: string | null;
+  }>) => ({
+    id: "i1",
+    title: "Test task",
+    userId: "u1",
+    categoryId: "c1",
+    description: null,
+    status: "pending" as const,
+    priority: "medium" as const,
+    dueDate: null,
+    dueTime: null,
+    remindAt: null,
+    recurring: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    category: { id: "c1", name: "General", userId: "u1", color: null, createdAt: new Date() },
+    ...overrides,
+  });
+
+  it("shows tasks due today", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem({ id: "i1", title: "Morning standup", dueDate: todayStr, remindAt: null }),
+    ]);
+
+    const result = await handleToday(ctx);
+
+    expect(result).toContain("Morning standup");
+    expect(result).toContain("Tasks due today");
+  });
+
+  it("shows empty message when nothing scheduled", async () => {
+    mockListItems.mockResolvedValue([]);
+
+    const result = await handleToday(ctx);
+
+    expect(result).toBe("Nothing scheduled for today!");
+  });
+
+  it("includes Google Calendar events when connected", async () => {
+    const ctxWithGcal: CommandContext = {
+      ...ctx,
+      user: { ...ctx.user, googleRefreshToken: "enc-token", googleCalendarId: "primary" },
+    };
+    mockListItems.mockResolvedValue([]);
+    mockGetEvents.mockResolvedValue([
+      { id: "e1", title: "Team sync", startTime: "10:00 AM", endTime: "10:30 AM", description: null },
+    ]);
+
+    const result = await handleToday(ctxWithGcal);
+
+    expect(mockGetEvents).toHaveBeenCalledWith(
+      "enc-token",
+      "primary",
+      expect.any(Date),
+      expect.any(Date)
+    );
+    expect(result).toContain("Team sync");
+    expect(result).toContain("Calendar");
+  });
+});
+
+describe("handleList", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const makeItem = (id: string, title: string, remindAt: Date | null = null, dueDate: string | null = null) => ({
+    id,
+    title,
+    userId: "u1",
+    categoryId: "c1",
+    description: null,
+    status: "pending" as const,
+    priority: "medium" as const,
+    dueDate,
+    dueTime: null,
+    remindAt,
+    recurring: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    category: { id: "c1", name: "General", userId: "u1", color: null, createdAt: new Date() },
+  });
+
+  it("lists pending items by default", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Buy milk"), makeItem("i2", "Write tests")]);
+
+    const result = await handleList("", ctx);
+
+    expect(mockListItems).toHaveBeenCalledWith("u1", { status: "pending" });
+    expect(result).toContain("Buy milk");
+    expect(result).toContain("Write tests");
+  });
+
+  it("lists all items when body is 'all'", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Buy milk"), makeItem("i2", "Done task")]);
+
+    await handleList("all", ctx);
+
+    expect(mockListItems).toHaveBeenCalledWith("u1", {});
+  });
+
+  it("returns empty message when no items", async () => {
+    mockListItems.mockResolvedValue([]);
+
+    const result = await handleList("", ctx);
+
+    expect(result).toBe("No items found.");
   });
 });

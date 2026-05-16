@@ -36,6 +36,31 @@ export async function setWebhook(url: string, secret: string) {
   return res.json();
 }
 
+export async function setMyCommands() {
+  const commands = [
+    { command: "todo", description: "Create a todo — /todo buy groceries by Friday" },
+    { command: "remind", description: "Set a reminder — /remind medication daily 9am" },
+    { command: "event", description: "Create calendar event — /event lunch tomorrow noon" },
+    { command: "done", description: "Complete a task — /done buy groceries" },
+    { command: "today", description: "Today's agenda" },
+    { command: "list", description: "List pending tasks" },
+    { command: "help", description: "Show available commands" },
+  ];
+
+  const res = await fetch(`${TELEGRAM_API}${getToken()}/setMyCommands`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ commands }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram setMyCommands failed: ${res.status} ${body}`);
+  }
+
+  return res.json();
+}
+
 export type TelegramUpdate = {
   update_id: number;
   message?: {

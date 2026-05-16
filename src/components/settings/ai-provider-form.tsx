@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { Key, Eye, EyeOff, Check, Cpu } from "lucide-react";
+import { AI_MODELS } from "@/lib/models";
 
 const PROVIDERS = [
-  { value: "openai", label: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"] },
-  { value: "anthropic", label: "Anthropic", models: ["claude-sonnet-4-6-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-6-20250514"] },
-  { value: "gemini", label: "Gemini", models: ["gemini-2.5-flash", "gemini-2.5-pro"] },
-  { value: "openrouter", label: "OpenRouter", models: ["openai/gpt-4o", "anthropic/claude-sonnet-4-6", "google/gemini-2.5-flash"] },
-] as const;
+  { value: "openai",      label: "OpenAI",      models: AI_MODELS.openai },
+  { value: "anthropic",   label: "Anthropic",   models: AI_MODELS.anthropic },
+  { value: "gemini",      label: "Gemini",      models: AI_MODELS.gemini },
+  { value: "openrouter",  label: "OpenRouter",  models: AI_MODELS.openrouter },
+];
 
 type Props = {
   currentProvider: string | null;
@@ -22,7 +23,7 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
   const [provider, setProvider] = useState(currentProvider ?? "openai");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
-  const [model, setModel] = useState(currentModel ?? PROVIDERS[0].models[0]);
+  const [model, setModel] = useState(currentModel ?? PROVIDERS[0].models[0].id);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -31,7 +32,7 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
   const handleProviderChange = (value: string) => {
     setProvider(value);
     const p = PROVIDERS.find((pr) => pr.value === value);
-    if (p) setModel(p.models[0]);
+    if (p) setModel(p.models[0].id);
   };
 
   const handleSave = async () => {
@@ -81,8 +82,8 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Model</label>
           <div className="flex flex-wrap gap-1.5">
             {selectedProvider.models.map((m) => (
-              <button key={m} onClick={() => setModel(m)} className={`px-2.5 py-1 rounded-md text-xs border transition-all duration-150 ${model === m ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}>
-                {m}
+              <button key={m.id} onClick={() => setModel(m.id)} className={`px-2.5 py-1 rounded-md text-xs border transition-all duration-150 ${model === m.id ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}>
+                {m.label}
               </button>
             ))}
           </div>

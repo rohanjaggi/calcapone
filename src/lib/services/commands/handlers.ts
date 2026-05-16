@@ -1,8 +1,9 @@
 import { chatWithAi } from "@/lib/services/ai";
 import { executeToolCall } from "@/lib/services/execute-tool";
-import { createItem } from "@/lib/services/item";
+import { createItem, listItems, updateItem } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
-import { createEvent } from "@/lib/services/calendar";
+import { createEvent, getEvents } from "@/lib/services/calendar";
+import type { ItemStatus } from "@/generated/prisma/enums";
 import type { CommandContext } from "./index";
 
 const COMMAND_PROMPTS: Record<string, string> = {
@@ -123,19 +124,92 @@ export async function handleEvent(body: string, ctx: CommandContext): Promise<st
 }
 
 export async function handleDone(
-  _body: string,
-  _ctx: CommandContext
+  body: string,
+  ctx: CommandContext
 ): Promise<string> {
-  return "Not implemented";
+  if (!body) return "Usage: /done task name";
+
+  const items = await listItems(ctx.userId, { status: "pending" as ItemStatus });
+  const match = items.find((item) =>
+    item.title.toLowerCase().includes(body.toLowerCase())
+  );
+
+  if (!match) return `No pending task matching "${body}"`;
+
+  await updateItem(match.id, ctx.userId, { status: "done" as ItemStatus });
+  return `Completed: **${match.title}**`;
 }
 
-export async function handleToday(_ctx: CommandContext): Promise<string> {
-  return "Not implemented";
+export async function handleToday(ctx: CommandContext): Promise<string> {
+  const now = new Date();
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: ctx.user.timezone }).format(now);
+
+  const items = await listItems(ctx.userId, { status: "pending" as ItemStatus });
+
+  const todayTasks = items.filter((item) => item.dueDate === todayStr && !item.remindAt);
+  const todayReminders = items.filter((item) => {
+    if (!item.remindAt) return false;
+    const remindDate = new Intl.DateTimeFormat("en-CA", { timeZone: ctx.user.timezone }).format(item.remindAt);
+    return remindDate === todayStr;
+  });
+
+  const parts: string[] = [];
+
+  if (todayTasks.length > 0) {
+    parts.push("*Tasks due today:*");
+    todayTasks.forEach((item) => {
+      const time = item.dueTime ? ` at ${item.dueTime}` : "";
+      parts.push(`- ${item.title}${time}`);
+    });
+  }
+
+  if (todayReminders.length > 0) {
+    parts.push("\n*Reminders today:*");
+    todayReminders.forEach((item) => {
+      const time = item.remindAt
+        ? ` at ${new Intl.DateTimeFormat("en-US", { timeZone: ctx.user.timezone, hour: "2-digit", minute: "2-digit" }).format(item.remindAt)}`
+        : "";
+      parts.push(`- ${item.title}${time}`);
+    });
+  }
+
+  if (ctx.user.googleRefreshToken) {
+    try {
+      const startOfDay = new Date(`${todayStr}T00:00:00`);
+      const endOfDay = new Date(`${todayStr}T23:59:59`);
+      const events = await getEvents(
+        ctx.user.googleRefreshToken,
+        ctx.user.googleCalendarId ?? "primary",
+        startOfDay,
+        endOfDay
+      );
+      if (events.length > 0) {
+        parts.push("\n*Calendar:*");
+        events.forEach((e) => parts.push(`- ${e.title} (${e.startTime})`));
+      }
+    } catch {
+      // Skip if calendar fetch fails
+    }
+  }
+
+  if (parts.length === 0) return "Nothing scheduled for today!";
+  return parts.join("\n");
 }
 
 export async function handleList(
-  _body: string,
-  _ctx: CommandContext
+  body: string,
+  ctx: CommandContext
 ): Promise<string> {
-  return "Not implemented";
+  const filters = body === "all" ? {} : { status: "pending" as ItemStatus };
+  const items = await listItems(ctx.userId, filters);
+
+  if (items.length === 0) return "No items found.";
+
+  return items
+    .map((item, i) => {
+      const icon = item.remindAt ? "🔔" : "📋";
+      const due = item.dueDate ? ` (${item.dueDate})` : "";
+      return `${i + 1}. ${icon} ${item.title}${due}`;
+    })
+    .join("\n");
 }
