@@ -3,12 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { findOrCreateUser, decryptUserApiKey } from "@/lib/services/user";
 import { chatWithAi } from "@/lib/services/ai";
 import { sendMessage } from "@/lib/services/telegram";
-import { createTodo, listTodos, updateTodo, deleteTodo } from "@/lib/services/todo";
-import { createReminder, listReminders, cancelReminder } from "@/lib/services/reminder";
+import { createItem, listItems, updateItem, deleteItem } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
 import { getEvents, createEvent } from "@/lib/services/calendar";
 import type { TelegramUpdate } from "@/lib/services/telegram";
-import type { TodoStatus, Priority, RecurringType, ReminderStatus } from "@/generated/prisma/enums";
+import type { Priority, RecurringType, ItemStatus } from "@/generated/prisma/enums";
 
 export async function POST(request: NextRequest) {
   const secret = request.headers.get("x-telegram-bot-api-secret-token");
@@ -62,73 +61,57 @@ async function executeToolCall(
   user: { googleRefreshToken: string | null; googleCalendarId: string | null; timezone: string }
 ): Promise<string | null> {
   switch (name) {
-    case "create_todo": {
-      const todo = await createTodo({
+    case "create_item": {
+      const categoryName = args.category as string;
+      let cats = await listCategories(userId);
+      let cat = cats.find((c) => c.name.toLowerCase() === categoryName.toLowerCase());
+      if (!cat) {
+        cat = await createCategory({ userId, name: categoryName });
+      }
+      const item = await createItem({
         userId,
+        categoryId: cat.id,
         title: args.title as string,
         description: (args.description as string) ?? null,
-        priority: (args.priority as Priority) ?? undefined,
-        dueDate: args.due_date ? new Date(args.due_date as string) : null,
+        priority: (args.priority as Priority) ?? "medium",
+        dueDate: (args.due_date as string) ?? null,
+        dueTime: (args.due_time as string) ?? null,
+        remindAt: args.remind_at ? new Date(args.remind_at as string) : null,
+        recurring: (args.recurring as RecurringType) ?? "none",
       });
-      return `Created todo: **${todo.title}**`;
+      const label = item.remindAt ? "Reminder" : "Task";
+      return `Created ${label}: **${item.title}** in ${cat.name}`;
     }
 
-    case "list_todos": {
-      const todos = await listTodos(userId, {
-        status: args.status as TodoStatus | undefined,
+    case "list_items": {
+      const items = await listItems(userId, {
+        status: args.status as ItemStatus | undefined,
       });
-      if (todos.length === 0) return "No todos found.";
-      return todos.map((t, i) => `${i + 1}. [${t.status}] ${t.title}`).join("\n");
+      if (items.length === 0) return "No items found.";
+      return items.map((item, i) => {
+        const icon = item.remindAt ? "🔔" : "📋";
+        return `${i + 1}. ${icon} [${item.status}] ${item.title}`;
+      }).join("\n");
     }
 
-    case "complete_todo": {
-      const todos = await listTodos(userId, { status: "pending" as TodoStatus });
-      const match = todos.find((t) =>
-        t.title.toLowerCase().includes((args.title as string).toLowerCase())
+    case "complete_item": {
+      const items = await listItems(userId, { status: "pending" as ItemStatus });
+      const match = items.find((item) =>
+        item.title.toLowerCase().includes((args.title as string).toLowerCase())
       );
-      if (!match) return `Couldn't find a todo matching "${args.title}"`;
-      await updateTodo(match.id, userId, { status: "done" as TodoStatus });
+      if (!match) return `Couldn't find an item matching "${args.title}"`;
+      await updateItem(match.id, userId, { status: "done" as ItemStatus });
       return `Completed: **${match.title}**`;
     }
 
-    case "delete_todo": {
-      const todos = await listTodos(userId);
-      const match = todos.find((t) =>
-        t.title.toLowerCase().includes((args.title as string).toLowerCase())
+    case "delete_item": {
+      const items = await listItems(userId);
+      const match = items.find((item) =>
+        item.title.toLowerCase().includes((args.title as string).toLowerCase())
       );
-      if (!match) return `Couldn't find a todo matching "${args.title}"`;
-      await deleteTodo(match.id, userId);
+      if (!match) return `Couldn't find an item matching "${args.title}"`;
+      await deleteItem(match.id, userId);
       return `Deleted: **${match.title}**`;
-    }
-
-    case "create_reminder": {
-      const reminder = await createReminder({
-        userId,
-        message: args.message as string,
-        remindAt: new Date(args.remind_at as string),
-        recurring: (args.recurring as RecurringType) ?? undefined,
-      });
-      return `Reminder set: **${reminder.message}**`;
-    }
-
-    case "list_reminders": {
-      const reminders = await listReminders(userId, {
-        status: (args.status as ReminderStatus) ?? ("pending" as ReminderStatus),
-      });
-      if (reminders.length === 0) return "No reminders found.";
-      return reminders
-        .map((r) => `- ${r.message} (${new Date(r.remindAt).toLocaleString()})`)
-        .join("\n");
-    }
-
-    case "cancel_reminder": {
-      const reminders = await listReminders(userId, { status: "pending" as ReminderStatus });
-      const match = reminders.find((r) =>
-        r.message.toLowerCase().includes((args.message as string).toLowerCase())
-      );
-      if (!match) return `Couldn't find a reminder matching "${args.message}"`;
-      await cancelReminder(match.id, userId);
-      return `Cancelled reminder: **${match.message}**`;
     }
 
     case "get_calendar": {

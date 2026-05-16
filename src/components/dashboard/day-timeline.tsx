@@ -24,17 +24,17 @@ function isPast(time: string) {
   return new Date(time).getTime() < Date.now();
 }
 
-const typeIcon = {
-  event: Calendar,
-  todo: CheckCircle2,
-  reminder: Bell,
-};
+function getTypeIcon(item: TimelineItem) {
+  if (item.type === "event") return Calendar;
+  if (item.isReminder) return Bell;
+  return CheckCircle2;
+}
 
-const typeLabel = {
-  event: "Event",
-  todo: "Task",
-  reminder: "Reminder",
-};
+function getTypeLabel(item: TimelineItem) {
+  if (item.type === "event") return "Event";
+  if (item.isReminder) return "Reminder";
+  return "Task";
+}
 
 function TimelineCard({
   item,
@@ -45,7 +45,7 @@ function TimelineCard({
   index: number;
   showNow: boolean;
 }) {
-  const Icon = typeIcon[item.type];
+  const Icon = getTypeIcon(item);
   const past = isPast(item.time);
 
   return (
@@ -98,7 +98,7 @@ function TimelineCard({
               className="text-[10px] font-medium tracking-wider uppercase"
               style={{ color: item.color }}
             >
-              {typeLabel[item.type]}
+              {getTypeLabel(item)}
             </span>
           </div>
           <p className="text-sm font-medium text-foreground truncate">

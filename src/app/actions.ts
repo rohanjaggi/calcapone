@@ -1,34 +1,42 @@
 "use server";
 
-import { createTodo, updateTodo, deleteTodo } from "@/lib/services/todo";
+import { createItem, updateItem, deleteItem } from "@/lib/services/item";
 import { getOrCreateDevUser } from "@/lib/dev-user";
 import { createCategory, listCategories } from "@/lib/services/category";
-import type { TodoStatus, Priority } from "@/generated/prisma/enums";
+import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
 
-export async function toggleTodoStatus(todoId: string, newStatus: TodoStatus) {
+export async function toggleItemStatus(itemId: string, newStatus: ItemStatus) {
   const user = await getOrCreateDevUser();
-  await updateTodo(todoId, user.id, { status: newStatus });
+  await updateItem(itemId, user.id, { status: newStatus });
 }
 
-export async function addTodo(data: {
+export async function addItem(data: {
   title: string;
+  categoryId: string;
   priority: Priority;
-  categoryId?: string | null;
+  description?: string | null;
   dueDate?: string | null;
+  dueTime?: string | null;
+  remindAt?: string | null;
+  recurring?: RecurringType;
 }) {
   const user = await getOrCreateDevUser();
-  await createTodo({
+  await createItem({
     userId: user.id,
+    categoryId: data.categoryId,
     title: data.title,
     priority: data.priority,
-    categoryId: data.categoryId ?? null,
-    dueDate: data.dueDate ? new Date(data.dueDate) : null,
+    description: data.description ?? null,
+    dueDate: data.dueDate ?? null,
+    dueTime: data.dueTime ?? null,
+    remindAt: data.remindAt ? new Date(data.remindAt) : null,
+    recurring: data.recurring ?? "none",
   });
 }
 
-export async function removeTodo(todoId: string) {
+export async function removeItem(itemId: string) {
   const user = await getOrCreateDevUser();
-  await deleteTodo(todoId, user.id);
+  await deleteItem(itemId, user.id);
 }
 
 export async function addCategory(name: string, color: string) {

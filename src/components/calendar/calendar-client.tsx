@@ -12,7 +12,7 @@ import {
   LinkIcon,
 } from "lucide-react";
 import { NavBar } from "@/components/nav-bar";
-import type { Todo, Reminder } from "@/lib/mock-data";
+import type { Item } from "@/lib/mock-data";
 
 type GoogleEvent = { id: string; title: string; startTime: string; endTime: string };
 
@@ -39,13 +39,12 @@ function formatTime(iso: string) {
 }
 
 type Props = {
-  todos: Todo[];
-  reminders: Reminder[];
+  items: Item[];
   googleEvents: GoogleEvent[];
   hasGoogleCalendar: boolean;
 };
 
-export function CalendarClient({ todos, reminders, googleEvents, hasGoogleCalendar }: Props) {
+export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -56,77 +55,76 @@ export function CalendarClient({ todos, reminders, googleEvents, hasGoogleCalend
 
   const datesWithItems = useMemo(() => {
     const dates = new Set<string>();
-    for (const t of todos) {
-      if (t.dueDate) {
-        const d = new Date(t.dueDate);
-        dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+    for (const item of items) {
+      if (item.dueDate) {
+        // dueDate is "YYYY-MM-DD" string — parse it
+        const [y, m, d] = item.dueDate.split("-").map(Number);
+        dates.add(`${y}-${m - 1}-${d}`); // month is 0-indexed in our key
       }
-    }
-    for (const r of reminders) {
-      const d = new Date(r.remindAt);
-      dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+      if (item.remindAt) {
+        const dt = new Date(item.remindAt);
+        dates.add(`${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`);
+      }
     }
     for (const e of googleEvents) {
       const d = new Date(e.startTime);
       dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
     }
     return dates;
-  }, [todos, reminders, googleEvents]);
+  }, [items, googleEvents]);
 
   const selectedItems = useMemo(() => {
-    const items: Array<{ id: string; type: "todo" | "reminder" | "event"; title: string; time: string | null; endTime?: string; color: string; subtitle: string }> = [];
+    const result: Array<{ id: string; type: "event" | "item"; title: string; time: string | null; color: string; subtitle: string; isReminder: boolean }> = [];
 
     for (const e of googleEvents) {
       if (isSameDay(new Date(e.startTime), selectedDate)) {
         const start = new Date(e.startTime);
         const end = new Date(e.endTime);
         const duration = Math.round((end.getTime() - start.getTime()) / 60000);
-        items.push({
-          id: e.id,
-          type: "event",
-          title: e.title,
-          time: e.startTime,
-          endTime: e.endTime,
-          color: "#4A6FA5",
-          subtitle: `${duration} min`,
+        result.push({
+          id: e.id, type: "event", title: e.title, time: e.startTime,
+          color: "#4A6FA5", subtitle: `${duration} min`, isReminder: false,
         });
       }
     }
 
-    for (const t of todos) {
-      if (t.dueDate && isSameDay(new Date(t.dueDate), selectedDate)) {
-        items.push({
-          id: t.id,
-          type: "todo",
-          title: t.title,
-          time: t.dueDate,
-          color: t.category?.color ?? "#92785C",
-          subtitle: `${t.category?.name ?? "Uncategorized"} · ${t.priority}`,
+    for (const item of items) {
+      // Check if item falls on selected day via dueDate or remindAt
+      let matchesDay = false;
+      let itemTime: string | null = null;
+
+      if (item.dueDate) {
+        const [y, m, d] = item.dueDate.split("-").map(Number);
+        if (isSameDay(new Date(y, m - 1, d), selectedDate)) {
+          matchesDay = true;
+          if (item.dueTime) {
+            itemTime = `${item.dueDate}T${item.dueTime}:00`;
+          }
+        }
+      }
+
+      if (item.remindAt && isSameDay(new Date(item.remindAt), selectedDate)) {
+        matchesDay = true;
+        itemTime = item.remindAt;
+      }
+
+      if (matchesDay) {
+        result.push({
+          id: item.id, type: "item", title: item.title, time: itemTime,
+          color: item.category.color, subtitle: `${item.category.name} · ${item.priority}`,
+          isReminder: !!item.remindAt,
         });
       }
     }
 
-    for (const r of reminders) {
-      if (isSameDay(new Date(r.remindAt), selectedDate)) {
-        items.push({
-          id: r.id,
-          type: "reminder",
-          title: r.message,
-          time: r.remindAt,
-          color: r.category?.color ?? "#B87D6B",
-          subtitle: r.recurring !== "none" ? `${r.recurring} · ${r.category?.name ?? ""}` : r.category?.name ?? "",
-        });
-      }
-    }
-
-    items.sort((a, b) => {
+    result.sort((a, b) => {
       if (!a.time) return 1;
       if (!b.time) return -1;
       return new Date(a.time).getTime() - new Date(b.time).getTime();
     });
 
-    return items;
-  }, [todos, reminders, googleEvents, selectedDate]);
+    return result;
+  }, [items, googleEvents, selectedDate]);
 
   const prevMonth = () => {
     if (viewMonth === 0) { setViewYear(viewYear - 1); setViewMonth(11); }
@@ -140,7 +138,7 @@ export function CalendarClient({ todos, reminders, googleEvents, hasGoogleCalend
 
   const isToday = (day: number) => isSameDay(new Date(viewYear, viewMonth, day), today);
   const isSelected = (day: number) => isSameDay(new Date(viewYear, viewMonth, day), selectedDate);
-  const hasItems = (day: number) => datesWithItems.has(`${viewYear}-${viewMonth}-${day}`);
+  const hasItemsOnDay = (day: number) => datesWithItems.has(`${viewYear}-${viewMonth}-${day}`);
 
   return (
     <main className="safe-bottom pb-8">
@@ -199,7 +197,7 @@ export function CalendarClient({ todos, reminders, googleEvents, hasGoogleCalend
               const day = i + 1;
               const selected = isSelected(day);
               const todayMark = isToday(day);
-              const hasItem = hasItems(day);
+              const hasItem = hasItemsOnDay(day);
 
               return (
                 <button
@@ -246,7 +244,7 @@ export function CalendarClient({ todos, reminders, googleEvents, hasGoogleCalend
         ) : (
           <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
             {selectedItems.map((item, i) => {
-              const Icon = item.type === "event" ? Calendar : item.type === "todo" ? CheckCircle2 : Bell;
+              const Icon = item.type === "event" ? Calendar : item.isReminder ? Bell : CheckCircle2;
               return (
                 <motion.div
                   key={item.id}

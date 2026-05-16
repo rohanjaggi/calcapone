@@ -1,44 +1,25 @@
 import { getOrCreateDevUser } from "@/lib/dev-user";
-import { listTodos } from "@/lib/services/todo";
-import { listReminders } from "@/lib/services/reminder";
-import { listCategories } from "@/lib/services/category";
+import { listItems } from "@/lib/services/item";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
   const user = await getOrCreateDevUser();
+  const items = await listItems(user.id);
 
-  const [todos, reminders, categories] = await Promise.all([
-    listTodos(user.id),
-    listReminders(user.id, { status: "pending" }),
-    listCategories(user.id),
-  ]);
-
-  const serializedTodos = todos.map((t) => ({
-    id: t.id,
-    title: t.title,
-    status: t.status,
-    priority: t.priority,
-    category: t.category ? { name: t.category.name, color: t.category.color ?? "#92785C" } : null,
-    dueDate: t.dueDate?.toISOString() ?? null,
+  const serializedItems = items.map((item) => ({
+    id: item.id,
+    title: item.title,
+    description: item.description,
+    status: item.status,
+    priority: item.priority,
+    category: { id: item.category.id, name: item.category.name, color: item.category.color ?? "#92785C" },
+    dueDate: item.dueDate,
+    dueTime: item.dueTime,
+    remindAt: item.remindAt?.toISOString() ?? null,
+    recurring: item.recurring,
   }));
 
-  const serializedReminders = reminders.map((r) => ({
-    id: r.id,
-    message: r.message,
-    remindAt: r.remindAt.toISOString(),
-    recurring: r.recurring,
-    status: r.status,
-    category: r.category ? { name: r.category.name, color: r.category.color ?? "#B87D6B" } : null,
-  }));
-
-  return (
-    <DashboardClient
-      userName={user.telegramUsername}
-      todos={serializedTodos}
-      reminders={serializedReminders}
-      eventCount={0}
-    />
-  );
+  return <DashboardClient userName={user.telegramUsername} items={serializedItems} eventCount={0} />;
 }

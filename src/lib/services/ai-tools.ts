@@ -1,37 +1,26 @@
 // src/lib/services/ai-tools.ts
 export const AI_TOOLS = [
   {
-    name: "create_todo",
-    description: "Create a new todo/task for the user",
+    name: "create_item",
+    description: "Create a new task or reminder for the user. If remind_at is provided, it becomes a reminder that triggers a Telegram notification.",
     parameters: {
       type: "object" as const,
       properties: {
-        title: { type: "string", description: "The todo title" },
+        title: { type: "string", description: "The item title" },
         description: { type: "string", description: "Optional longer description" },
         priority: { type: "string", enum: ["low", "medium", "high"], description: "Priority level" },
-        category: { type: "string", description: "Category name (e.g. Work, Personal)" },
-        due_date: { type: "string", description: "ISO 8601 datetime for when this is due" },
+        category: { type: "string", description: "Category name (e.g. Work, Personal). Required." },
+        due_date: { type: "string", description: "Due date in YYYY-MM-DD format" },
+        due_time: { type: "string", description: "Due time in HH:mm format (24h)" },
+        remind_at: { type: "string", description: "ISO 8601 datetime to send a Telegram reminder notification" },
+        recurring: { type: "string", enum: ["none", "daily", "weekly", "monthly"], description: "Recurrence pattern for reminders" },
       },
-      required: ["title"],
+      required: ["title", "category"],
     },
   },
   {
-    name: "create_reminder",
-    description: "Set a reminder for the user at a specific time",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        message: { type: "string", description: "What to remind the user about" },
-        remind_at: { type: "string", description: "ISO 8601 datetime for when to send the reminder" },
-        recurring: { type: "string", enum: ["none", "daily", "weekly", "monthly"], description: "Recurrence pattern" },
-        category: { type: "string", description: "Category name" },
-      },
-      required: ["message", "remind_at"],
-    },
-  },
-  {
-    name: "list_todos",
-    description: "List the user's todos, optionally filtered",
+    name: "list_items",
+    description: "List the user's tasks and reminders, optionally filtered by status or category",
     parameters: {
       type: "object" as const,
       properties: {
@@ -41,46 +30,25 @@ export const AI_TOOLS = [
     },
   },
   {
-    name: "complete_todo",
-    description: "Mark a todo as done",
+    name: "complete_item",
+    description: "Mark a task or reminder as done",
     parameters: {
       type: "object" as const,
       properties: {
-        title: { type: "string", description: "The title of the todo to complete (fuzzy match)" },
+        title: { type: "string", description: "The title of the item to complete (fuzzy match)" },
       },
       required: ["title"],
     },
   },
   {
-    name: "delete_todo",
-    description: "Delete a todo",
+    name: "delete_item",
+    description: "Delete a task or reminder",
     parameters: {
       type: "object" as const,
       properties: {
-        title: { type: "string", description: "The title of the todo to delete (fuzzy match)" },
+        title: { type: "string", description: "The title of the item to delete (fuzzy match)" },
       },
       required: ["title"],
-    },
-  },
-  {
-    name: "list_reminders",
-    description: "List the user's pending reminders",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        status: { type: "string", enum: ["pending", "sent", "cancelled"] },
-      },
-    },
-  },
-  {
-    name: "cancel_reminder",
-    description: "Cancel a pending reminder",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        message: { type: "string", description: "The reminder message to cancel (fuzzy match)" },
-      },
-      required: ["message"],
     },
   },
   {
@@ -145,7 +113,7 @@ User: ${user.telegramUsername}
 Timezone: ${user.timezone}
 Current time: ${new Date().toISOString()}
 
-You can create todos, set reminders, create and check calendar events, and suggest schedule optimizations.
+You can create items (tasks and reminders), create and check calendar events, and suggest schedule optimizations.
 When the user mentions a time without a date, assume today.
 When the user says "tomorrow", use the next calendar day in their timezone.
 Always confirm what you did after performing an action.

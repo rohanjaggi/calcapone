@@ -1,5 +1,5 @@
 import { getOrCreateDevUser } from "@/lib/dev-user";
-import { listTodos } from "@/lib/services/todo";
+import { listItems } from "@/lib/services/item";
 import { listCategories } from "@/lib/services/category";
 import { TodosClient } from "@/components/todos/todos-client";
 
@@ -7,19 +7,22 @@ export const dynamic = "force-dynamic";
 
 export default async function TodosPage() {
   const user = await getOrCreateDevUser();
-
-  const [todos, categories] = await Promise.all([
-    listTodos(user.id),
+  const [items, categories] = await Promise.all([
+    listItems(user.id),
     listCategories(user.id),
   ]);
 
-  const serializedTodos = todos.map((t) => ({
-    id: t.id,
-    title: t.title,
-    status: t.status,
-    priority: t.priority,
-    category: t.category ? { name: t.category.name, color: t.category.color ?? "#92785C" } : null,
-    dueDate: t.dueDate?.toISOString() ?? null,
+  const serializedItems = items.map((item) => ({
+    id: item.id,
+    title: item.title,
+    description: item.description,
+    status: item.status,
+    priority: item.priority,
+    category: { id: item.category.id, name: item.category.name, color: item.category.color ?? "#92785C" },
+    dueDate: item.dueDate,
+    dueTime: item.dueTime,
+    remindAt: item.remindAt?.toISOString() ?? null,
+    recurring: item.recurring,
   }));
 
   const serializedCategories = categories.map((c) => ({
@@ -28,7 +31,5 @@ export default async function TodosPage() {
     color: c.color ?? "#92785C",
   }));
 
-  return (
-    <TodosClient todos={serializedTodos} categories={serializedCategories} />
-  );
+  return <TodosClient items={serializedItems} categories={serializedCategories} />;
 }

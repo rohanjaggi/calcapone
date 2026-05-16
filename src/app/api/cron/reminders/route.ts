@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDueReminders, markSent, createNextOccurrence, createReminder } from "@/lib/services/reminder";
+import { getDueItems, markItemSent, createNextOccurrence, createItem } from "@/lib/services/item";
 import { sendMessage } from "@/lib/services/telegram";
 
 export async function POST(request: NextRequest) {
@@ -9,28 +9,31 @@ export async function POST(request: NextRequest) {
   }
 
   const now = new Date();
-  const dueReminders = await getDueReminders(now);
+  const dueItems = await getDueItems(now);
   let sent = 0;
   let errors = 0;
 
-  for (const reminder of dueReminders) {
+  for (const item of dueItems) {
     try {
       await sendMessage(
-        reminder.user.telegramId,
-        `🔔 *Reminder:* ${reminder.message}`
+        Number(item.user.telegramId),
+        `🔔 *Reminder:* ${item.title}`
       );
-      await markSent(reminder.id);
+      await markItemSent(item.id);
       sent++;
 
-      if (reminder.recurring !== "none") {
-        const nextDate = createNextOccurrence(reminder.remindAt, reminder.recurring);
-        await createReminder({
-          userId: reminder.userId,
-          message: reminder.message,
+      if (item.recurring !== "none") {
+        const nextDate = createNextOccurrence(item.remindAt!, item.recurring);
+        await createItem({
+          userId: item.userId,
+          categoryId: item.categoryId,
+          title: item.title,
+          description: item.description,
+          priority: item.priority,
+          dueDate: item.dueDate,
+          dueTime: item.dueTime,
           remindAt: nextDate,
-          recurring: reminder.recurring,
-          categoryId: reminder.categoryId,
-          todoId: reminder.todoId,
+          recurring: item.recurring,
         });
       }
     } catch {
@@ -38,5 +41,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ processed: dueReminders.length, sent, errors });
+  return NextResponse.json({ processed: dueItems.length, sent, errors });
 }
