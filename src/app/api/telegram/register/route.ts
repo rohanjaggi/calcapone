@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setWebhook, setMyCommands } from "@/lib/services/telegram";
+import { setWebhook, setMyCommands, setChatMenuButton } from "@/lib/services/telegram";
 
 export async function POST(request: NextRequest) {
   const secret = request.headers.get("authorization");
@@ -18,9 +18,11 @@ export async function POST(request: NextRequest) {
   );
 
   const commandsResult = await setMyCommands();
+  const menuResult = await setChatMenuButton(baseUrl);
 
   return NextResponse.json({
     webhook: webhookResult,
     commands: commandsResult,
+    menu: menuResult,
   });
 }

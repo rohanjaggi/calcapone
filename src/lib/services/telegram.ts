@@ -61,6 +61,27 @@ export async function setMyCommands() {
   return res.json();
 }
 
+export async function setChatMenuButton(webAppUrl: string) {
+  const res = await fetch(`${TELEGRAM_API}${getToken()}/setChatMenuButton`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      menu_button: {
+        type: "web_app",
+        text: "Open Calcapone",
+        web_app: { url: webAppUrl },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram setChatMenuButton failed: ${res.status} ${body}`);
+  }
+
+  return res.json();
+}
+
 export type TelegramUpdate = {
   update_id: number;
   message?: {
