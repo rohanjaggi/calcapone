@@ -13,7 +13,7 @@ model User {
   telegramUsername    String     @map("telegram_username")
   googleRefreshToken  String?    @map("google_refresh_token")
   googleCalendarId    String?    @map("google_calendar_id")
-  timezone            String     @default("UTC")
+  timezone            String     @default("Asia/Singapore")
   briefingEnabled     Boolean    @default(false) @map("briefing_enabled")
   briefingTime        String?    @map("briefing_time")
   aiProvider          AiProvider? @map("ai_provider")

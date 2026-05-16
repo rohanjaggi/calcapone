@@ -2,7 +2,7 @@
 
 import { motion } from "motion/react";
 import { Home, ListTodo, CalendarDays, Settings } from "lucide-react";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 
 const navItems = [
   { icon: Home, label: "Home", href: "/" },
@@ -12,7 +12,8 @@ const navItems = [
 ];
 
 export function NavBar() {
-  const [active, setActive] = useState(0);
+  const pathname = usePathname();
+  const router = useRouter();
 
   return (
     <motion.nav
@@ -27,14 +28,14 @@ export function NavBar() {
     >
       <div className="mx-4 mb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
         <div className="bg-card/80 backdrop-blur-xl border border-border/50 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] px-2 py-1.5 flex items-center justify-around">
-          {navItems.map((item, i) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = i === active;
+            const isActive = pathname === item.href;
 
             return (
               <button
                 key={item.label}
-                onClick={() => setActive(i)}
+                onClick={() => router.push(item.href)}
                 className="relative flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-colors duration-200 active:scale-95"
               >
                 {isActive && (

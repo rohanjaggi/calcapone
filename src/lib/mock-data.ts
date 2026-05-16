@@ -44,7 +44,7 @@ const base = `${yyyy}-${mm}-${dd}`;
 
 export const mockUser = {
   name: "Rohan",
-  timezone: "America/New_York",
+  timezone: "Asia/Singapore",
 };
 
 export const mockCategories = [

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { Globe, Check } from "lucide-react";
 
-const COMMON_TIMEZONES = ["America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","Europe/London","Europe/Paris","Europe/Berlin","Asia/Tokyo","Asia/Shanghai","Asia/Kolkata","Asia/Dubai","Australia/Sydney","Pacific/Auckland"];
+const COMMON_TIMEZONES = ["Asia/Singapore","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","Europe/London","Europe/Paris","Europe/Berlin","Asia/Tokyo","Asia/Shanghai","Asia/Kolkata","Asia/Dubai","Australia/Sydney","Pacific/Auckland"];
 
 type Props = { currentTimezone: string; onSave: (timezone: string) => Promise<void> };
 

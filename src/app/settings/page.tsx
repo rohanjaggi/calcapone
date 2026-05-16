@@ -7,7 +7,7 @@ import { GoogleCalendarCard } from "@/components/settings/google-calendar-card";
 import { NavBar } from "@/components/nav-bar";
 
 const mockSettings = {
-  timezone: "America/New_York",
+  timezone: "Asia/Singapore",
   briefingEnabled: false,
   briefingTime: null as string | null,
   aiProvider: null as string | null,
