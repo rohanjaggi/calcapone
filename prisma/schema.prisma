@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  String     @id @default(uuid()) @db.Uuid
+  telegramId          BigInt     @unique @map("telegram_id")
+  telegramUsername    String     @map("telegram_username")
+  googleRefreshToken  String?    @map("google_refresh_token")
+  googleCalendarId    String?    @map("google_calendar_id")
+  timezone            String     @default("UTC")
+  briefingEnabled     Boolean    @default(false) @map("briefing_enabled")
+  briefingTime        String?    @map("briefing_time")
+  aiProvider          AiProvider? @map("ai_provider")
+  aiApiKey            String?     @map("ai_api_key")
+  aiModel             String?     @map("ai_model")
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  categories Category[]
+  todos      Todo[]
+  reminders  Reminder[]
+
+  @@map("users")
+}
+
+enum TodoStatus {
+  pending
+  in_progress
+  done
+}
+
+enum Priority {
+  low
+  medium
+  high
+}
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  color     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  todos     Todo[]
+  reminders Reminder[]
+
+  @@unique([userId, name])
+  @@map("categories")
+}
+
+model Todo {
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String     @map("user_id") @db.Uuid
+  categoryId  String?    @map("category_id") @db.Uuid
+  title       String
+  description String?
+  status      TodoStatus @default(pending)
+  priority    Priority   @default(medium)
+  dueDate     DateTime?  @map("due_date") @db.Timestamptz
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  reminders Reminder[]
+
+  @@map("todos")
+}
+
+enum RecurringType {
+  none
+  daily
+  weekly
+  monthly
+}
+
+enum ReminderStatus {
+  pending
+  sent
+  cancelled
+}
+
+enum AiProvider {
+  openai
+  anthropic
+  gemini
+  openrouter
+}
+
+model Reminder {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String         @map("user_id") @db.Uuid
+  categoryId String?        @map("category_id") @db.Uuid
+  todoId     String?        @map("todo_id") @db.Uuid
+  message    String
+  remindAt   DateTime       @map("remind_at") @db.Timestamptz
+  recurring  RecurringType  @default(none)
+  status     ReminderStatus @default(pending)
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  todo     Todo?     @relation(fields: [todoId], references: [id], onDelete: SetNull)
+
+  @@map("reminders")
+}
