@@ -5,8 +5,6 @@ import {
   handleDone,
   handleToday,
   handleList,
-  handleStart,
-  handleHelp,
 } from "./handlers";
 
 export type ParsedCommand = {
@@ -51,7 +49,7 @@ export function parseSlashCommand(text: string): ParsedCommand | null {
 
   return {
     command,
-    body: match[2] ?? "",
+    body: match[2]?.trim() ?? "",
   };
 }
 
@@ -73,21 +71,21 @@ export async function handleCommand(
 ): Promise<string> {
   switch (parsed.command) {
     case "todo":
-      return handleTodo(parsed, ctx);
+      return handleTodo(parsed.body, ctx);
     case "remind":
-      return handleRemind(parsed, ctx);
+      return handleRemind(parsed.body, ctx);
     case "event":
-      return handleEvent(parsed, ctx);
+      return handleEvent(parsed.body, ctx);
     case "done":
-      return handleDone(parsed, ctx);
+      return handleDone(parsed.body, ctx);
     case "today":
-      return handleToday(parsed, ctx);
+      return handleToday(ctx);
     case "list":
-      return handleList(parsed, ctx);
+      return handleList(parsed.body, ctx);
     case "start":
-      return handleStart(parsed, ctx);
+      return HELP_TEXT;
     case "help":
-      return handleHelp(parsed, ctx);
+      return HELP_TEXT;
     default:
       return `Unknown command: /${parsed.command}`;
   }

@@ -76,6 +76,11 @@ describe("parseSlashCommand", () => {
     const result = parseSlashCommand("/123notacommand");
     expect(result).toBeNull();
   });
+
+  it("trims whitespace from body", () => {
+    const result = parseSlashCommand("/todo   buy milk   ");
+    expect(result).toEqual({ command: "todo", body: "buy milk" });
+  });
 });
 
 describe("COMMANDS", () => {
