@@ -14,7 +14,8 @@ import {
   Loader2,
 } from "lucide-react";
 import Link from "next/link";
-import { toggleItemStatus, addItem, addCategory } from "@/app/actions";
+import { Trash2 } from "lucide-react";
+import { toggleItemStatus, addItem, addCategory, removeItem } from "@/app/actions";
 import { NavBar } from "@/components/nav-bar";
 import type { Item } from "@/lib/mock-data";
 import type { Priority } from "@/generated/prisma/enums";
@@ -33,6 +34,12 @@ const priorityLabels: Record<string, string> = {
 
 type Category = { id: string; name: string; color: string };
 
+const COLOR_PRESETS = [
+  "#E74C3C", "#E67E22", "#F1C40F", "#2ECC71", "#1ABC9C",
+  "#3498DB", "#9B59B6", "#E84393", "#00B894", "#6C5CE7",
+  "#FDA7DF", "#FD9644", "#778CA3", "#A55EEA", "#26DE81",
+];
+
 const statusIcon = {
   pending: Circle,
   in_progress: Loader2,
@@ -50,10 +57,12 @@ function ItemRow({
   item,
   index,
   onToggle,
+  onDelete,
 }: {
   item: Item;
   index: number;
   onToggle: (id: string, current: Item["status"]) => void;
+  onDelete: (id: string) => void;
 }) {
   const Icon = statusIcon[item.status];
   const isDone = item.status === "done";
@@ -99,6 +108,18 @@ function ItemRow({
           {item.title}
         </p>
       </div>
+
+      {isDone && (
+        <motion.button
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.2 }}
+          onClick={() => onDelete(item.id)}
+          className="shrink-0 text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all duration-150"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </motion.button>
+      )}
     </motion.div>
   );
 }
@@ -108,11 +129,13 @@ function CategoryCard({
   items,
   cardIndex,
   onToggle,
+  onDelete,
 }: {
   category: Category;
   items: Item[];
   cardIndex: number;
   onToggle: (id: string, current: Item["status"]) => void;
+  onDelete: (id: string) => void;
 }) {
   const activeItems = items.filter((i) => i.status !== "done");
   const doneItems = items.filter((i) => i.status === "done");
@@ -126,16 +149,22 @@ function CategoryCard({
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: cardIndex * 0.08 + 0.1 }}
       className="bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden"
     >
-      {/* Card header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30">
+      {/* Card header with count + link */}
+      <Link
+        href={`/todos/${category.id}`}
+        className="flex items-center gap-2 px-4 py-3 border-b border-border/30 group"
+      >
         <span
           className="w-2.5 h-2.5 rounded-full shrink-0"
           style={{ backgroundColor: category.color }}
         />
-        <span className="text-sm font-medium text-foreground">{category.name}</span>
-      </div>
+        <span className="text-sm font-medium text-foreground flex-1">{category.name}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {count === 1 ? "1 task" : `${count} tasks`}
+        </span>
+        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform duration-150" />
+      </Link>
 
-      {/* Items */}
       {sorted.length === 0 ? (
         <div className="px-4 py-4 text-[13px] text-muted-foreground/50 italic">
           No tasks
@@ -143,21 +172,10 @@ function CategoryCard({
       ) : (
         <div>
           {sorted.map((item, i) => (
-            <ItemRow key={item.id} item={item} index={i} onToggle={onToggle} />
+            <ItemRow key={item.id} item={item} index={i} onToggle={onToggle} onDelete={onDelete} />
           ))}
         </div>
       )}
-
-      {/* Footer: count + link */}
-      <Link
-        href={`/todos/${category.id}`}
-        className="flex items-center justify-between px-4 py-2.5 border-t border-border/30 text-muted-foreground hover:text-foreground transition-colors group"
-      >
-        <span className="text-[12px]">
-          {count === 1 ? "1 task" : `${count} tasks`}
-        </span>
-        <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform duration-150" />
-      </Link>
     </motion.div>
   );
 }
@@ -237,7 +255,7 @@ function CreateItemSheet({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[55]"
             onClick={onClose}
           />
           <motion.div
@@ -245,7 +263,7 @@ function CreateItemSheet({
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
-            className="fixed bottom-0 left-0 right-0 z-50 bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
+            className="fixed bottom-0 left-0 right-0 z-[60] bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
           >
             <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
             <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
@@ -331,26 +349,37 @@ function CreateItemSheet({
                         exit={{ opacity: 0, height: 0 }}
                         className="overflow-hidden"
                       >
-                        <div className="flex gap-2 mt-1">
-                          <input
-                            type="text"
-                            value={newCategoryName}
-                            onChange={(e) => setNewCategoryName(e.target.value)}
-                            placeholder="Category name"
-                            className="flex-1 h-9 px-3 rounded-lg border border-border/60 bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                          />
-                          <input
-                            type="color"
-                            value={newCategoryColor}
-                            onChange={(e) => setNewCategoryColor(e.target.value)}
-                            className="w-9 h-9 rounded-lg border border-border/60 bg-background cursor-pointer p-1"
-                          />
-                          <button
-                            onClick={handleAddCategory}
-                            className="h-9 px-3 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
-                          >
-                            Add
-                          </button>
+                        <div className="space-y-2 mt-1">
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newCategoryName}
+                              onChange={(e) => setNewCategoryName(e.target.value)}
+                              placeholder="Category name"
+                              className="flex-1 h-9 px-3 rounded-lg border border-border/60 bg-background text-xs focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                            />
+                            <button
+                              onClick={handleAddCategory}
+                              className="h-9 px-3 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                            >
+                              Add
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-3">
+                            {COLOR_PRESETS.map((c) => (
+                              <button
+                                key={c}
+                                onClick={() => setNewCategoryColor(c)}
+                                className="w-7 h-7 rounded-full flex items-center justify-center transition-opacity duration-150"
+                                style={{ opacity: newCategoryColor === c ? 1 : 0.5 }}
+                              >
+                                <span
+                                  className="w-5 h-5 rounded-full"
+                                  style={{ backgroundColor: c, boxShadow: newCategoryColor === c ? `0 0 0 2.5px var(--background), 0 0 0 4.5px ${c}` : "none" }}
+                                />
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </motion.div>
                     )}
@@ -493,6 +522,12 @@ export function TodosClient({ items: initialItems, categories }: Props) {
     router.refresh();
   };
 
+  const handleDelete = async (id: string) => {
+    setItems((prev) => prev.filter((item) => item.id !== id));
+    await removeItem(id);
+    router.refresh();
+  };
+
   return (
     <main className="safe-bottom pb-8">
       {/* Header */}
@@ -535,6 +570,7 @@ export function TodosClient({ items: initialItems, categories }: Props) {
               items={catItems}
               cardIndex={i}
               onToggle={handleToggle}
+              onDelete={handleDelete}
             />
           ))
         )}
@@ -546,6 +582,7 @@ export function TodosClient({ items: initialItems, categories }: Props) {
             items={orphaned}
             cardIndex={grouped.length}
             onToggle={handleToggle}
+            onDelete={handleDelete}
           />
         )}
       </div>
