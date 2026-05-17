@@ -144,10 +144,15 @@ export async function handleToday(ctx: CommandContext): Promise<string> {
   const now = new Date();
   const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: ctx.user.timezone }).format(now);
 
-  const items = await listItems(ctx.userId, { status: "pending" as ItemStatus });
+  const allPending = await listItems(ctx.userId, { status: "pending" as ItemStatus });
 
-  const todayTasks = items.filter((item) => item.dueDate === todayStr && !item.remindAt);
-  const todayReminders = items.filter((item) => {
+  const overdue = allPending.filter(
+    (item) => item.dueDate && item.dueDate < todayStr && !item.remindAt
+  );
+  const todayItems = allPending.filter(
+    (item) => item.dueDate === todayStr && !item.remindAt
+  );
+  const todayReminders = allPending.filter((item) => {
     if (!item.remindAt) return false;
     const remindDate = new Intl.DateTimeFormat("en-CA", { timeZone: ctx.user.timezone }).format(item.remindAt);
     return remindDate === todayStr;
@@ -155,40 +160,48 @@ export async function handleToday(ctx: CommandContext): Promise<string> {
 
   const parts: string[] = [];
 
-  if (todayTasks.length > 0) {
-    parts.push("*Tasks due today:*");
-    todayTasks.forEach((item) => {
-      const time = item.dueTime ? ` at ${item.dueTime}` : "";
-      parts.push(`- ${item.title}${time}`);
+  if (overdue.length > 0) {
+    parts.push(`⚠️ *Overdue (${overdue.length})*`);
+    overdue.forEach((item) => {
+      parts.push(`• ${item.title} — due ${item.dueDate}`);
     });
   }
 
-  if (todayReminders.length > 0) {
-    parts.push("\n*Reminders today:*");
+  if (todayItems.length > 0 || todayReminders.length > 0) {
+    parts.push(`\n📋 *Today (${todayItems.length + todayReminders.length})*`);
+    todayItems.forEach((item) => {
+      const time = item.dueTime ? ` ${item.dueTime}` : "";
+      parts.push(`•${time} ${item.title}`);
+    });
     todayReminders.forEach((item) => {
       const time = item.remindAt
-        ? ` at ${new Intl.DateTimeFormat("en-US", { timeZone: ctx.user.timezone, hour: "2-digit", minute: "2-digit" }).format(item.remindAt)}`
+        ? ` ${new Intl.DateTimeFormat("en-US", { timeZone: ctx.user.timezone, hour: "2-digit", minute: "2-digit" }).format(item.remindAt)}`
         : "";
-      parts.push(`- ${item.title}${time}`);
+      parts.push(`• 🔔${time} ${item.title}`);
     });
   }
 
   if (ctx.user.googleRefreshToken) {
     try {
-      const startOfDay = new Date(`${todayStr}T00:00:00`);
-      const endOfDay = new Date(`${todayStr}T23:59:59`);
+      const startOfDay = new Date(`${todayStr}T00:00:00Z`);
+      const threeDaysOut = new Date(startOfDay);
+      threeDaysOut.setDate(startOfDay.getDate() + 3);
       const events = await getEvents(
         ctx.user.googleRefreshToken,
         ctx.user.googleCalendarId ?? "primary",
         startOfDay,
-        endOfDay
+        threeDaysOut
       );
-      if (events.length > 0) {
-        parts.push("\n*Calendar:*");
-        events.forEach((e) => parts.push(`- ${e.title} (${e.startTime})`));
+      const upcoming = events.slice(0, 3);
+      if (upcoming.length > 0) {
+        parts.push(`\n📅 *Next up*`);
+        upcoming.forEach((e) => {
+          const dateLabel = e.startTime.startsWith(todayStr) ? "Today" : e.startTime.slice(0, 10);
+          parts.push(`• ${dateLabel} ${e.startTime.slice(11, 16)} — ${e.title}`);
+        });
       }
     } catch {
-      // Skip if calendar fetch fails
+      // calendar fetch failure is non-fatal
     }
   }
 

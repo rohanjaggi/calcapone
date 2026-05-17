@@ -6,7 +6,6 @@ import { AiProviderForm } from "@/components/settings/ai-provider-form";
 import { TimezoneSelect } from "@/components/settings/timezone-select";
 import { BriefingConfig } from "@/components/settings/briefing-config";
 import { GoogleCalendarCard } from "@/components/settings/google-calendar-card";
-import { NavBar } from "@/components/nav-bar";
 import {
   saveAiConfig,
   saveTimezone,
@@ -95,7 +94,6 @@ export function SettingsClient({ userId, settings }: Props) {
           onDisconnect={handleDisconnectGoogle}
         />
       </div>
-      <NavBar />
     </main>
   );
 }

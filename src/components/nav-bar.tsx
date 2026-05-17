@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { motion } from "motion/react";
 import { Home, ListTodo, CalendarDays, Settings } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 const navItems = [
   { icon: Home, label: "Home", href: "/" },
@@ -13,7 +14,6 @@ const navItems = [
 
 export function NavBar() {
   const pathname = usePathname();
-  const router = useRouter();
 
   return (
     <motion.nav
@@ -33,9 +33,9 @@ export function NavBar() {
             const isActive = pathname === item.href;
 
             return (
-              <button
+              <Link
                 key={item.label}
-                onClick={() => router.push(item.href)}
+                href={item.href}
                 className="relative flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-colors duration-200 active:scale-95"
               >
                 {isActive && (
@@ -63,7 +63,7 @@ export function NavBar() {
                 >
                   {item.label}
                 </span>
-              </button>
+              </Link>
             );
           })}
         </div>

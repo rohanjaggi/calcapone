@@ -52,6 +52,23 @@ export const AI_TOOLS = [
     },
   },
   {
+    name: "update_item",
+    description: "Update an existing task or reminder. Use for rescheduling, snoozing, changing priority, or renaming. Fuzzy-matches on title.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "The title or partial title to find the item" },
+        title: { type: "string", description: "New title" },
+        due_date: { type: ["string", "null"] as unknown as "string", description: "New due date YYYY-MM-DD, or null to clear" },
+        due_time: { type: ["string", "null"] as unknown as "string", description: "New due time HH:mm, or null to clear" },
+        remind_at: { type: ["string", "null"] as unknown as "string", description: "New reminder ISO 8601 datetime, or null to clear" },
+        priority: { type: "string", enum: ["low", "medium", "high"], description: "New priority" },
+        status: { type: "string", enum: ["pending", "in_progress", "done"], description: "New status" },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "get_calendar",
     description: "Get the user's calendar events for a date range",
     parameters: {

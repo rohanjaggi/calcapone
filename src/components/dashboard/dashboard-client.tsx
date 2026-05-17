@@ -5,7 +5,6 @@ import { StatsRow } from "@/components/dashboard/stats-row";
 import { DayTimeline } from "@/components/dashboard/day-timeline";
 import { AiInput } from "@/components/dashboard/ai-input";
 import { AiRecommendation } from "@/components/dashboard/ai-recommendation";
-import { NavBar } from "@/components/nav-bar";
 import type { Item, TimelineItem } from "@/lib/mock-data";
 
 function buildTimeline(items: Item[]): TimelineItem[] {
@@ -49,7 +48,6 @@ export function DashboardClient({ userName, items, eventCount }: Props) {
       <AiInput />
       <DayTimeline items={timeline} />
       <AiRecommendation items={items} />
-      <NavBar />
     </main>
   );
 }

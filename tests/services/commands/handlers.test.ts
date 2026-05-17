@@ -344,7 +344,7 @@ describe("handleToday", () => {
     const result = await handleToday(ctx);
 
     expect(result).toContain("Morning standup");
-    expect(result).toContain("Tasks due today");
+    expect(result).toContain("Today");
   });
 
   it("shows empty message when nothing scheduled", async () => {
@@ -374,7 +374,47 @@ describe("handleToday", () => {
       expect.any(Date)
     );
     expect(result).toContain("Team sync");
-    expect(result).toContain("Calendar");
+    expect(result).toContain("Next up");
+  });
+
+  it("shows overdue section for items with dueDate before today", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem({ id: "i1", title: "Submit invoice", dueDate: "2026-05-01", remindAt: null }),
+    ]);
+
+    const result = await handleToday(ctx);
+
+    expect(result).toContain("Overdue");
+    expect(result).toContain("Submit invoice");
+  });
+
+  it("shows today section for items due today", async () => {
+    const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore" }).format(new Date());
+    mockListItems.mockResolvedValue([
+      makeItem({ id: "i2", title: "Team standup", dueDate: todayStr, dueTime: "10:00", remindAt: null }),
+    ]);
+
+    const result = await handleToday(ctx);
+
+    expect(result).toContain("Today");
+    expect(result).toContain("Team standup");
+    expect(result).not.toContain("Overdue");
+  });
+
+  it("separates overdue from today items", async () => {
+    const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore" }).format(new Date());
+    mockListItems.mockResolvedValue([
+      makeItem({ id: "i1", title: "Submit invoice", dueDate: "2026-05-01", remindAt: null }),
+      makeItem({ id: "i2", title: "Team standup", dueDate: todayStr, remindAt: null }),
+    ]);
+
+    const result = await handleToday(ctx);
+
+    const overduePos = result.indexOf("Overdue");
+    const todayPos = result.indexOf("Today");
+    expect(overduePos).toBeLessThan(todayPos);
+    expect(result).toContain("Submit invoice");
+    expect(result).toContain("Team standup");
   });
 });
 

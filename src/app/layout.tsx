@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, DM_Sans, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { NavBar } from "@/components/nav-bar";
 
 const cormorant = Cormorant_Garamond({
   variable: "--font-cormorant-garamond",
@@ -46,6 +47,7 @@ export default function RootLayout({
     >
       <body className="noise-overlay min-h-dvh antialiased">
         {children}
+        <NavBar />
       </body>
     </html>
   );

@@ -7,13 +7,15 @@ export type CalendarEvent = {
   color: string;
 };
 
+export type Category = { id: string; name: string; color: string };
+
 export type Item = {
   id: string;
   title: string;
   description: string | null;
   status: "pending" | "in_progress" | "done";
   priority: "low" | "medium" | "high";
-  category: { id: string; name: string; color: string };
+  category: Category;
   dueDate: string | null;
   dueTime: string | null;
   remindAt: string | null;

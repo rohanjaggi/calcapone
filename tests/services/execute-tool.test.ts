@@ -130,4 +130,88 @@ describe("executeToolCall", () => {
       expect(result).toBeNull();
     });
   });
+
+  describe("suggest_schedule", () => {
+    it("returns schedule suggestion when calendar connected", async () => {
+      const userWithCalendar = {
+        googleRefreshToken: "enc-token",
+        googleCalendarId: "primary",
+        timezone: "UTC",
+      };
+      mockListItems.mockResolvedValue([
+        { id: "i1", title: "Write report", priority: "high", dueDate: "2026-05-18", status: "pending", remindAt: null },
+      ]);
+      mockGetEvents.mockResolvedValue([
+        { title: "Standup", startTime: "2026-05-18T10:00:00Z", endTime: "2026-05-18T10:30:00Z" },
+      ]);
+
+      const result = await executeToolCall("suggest_schedule", {}, "u1", userWithCalendar);
+
+      expect(mockListItems).toHaveBeenCalledWith("u1", { status: "pending" });
+      expect(result).toContain("Write report");
+    });
+
+    it("returns helpful message when calendar not connected", async () => {
+      mockListItems.mockResolvedValue([
+        { id: "i1", title: "Write report", priority: "high", dueDate: "2026-05-18", status: "pending", remindAt: null },
+      ]);
+
+      const result = await executeToolCall("suggest_schedule", {}, "u1", baseUser);
+
+      expect(result).toContain("Write report");
+      expect(result).toContain("Connect Google Calendar");
+    });
+  });
+
+  describe("update_item", () => {
+    it("updates a matched item's dueDate", async () => {
+      mockListItems.mockResolvedValue([
+        { id: "i1", title: "Submit invoice", status: "pending" },
+        { id: "i2", title: "Buy milk", status: "pending" },
+      ]);
+      mockUpdateItem.mockResolvedValue({ id: "i1", title: "Submit invoice" });
+
+      const result = await executeToolCall(
+        "update_item",
+        { query: "invoice", due_date: "2026-05-20" },
+        "u1",
+        baseUser
+      );
+
+      expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { dueDate: "2026-05-20" });
+      expect(result).toBe("Updated: **Submit invoice**");
+    });
+
+    it("returns error when no item matches query", async () => {
+      mockListItems.mockResolvedValue([
+        { id: "i1", title: "Write report", status: "pending" },
+      ]);
+
+      const result = await executeToolCall(
+        "update_item",
+        { query: "dentist appointment" },
+        "u1",
+        baseUser
+      );
+
+      expect(mockUpdateItem).not.toHaveBeenCalled();
+      expect(result).toContain("Couldn't find an item matching");
+    });
+
+    it("only sends fields that were provided", async () => {
+      mockListItems.mockResolvedValue([
+        { id: "i1", title: "Gym session", status: "pending" },
+      ]);
+      mockUpdateItem.mockResolvedValue({ id: "i1", title: "Gym session" });
+
+      await executeToolCall(
+        "update_item",
+        { query: "gym", priority: "high" },
+        "u1",
+        baseUser
+      );
+
+      expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { priority: "high" });
+    });
+  });
 });

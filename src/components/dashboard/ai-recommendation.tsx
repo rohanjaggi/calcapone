@@ -13,13 +13,8 @@ type Props = {
 };
 
 export function AiRecommendation({ items }: Props) {
-  const [recommendation, setRecommendation] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      return sessionStorage.getItem(CACHE_KEY);
-    }
-    return null;
-  });
-  const [loading, setLoading] = useState(!recommendation);
+  const [recommendation, setRecommendation] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   const fetchRecommendation = async () => {
@@ -51,7 +46,11 @@ export function AiRecommendation({ items }: Props) {
   };
 
   useEffect(() => {
-    if (!recommendation) {
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
+      setRecommendation(cached);
+      setLoading(false);
+    } else {
       fetchRecommendation();
     }
   }, []);

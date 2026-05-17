@@ -64,6 +64,33 @@ export async function executeToolCall(
       return `Deleted: **${match.title}**`;
     }
 
+    case "update_item": {
+      const query = (args.query as string).toLowerCase();
+      const items = await listItems(userId, { status: "pending" as ItemStatus });
+      const match = items.find((item) =>
+        item.title.toLowerCase().includes(query)
+      );
+      if (!match) return `Couldn't find an item matching "${args.query}". Try a different title.`;
+
+      const updates: {
+        title?: string;
+        dueDate?: string | null;
+        dueTime?: string | null;
+        remindAt?: Date | null;
+        priority?: Priority;
+        status?: ItemStatus;
+      } = {};
+      if (args.title !== undefined) updates.title = args.title as string;
+      if (args.due_date !== undefined) updates.dueDate = args.due_date as string | null;
+      if (args.due_time !== undefined) updates.dueTime = args.due_time as string | null;
+      if (args.remind_at !== undefined) updates.remindAt = args.remind_at ? new Date(args.remind_at as string) : null;
+      if (args.priority !== undefined) updates.priority = args.priority as Priority;
+      if (args.status !== undefined) updates.status = args.status as ItemStatus;
+
+      const updated = await updateItem(match.id, userId, updates);
+      return `Updated: **${updated.title}**`;
+    }
+
     case "get_calendar": {
       if (!user.googleRefreshToken) return "Google Calendar not connected. Connect it in Settings.";
       const events = await getEvents(
@@ -106,8 +133,60 @@ export async function executeToolCall(
       return cats.map((c) => `- ${c.name}`).join("\n");
     }
 
-    case "suggest_schedule":
-      return "Schedule suggestions are coming soon!";
+    case "suggest_schedule": {
+      const pending = await listItems(userId, { status: "pending" as ItemStatus });
+      if (pending.length === 0) return "No pending tasks to schedule.";
+
+      const today = new Date();
+      const sevenDaysOut = new Date(today);
+      sevenDaysOut.setDate(today.getDate() + 7);
+
+      const taskLines = pending
+        .slice(0, 10)
+        .map((item) => `- ${item.title} (priority: ${item.priority}${item.dueDate ? `, due: ${item.dueDate}` : ""})`)
+        .join("\n");
+
+      if (!user.googleRefreshToken) {
+        return `Here are your pending tasks — Connect Google Calendar in Settings for time-slot suggestions:\n\n${taskLines}`;
+      }
+
+      const events = await getEvents(
+        user.googleRefreshToken,
+        user.googleCalendarId ?? "primary",
+        today,
+        sevenDaysOut
+      );
+
+      const workStart = 9;
+      const workEnd = 18;
+      const freeBlocks: string[] = [];
+
+      for (let d = 0; d < 7; d++) {
+        const day = new Date(today);
+        day.setDate(today.getDate() + d);
+        const dateStr = day.toISOString().split("T")[0];
+        const dayEvents = events
+          .filter((e) => e.startTime.startsWith(dateStr))
+          .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+        let cursor = workStart;
+        for (const ev of dayEvents) {
+          const evStart = parseInt(ev.startTime.slice(11, 13), 10);
+          const evEnd = parseInt(ev.endTime.slice(11, 13), 10);
+          if (cursor < evStart) {
+            freeBlocks.push(`${dateStr} ${cursor}:00–${evStart}:00`);
+          }
+          cursor = Math.max(cursor, evEnd);
+        }
+        if (cursor < workEnd) {
+          freeBlocks.push(`${dateStr} ${cursor}:00–${workEnd}:00`);
+        }
+      }
+
+      const freeLines = freeBlocks.slice(0, 6).join(", ") || "No free blocks found in working hours (9am–6pm)";
+
+      return `*Pending tasks:*\n${taskLines}\n\n*Free blocks this week:*\n${freeLines}\n\n*Suggested:* Work on your highest-priority tasks during morning free blocks. Consider blocking calendar time for deep work items.`;
+    }
 
     default:
       return null;

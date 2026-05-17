@@ -11,7 +11,6 @@ import {
   Bell,
   LinkIcon,
 } from "lucide-react";
-import { NavBar } from "@/components/nav-bar";
 import type { Item } from "@/lib/mock-data";
 
 type GoogleEvent = { id: string; title: string; startTime: string; endTime: string };
@@ -308,7 +307,6 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
         </motion.div>
       )}
 
-      <NavBar />
     </main>
   );
 }
