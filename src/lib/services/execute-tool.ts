@@ -13,11 +13,12 @@ export async function executeToolCall(
   switch (name) {
     case "create_item": {
       const categoryName = args.category as string;
-      let cats = await listCategories(userId);
+      const cats = await listCategories(userId);
       let cat = cats.find((c) => c.name.toLowerCase() === categoryName.toLowerCase());
       if (!cat) {
-        cat = await createCategory({ userId, name: categoryName });
+        cat = cats[0];
       }
+      if (!cat) return "No categories exist yet. Create one in the app first.";
       const item = await createItem({
         userId,
         categoryId: cat.id,
@@ -145,27 +146,6 @@ export async function executeToolCall(
         user.googleCalendarId ?? "primary",
         { title, startTime, endTime, description }
       );
-
-      // Also create an in-app item linked to the gcal event
-      const startDate = new Date(startTime);
-      const dueDate = startDate.toISOString().split("T")[0];
-      const dueTime = startDate.toTimeString().slice(0, 5);
-
-      let cats = await listCategories(userId);
-      let cat = cats.find((c) => c.name.toLowerCase() === "events");
-      if (!cat) {
-        cat = await createCategory({ userId, name: "Events" });
-      }
-
-      await createItem({
-        userId,
-        categoryId: cat.id,
-        title,
-        description: description ?? null,
-        dueDate,
-        dueTime,
-        googleEventId: event.id,
-      });
 
       return `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString()})`;
     }

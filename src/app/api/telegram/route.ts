@@ -5,6 +5,7 @@ import { chatWithAi } from "@/lib/services/ai";
 import { sendMessage } from "@/lib/services/telegram";
 import { executeToolCall } from "@/lib/services/execute-tool";
 import { parseSlashCommand, handleCommand } from "@/lib/services/commands";
+import { listCategories } from "@/lib/services/category";
 import type { TelegramUpdate } from "@/lib/services/telegram";
 
 export async function POST(request: NextRequest) {
@@ -43,9 +44,11 @@ export async function POST(request: NextRequest) {
       });
       await sendMessage(chatId, response);
     } else {
+      const categories = await listCategories(user.id);
+      const categoryNames = categories.map((c) => c.name);
       const { text, toolCalls } = await chatWithAi(
         message.text,
-        { telegramUsername: user.telegramUsername, timezone: user.timezone },
+        { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categoryNames },
         aiConfig
       );
 

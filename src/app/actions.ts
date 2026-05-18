@@ -169,6 +169,8 @@ export async function getAiRecommendation(items: Array<{ title: string; priority
 export async function aiAddItem(input: string, mode: "task" | "reminder" | "event") {
   const user = await getOrCreateDevUser();
   const aiApiKey = decryptUserApiKey(user.aiApiKey);
+  const categories = await listCategories(user.id);
+  const categoryNames = categories.map((c) => c.name);
 
   const modeHint = mode === "task"
     ? "The user wants to create a task/todo. Use the create_item tool WITHOUT remind_at."
@@ -180,7 +182,7 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
 
   const { text, toolCalls } = await chatWithAi(
     prompt,
-    { telegramUsername: user.telegramUsername, timezone: user.timezone },
+    { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categoryNames },
     { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel }
   );
 
@@ -192,7 +194,10 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
       const cats = await listCategories(user.id);
       let cat = cats.find((c) => c.name.toLowerCase() === categoryName.toLowerCase());
       if (!cat) {
-        cat = await createCategory({ userId: user.id, name: categoryName });
+        cat = cats[0];
+      }
+      if (!cat) {
+        return { success: false, message: "No categories exist yet. Create one in the app first." };
       }
       const item = await createItem({
         userId: user.id,
@@ -220,27 +225,6 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
         user.googleCalendarId ?? "primary",
         { title, startTime, endTime, description }
       );
-
-      // Create in-app item linked to gcal event
-      const startDate = new Date(startTime);
-      const dueDate = startDate.toISOString().split("T")[0];
-      const dueTime = startDate.toTimeString().slice(0, 5);
-
-      const cats = await listCategories(user.id);
-      let cat = cats.find((c: { name: string }) => c.name.toLowerCase() === "events");
-      if (!cat) {
-        cat = await createCategory({ userId: user.id, name: "Events" });
-      }
-
-      await createItem({
-        userId: user.id,
-        categoryId: cat.id,
-        title,
-        description: description ?? null,
-        dueDate,
-        dueTime,
-        googleEventId: event.id,
-      });
 
       results.push(`Event created: ${event.title}`);
     } else if (call.name === "create_category") {
