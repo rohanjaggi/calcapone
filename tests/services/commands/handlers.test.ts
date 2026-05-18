@@ -174,7 +174,7 @@ describe("handleEvent", () => {
 
   it("creates in-app item from AI-parsed event args", async () => {
     mockChatWithAi.mockResolvedValue({ text: "", toolCalls: [eventToolCall] });
-    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, createdAt: new Date() }]);
+    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() }]);
     mockCreateItem.mockResolvedValue({} as never);
 
     const result = await handleEvent("lunch with Sarah tomorrow at noon", ctx);
@@ -197,7 +197,7 @@ describe("handleEvent", () => {
       user: { ...ctx.user, googleRefreshToken: "enc-token", googleCalendarId: "primary" },
     };
     mockChatWithAi.mockResolvedValue({ text: "", toolCalls: [eventToolCall] });
-    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, createdAt: new Date() }]);
+    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() }]);
     mockCreateItem.mockResolvedValue({} as never);
     mockCreateEvent.mockResolvedValue({} as never);
 
@@ -213,7 +213,7 @@ describe("handleEvent", () => {
 
   it("skips Google Calendar sync when not connected", async () => {
     mockChatWithAi.mockResolvedValue({ text: "", toolCalls: [eventToolCall] });
-    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, createdAt: new Date() }]);
+    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() }]);
     mockCreateItem.mockResolvedValue({} as never);
 
     await handleEvent("lunch with Sarah tomorrow at noon", ctx);
@@ -224,7 +224,7 @@ describe("handleEvent", () => {
   it("creates Events category if it doesn't exist", async () => {
     mockChatWithAi.mockResolvedValue({ text: "", toolCalls: [eventToolCall] });
     mockListCategories.mockResolvedValue([]);
-    mockCreateCategory.mockResolvedValue({ id: "c2", name: "Events", userId: "u1", color: null, createdAt: new Date() });
+    mockCreateCategory.mockResolvedValue({ id: "c2", name: "Events", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() });
     mockCreateItem.mockResolvedValue({} as never);
 
     await handleEvent("lunch with Sarah tomorrow at noon", ctx);
@@ -239,7 +239,7 @@ describe("handleEvent", () => {
       user: { ...ctx.user, googleRefreshToken: "enc-token", googleCalendarId: "primary" },
     };
     mockChatWithAi.mockResolvedValue({ text: "", toolCalls: [eventToolCall] });
-    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, createdAt: new Date() }]);
+    mockListCategories.mockResolvedValue([{ id: "c1", name: "Events", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() }]);
     mockCreateItem.mockResolvedValue({} as never);
     mockCreateEvent.mockRejectedValue(new Error("API error"));
 
@@ -277,7 +277,7 @@ describe("handleDone", () => {
     googleEventId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
-    category: { id: "c1", name: "General", userId: "u1", color: null, createdAt: new Date() },
+    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() },
   });
 
   it("returns usage hint when body is empty", async () => {
@@ -334,7 +334,7 @@ describe("handleToday", () => {
     googleEventId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
-    category: { id: "c1", name: "General", userId: "u1", color: null, createdAt: new Date() },
+    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() },
     ...overrides,
   });
 
@@ -438,7 +438,7 @@ describe("handleList", () => {
     googleEventId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
-    category: { id: "c1", name: "General", userId: "u1", color: null, createdAt: new Date() },
+    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() },
   });
 
   it("lists pending items by default", async () => {

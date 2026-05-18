@@ -1,11 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "motion/react";
-import { Bell, Plus, ChevronRight, Inbox, Trash2, Pencil, X, MoreHorizontal } from "lucide-react";
+import { motion, AnimatePresence, useMotionValue, useTransform } from "motion/react";
+import { Bell, Plus, ChevronRight, Inbox, Trash2, Pencil, X, MoreHorizontal, GripVertical } from "lucide-react";
 import Link from "next/link";
-import { toggleItemStatus, removeItem, editItem, editCategory, removeCategory } from "@/app/actions";
+import {
+  DndContext,
+  DragOverlay,
+  closestCorners,
+  pointerWithin,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragOverEvent,
+  type DragEndEvent,
+  type CollisionDetection,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { toggleItemStatus, removeItem, editItem, editCategory, removeCategory, reorderCategoriesAction, moveItemToCategory } from "@/app/actions";
 import { statusIcon, formatTime, priorityColors, priorityLabels } from "@/lib/task-constants";
 import { CreateItemSheet } from "@/components/todos/create-item-sheet";
 import type { Item, Category } from "@/lib/mock-data";
@@ -17,80 +38,162 @@ function ItemRow({
   onToggle,
   onDelete,
   onEdit,
+  editMode,
+  dragListeners,
 }: {
   item: Item;
   index: number;
   onToggle: (id: string, current: Item["status"]) => void;
   onDelete: (id: string) => void;
   onEdit: (item: Item) => void;
+  editMode?: boolean;
+  dragListeners?: Record<string, unknown>;
 }) {
   const Icon = statusIcon[item.status];
   const isDone = item.status === "done";
+  const x = useMotionValue(0);
+  const trashOpacity = useTransform(x, [-80, -40, 0], [1, 0.5, 0]);
+  const [swiping, setSwiping] = useState(false);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1], delay: index * 0.04 }}
-      className={`flex items-center gap-3 px-4 py-3 ${
+    <div
+      className={`relative overflow-hidden ${
         index > 0 ? "border-t border-border/30" : ""
       } ${isDone ? "opacity-40" : ""}`}
     >
-      <button
-        onClick={() => onToggle(item.id, item.status)}
-        className="shrink-0 active:scale-90 transition-transform duration-150"
+      <motion.div
+        className="absolute inset-y-0 right-0 flex items-center justify-center bg-destructive"
+        style={{ opacity: trashOpacity, width: 72 }}
       >
-        <Icon
-          className={`w-[18px] h-[18px] ${
-            isDone
-              ? "text-sage"
-              : item.status === "in_progress"
-              ? "text-primary animate-spin [animation-duration:3s]"
-              : "text-muted-foreground/40"
-          }`}
-        />
-      </button>
+        <Trash2 className="w-5 h-5 text-white" />
+      </motion.div>
 
-      <div className="flex-1 min-w-0">
-        <p
-          className={`text-sm leading-snug truncate ${
-            isDone ? "line-through text-muted-foreground" : "text-foreground"
-          }`}
+      <motion.div
+        className="relative z-10 bg-card flex items-center gap-3 px-4 py-3"
+        drag="x"
+        dragConstraints={{ left: -200, right: 0 }}
+        dragElastic={0.1}
+        style={{ x }}
+        onDragStart={() => setSwiping(true)}
+        onDragEnd={(_, info) => {
+          setSwiping(false);
+          const threshold = -120;
+          if (info.offset.x < threshold) {
+            onDelete(item.id);
+          }
+        }}
+      >
+        <button
+          onClick={() => !swiping && onToggle(item.id, item.status)}
+          className="shrink-0 active:scale-90 transition-transform duration-150"
         >
-          {item.remindAt && !isDone && (
-            <span className="inline-flex items-center gap-0.5 mr-1.5 text-muted-foreground/70">
-              <Bell className="w-3 h-3" />
-              {item.dueTime && (
-                <span className="text-[11px]">{formatTime(item.dueTime)}</span>
-              )}
-            </span>
-          )}
-          {item.title}
-        </p>
-      </div>
+          <Icon
+            className={`w-[18px] h-[18px] ${
+              isDone
+                ? "text-sage"
+                : item.status === "in_progress"
+                ? "text-primary animate-spin [animation-duration:3s]"
+                : "text-muted-foreground/40"
+            }`}
+          />
+        </button>
 
-      <div className="flex items-center gap-0.5 shrink-0">
-        {!isDone && (
-          <button
-            onClick={() => onEdit(item)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
+        {editMode && (
+          <div
+            className="shrink-0 p-1 -m-1 cursor-grab active:cursor-grabbing"
+            style={{ touchAction: "none" }}
+            {...(dragListeners as React.HTMLAttributes<HTMLDivElement>)}
           >
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
+            <GripVertical className="w-3.5 h-3.5 text-muted-foreground/40" />
+          </div>
         )}
-        {isDone && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.2 }}
-            onClick={() => onDelete(item.id)}
-            className="text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all duration-150"
+
+        <div className="flex-1 min-w-0">
+          <p
+            className={`text-sm leading-snug truncate ${
+              isDone ? "line-through text-muted-foreground" : "text-foreground"
+            }`}
           >
-            <Trash2 className="w-3.5 h-3.5" />
-          </motion.button>
-        )}
-      </div>
-    </motion.div>
+            {item.remindAt && !isDone && (
+              <span className="inline-flex items-center gap-0.5 mr-1.5 text-muted-foreground/70">
+                <Bell className="w-3 h-3" />
+                {item.dueTime && (
+                  <span className="text-[11px]">{formatTime(item.dueTime)}</span>
+                )}
+              </span>
+            )}
+            {item.title}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-0.5 shrink-0">
+          {!isDone && !editMode && (
+            <button
+              onClick={() => onEdit(item)}
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {isDone && !editMode && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => onDelete(item.id)}
+              className="shrink-0 text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all duration-150"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </motion.button>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function SortableItemRow({
+  item,
+  index,
+  editMode,
+  onToggle,
+  onDelete,
+  onEdit,
+}: {
+  item: Item;
+  index: number;
+  editMode: boolean;
+  onToggle: (id: string, current: Item["status"]) => void;
+  onDelete: (id: string) => void;
+  onEdit: (item: Item) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id, data: { type: "item", categoryId: item.category.id } });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <ItemRow
+        item={item}
+        index={index}
+        onToggle={onToggle}
+        onDelete={onDelete}
+        onEdit={onEdit}
+        editMode={editMode}
+        dragListeners={editMode ? (listeners as unknown as Record<string, unknown>) : undefined}
+      />
+    </div>
   );
 }
 
@@ -98,20 +201,24 @@ function CategoryCard({
   category,
   items,
   cardIndex,
+  editMode,
   onToggle,
   onDelete,
   onEdit,
   onCategoryRename,
   onCategoryDelete,
+  dragListeners,
 }: {
   category: Category;
   items: Item[];
   cardIndex: number;
+  editMode: boolean;
   onToggle: (id: string, current: Item["status"]) => void;
   onDelete: (id: string) => void;
   onEdit: (item: Item) => void;
   onCategoryRename: (id: string, name: string) => void;
   onCategoryDelete: (id: string) => void;
+  dragListeners?: Record<string, unknown>;
 }) {
   const [showMenu, setShowMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -137,59 +244,83 @@ function CategoryCard({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: cardIndex * 0.08 + 0.1 }}
-      className="bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden"
+      className={`bg-card border rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden ${
+        editMode ? "border-primary/25" : "border-border/50"
+      }`}
     >
       {/* Card header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30">
-        <Link
-          href={`/todos/${category.id}`}
-          className="flex items-center gap-2 flex-1 min-w-0 group"
-        >
-          <span
-            className="w-2.5 h-2.5 rounded-full shrink-0"
-            style={{ backgroundColor: category.color }}
-          />
-          <span className="text-sm font-medium text-foreground flex-1 truncate">{category.name}</span>
-          <span className="text-[11px] text-muted-foreground shrink-0">
-            {count === 1 ? "1 task" : `${count} tasks`}
-          </span>
-          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform duration-150 shrink-0" />
-        </Link>
-        {!isOrphan && (
-          <div className="relative shrink-0">
-            <button
-              onClick={() => setShowMenu((v) => !v)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
+        {editMode ? (
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div
+              className="shrink-0 p-1 -m-1 cursor-grab active:cursor-grabbing"
+              style={{ touchAction: "none" }}
+              {...(dragListeners as React.HTMLAttributes<HTMLDivElement>)}
             >
-              <MoreHorizontal className="w-3.5 h-3.5" />
-            </button>
-            <AnimatePresence>
-              {showMenu && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute right-0 top-9 w-40 bg-card border border-border/50 rounded-xl shadow-lg overflow-hidden z-50"
-                >
-                  <button
-                    onClick={() => { setRenaming(true); setShowMenu(false); }}
-                    className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-secondary transition-colors flex items-center gap-2"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                    Rename
-                  </button>
-                  <button
-                    onClick={() => { if (confirm("Delete this category and all its tasks?")) onCategoryDelete(category.id); setShowMenu(false); }}
-                    className="w-full px-4 py-2.5 text-left text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-2"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+              <GripVertical className="w-4 h-4 text-muted-foreground/40" />
+            </div>
+            <span
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: category.color }}
+            />
+            <span className="text-sm font-medium text-foreground flex-1 truncate">{category.name}</span>
+            <span className="text-[11px] text-muted-foreground shrink-0">
+              {count === 1 ? "1 task" : `${count} tasks`}
+            </span>
           </div>
+        ) : (
+          <>
+            <Link
+              href={`/todos/${category.id}`}
+              className="flex items-center gap-2 flex-1 min-w-0 group"
+            >
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: category.color }}
+              />
+              <span className="text-sm font-medium text-foreground flex-1 truncate">{category.name}</span>
+              <span className="text-[11px] text-muted-foreground shrink-0">
+                {count === 1 ? "1 task" : `${count} tasks`}
+              </span>
+              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform duration-150 shrink-0" />
+            </Link>
+            {!isOrphan && (
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowMenu((v) => !v)}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
+                >
+                  <MoreHorizontal className="w-3.5 h-3.5" />
+                </button>
+                <AnimatePresence>
+                  {showMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-9 w-40 bg-card border border-border/50 rounded-xl shadow-lg overflow-hidden z-50"
+                    >
+                      <button
+                        onClick={() => { setRenaming(true); setShowMenu(false); }}
+                        className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-secondary transition-colors flex items-center gap-2"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        Rename
+                      </button>
+                      <button
+                        onClick={() => { if (confirm("Delete this category and all its tasks?")) onCategoryDelete(category.id); setShowMenu(false); }}
+                        className="w-full px-4 py-2.5 text-left text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-2"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -234,12 +365,84 @@ function CategoryCard({
         </div>
       ) : (
         <div>
-          {sorted.map((item, i) => (
-            <ItemRow key={item.id} item={item} index={i} onToggle={onToggle} onDelete={onDelete} onEdit={onEdit} />
-          ))}
+          <SortableContext items={sorted.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+            <AnimatePresence>
+              {sorted.map((item, i) => (
+                <motion.div
+                  key={item.id}
+                  initial={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  <SortableItemRow
+                    item={item}
+                    index={i}
+                    editMode={editMode}
+                    onToggle={onToggle}
+                    onDelete={onDelete}
+                    onEdit={onEdit}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </SortableContext>
         </div>
       )}
     </motion.div>
+  );
+}
+
+function SortableCategoryCard({
+  category,
+  items,
+  cardIndex,
+  editMode,
+  onToggle,
+  onDelete,
+  onEdit,
+  onCategoryRename,
+  onCategoryDelete,
+}: {
+  category: Category;
+  items: Item[];
+  cardIndex: number;
+  editMode: boolean;
+  onToggle: (id: string, current: Item["status"]) => void;
+  onDelete: (id: string) => void;
+  onEdit: (item: Item) => void;
+  onCategoryRename: (id: string, name: string) => void;
+  onCategoryDelete: (id: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: category.id, data: { type: "category" } });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <CategoryCard
+        category={category}
+        items={items}
+        cardIndex={cardIndex}
+        editMode={editMode}
+        onToggle={onToggle}
+        onDelete={onDelete}
+        onEdit={onEdit}
+        onCategoryRename={onCategoryRename}
+        onCategoryDelete={onCategoryDelete}
+        dragListeners={editMode ? (listeners as unknown as Record<string, unknown>) : undefined}
+      />
+    </div>
   );
 }
 
@@ -250,7 +453,11 @@ type Props = {
 
 export function TodosClient({ items: initialItems, categories }: Props) {
   const router = useRouter();
-  const [items, setItems] = useState(initialItems);
+  const [editMode, setEditMode] = useState(false);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeType, setActiveType] = useState<"category" | "item" | null>(null);
+  const [localCategories, setLocalCategories] = useState(categories);
+  const [localItems, setLocalItems] = useState(initialItems);
   const [showCreate, setShowCreate] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
 
@@ -262,17 +469,36 @@ export function TodosClient({ items: initialItems, categories }: Props) {
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
-  const grouped = categories.map((cat) => ({
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } })
+  );
+
+  const collisionDetection: CollisionDetection = useCallback((args) => {
+    if (activeType === "category") {
+      const categoryIds = new Set(localCategories.map((c) => c.id));
+      const filtered = {
+        ...args,
+        droppableContainers: args.droppableContainers.filter(
+          (container) => categoryIds.has(container.id as string)
+        ),
+      };
+      return closestCorners(filtered);
+    }
+    return pointerWithin(args).length > 0 ? pointerWithin(args) : closestCorners(args);
+  }, [activeType, localCategories]);
+
+  const grouped = localCategories.map((cat) => ({
     category: cat,
-    items: items.filter((item) => item.category.id === cat.id),
+    items: localItems.filter((item) => item.category.id === cat.id),
   }));
 
-  const listedCatIds = new Set(categories.map((c) => c.id));
-  const orphaned = items.filter((item) => !listedCatIds.has(item.category.id));
+  const listedCatIds = new Set(localCategories.map((c) => c.id));
+  const orphaned = localItems.filter((item) => !listedCatIds.has(item.category.id));
 
   const handleToggle = async (id: string, current: Item["status"]) => {
     const newStatus = current === "done" ? "pending" : "done";
-    setItems((prev) =>
+    setLocalItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status: newStatus as Item["status"] } : item))
     );
     await toggleItemStatus(id, newStatus as "pending" | "done");
@@ -280,7 +506,7 @@ export function TodosClient({ items: initialItems, categories }: Props) {
   };
 
   const handleDelete = async (id: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== id));
+    setLocalItems((prev) => prev.filter((item) => item.id !== id));
     await removeItem(id);
     router.refresh();
   };
@@ -321,6 +547,75 @@ export function TodosClient({ items: initialItems, categories }: Props) {
     router.refresh();
   };
 
+  function handleDragStart(event: DragStartEvent) {
+    setActiveId(event.active.id as string);
+    setActiveType(event.active.data.current?.type ?? null);
+  }
+
+  function handleDragOver(event: DragOverEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeData = active.data.current;
+    const overData = over.data.current;
+
+    if (activeData?.type !== "item") return;
+
+    const activeCatId = activeData.categoryId as string;
+    const overCatId = overData?.type === "category"
+      ? (over.id as string)
+      : (overData?.categoryId as string);
+
+    if (activeCatId && overCatId && activeCatId !== overCatId) {
+      setLocalItems((prev) =>
+        prev.map((item) =>
+          item.id === active.id
+            ? { ...item, category: { ...item.category, id: overCatId } }
+            : item
+        )
+      );
+    }
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    setActiveId(null);
+    setActiveType(null);
+
+    if (!over || active.id === over.id) return;
+
+    if (active.data.current?.type === "category") {
+      const oldIndex = localCategories.findIndex((c) => c.id === active.id);
+      let newIndex = localCategories.findIndex((c) => c.id === over.id);
+      if (newIndex === -1 && over.data.current?.categoryId) {
+        newIndex = localCategories.findIndex((c) => c.id === over.data.current?.categoryId);
+      }
+      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+        const prev = localCategories;
+        const reordered = arrayMove(localCategories, oldIndex, newIndex);
+        setLocalCategories(reordered);
+        try {
+          await reorderCategoriesAction(reordered.map((c) => c.id));
+          router.refresh();
+        } catch {
+          setLocalCategories(prev);
+        }
+      }
+    } else if (active.data.current?.type === "item") {
+      const movedItem = localItems.find((i) => i.id === active.id);
+      const originalCatId = initialItems.find((i) => i.id === active.id)?.category.id;
+      if (movedItem && originalCatId && movedItem.category.id !== originalCatId) {
+        const prev = localItems;
+        try {
+          await moveItemToCategory(movedItem.id, movedItem.category.id);
+          router.refresh();
+        } catch {
+          setLocalItems(prev);
+        }
+      }
+    }
+  }
+
   return (
     <main className="safe-bottom pb-8">
       {/* Header */}
@@ -333,74 +628,161 @@ export function TodosClient({ items: initialItems, categories }: Props) {
         <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase mb-0.5">
           Manage
         </p>
-        <h1 className="font-serif text-[2rem] leading-tight font-light text-foreground tracking-tight">
-          Tasks
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="font-serif text-[2rem] leading-tight font-light text-foreground tracking-tight">
+            Tasks
+          </h1>
+          {localCategories.length > 0 && (
+            <button
+              onClick={() => setEditMode((v) => !v)}
+              className={`text-sm font-medium transition-colors ${
+                editMode ? "text-destructive" : "text-primary"
+              }`}
+            >
+              {editMode ? "Done" : "Edit"}
+            </button>
+          )}
+        </div>
       </motion.header>
 
-      {/* Category cards */}
-      <div className="px-5 mt-4 space-y-4">
-        {categories.length === 0 ? (
+      {/* Edit mode hint banner */}
+      <AnimatePresence>
+        {editMode && (
           <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-            className="flex flex-col items-center py-16 text-center"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="px-5 overflow-hidden"
           >
-            <div className="w-14 h-14 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
-              <Inbox className="w-6 h-6 text-muted-foreground/50" />
+            <div className="px-3 py-2 bg-primary/10 rounded-lg text-center">
+              <p className="text-[11px] text-primary">
+                Drag categories to reorder · Drag tasks between categories · Swipe left to delete
+              </p>
             </div>
-            <p className="font-serif text-lg text-foreground">No categories yet</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Tap + to create your first task and category
-            </p>
           </motion.div>
-        ) : (
-          grouped.map(({ category, items: catItems }, i) => (
+        )}
+      </AnimatePresence>
+
+      {/* Category cards */}
+      <DndContext
+        id="todos-dnd"
+        sensors={sensors}
+        collisionDetection={collisionDetection}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="px-5 mt-4 space-y-4">
+          {localCategories.length === 0 ? (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
+              className="flex flex-col items-center py-16 text-center"
+            >
+              <div className="w-14 h-14 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
+                <Inbox className="w-6 h-6 text-muted-foreground/50" />
+              </div>
+              <p className="font-serif text-lg text-foreground">No categories yet</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Tap + to create your first task and category
+              </p>
+            </motion.div>
+          ) : (
+            <SortableContext items={localCategories.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+              {grouped.map(({ category, items: catItems }, i) => (
+                <SortableCategoryCard
+                  key={category.id}
+                  category={category}
+                  items={catItems}
+                  cardIndex={i}
+                  editMode={editMode}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                  onEdit={openEdit}
+                  onCategoryRename={handleCategoryRename}
+                  onCategoryDelete={handleCategoryDelete}
+                />
+              ))}
+            </SortableContext>
+          )}
+
+          {/* Orphaned items (no matching category) */}
+          {orphaned.length > 0 && (
             <CategoryCard
-              key={category.id}
-              category={category}
-              items={catItems}
-              cardIndex={i}
+              category={{ id: "__none__", name: "Uncategorized", color: "#A8A29E" }}
+              items={orphaned}
+              cardIndex={grouped.length}
+              editMode={editMode}
               onToggle={handleToggle}
               onDelete={handleDelete}
               onEdit={openEdit}
               onCategoryRename={handleCategoryRename}
               onCategoryDelete={handleCategoryDelete}
             />
-          ))
-        )}
+          )}
+        </div>
 
-        {/* Orphaned items (no matching category) */}
-        {orphaned.length > 0 && (
-          <CategoryCard
-            category={{ id: "__none__", name: "Uncategorized", color: "#A8A29E" }}
-            items={orphaned}
-            cardIndex={grouped.length}
-            onToggle={handleToggle}
-            onDelete={handleDelete}
-            onEdit={openEdit}
-            onCategoryRename={handleCategoryRename}
-            onCategoryDelete={handleCategoryDelete}
-          />
-        )}
-      </div>
+        <DragOverlay>
+          {activeId && activeType === "category" ? (
+            (() => {
+              const cat = localCategories.find((c) => c.id === activeId);
+              if (!cat) return null;
+              const catItems = localItems.filter((i) => i.category.id === cat.id);
+              return (
+                <div className="opacity-80 shadow-2xl rounded-xl">
+                  <CategoryCard
+                    category={cat}
+                    items={catItems}
+                    cardIndex={0}
+                    editMode={editMode}
+                    onToggle={handleToggle}
+                    onDelete={handleDelete}
+                    onEdit={openEdit}
+                    onCategoryRename={handleCategoryRename}
+                    onCategoryDelete={handleCategoryDelete}
+                  />
+                </div>
+              );
+            })()
+          ) : activeId && activeType === "item" ? (
+            (() => {
+              const item = localItems.find((i) => i.id === activeId);
+              if (!item) return null;
+              return (
+                <div className="opacity-80 shadow-2xl rounded-lg">
+                  <ItemRow
+                    item={item}
+                    index={0}
+                    onToggle={handleToggle}
+                    onDelete={handleDelete}
+                    onEdit={openEdit}
+                    editMode={editMode}
+                  />
+                </div>
+              );
+            })()
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       {/* FAB */}
-      <motion.button
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.5 }}
-        onClick={() => setShowCreate(true)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] right-5 w-13 h-13 rounded-full bg-primary text-primary-foreground shadow-[0_4px_16px_rgba(146,120,92,0.35)] flex items-center justify-center active:scale-90 transition-transform z-40"
-      >
-        <Plus className="w-5 h-5" />
-      </motion.button>
+      {!editMode && (
+        <motion.button
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.5 }}
+          onClick={() => setShowCreate(true)}
+          className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] right-5 w-13 h-13 rounded-full bg-primary text-primary-foreground shadow-[0_4px_16px_rgba(146,120,92,0.35)] flex items-center justify-center active:scale-90 transition-transform z-40"
+        >
+          <Plus className="w-5 h-5" />
+        </motion.button>
+      )}
 
       <CreateItemSheet
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        categories={categories}
+        categories={localCategories}
       />
 
       {/* Edit item sheet */}
@@ -468,11 +850,11 @@ export function TodosClient({ items: initialItems, categories }: Props) {
                     </div>
                   </div>
 
-                  {categories.length > 1 && (
+                  {localCategories.length > 1 && (
                     <div>
                       <label className="text-xs font-medium text-muted-foreground block mb-2">Category</label>
                       <div className="flex flex-wrap gap-2">
-                        {categories.map((cat) => (
+                        {localCategories.map((cat) => (
                           <button
                             key={cat.id}
                             onClick={() => setEditCategoryId(cat.id)}

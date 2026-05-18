@@ -2,7 +2,7 @@
 
 import { createItem, updateItem, deleteItem } from "@/lib/services/item";
 import { getOrCreateDevUser } from "@/lib/dev-user";
-import { createCategory, listCategories, updateCategory, deleteCategory } from "@/lib/services/category";
+import { createCategory, listCategories, updateCategory, deleteCategory, reorderCategories, maxSortOrder } from "@/lib/services/category";
 import { createEvent, updateEvent, deleteEvent } from "@/lib/services/calendar";
 import { prisma } from "@/lib/prisma";
 import { chatWithAi } from "@/lib/services/ai";
@@ -106,7 +106,8 @@ export async function removeItemWithGcalSync(itemId: string) {
 
 export async function addCategory(name: string, color: string) {
   const user = await getOrCreateDevUser();
-  return createCategory({ userId: user.id, name, color });
+  const max = await maxSortOrder(user.id);
+  return createCategory({ userId: user.id, name, color, sortOrder: max + 1 });
 }
 
 export async function getCategories() {
@@ -123,6 +124,16 @@ export async function editCategory(categoryId: string, data: { name?: string; co
 export async function removeCategory(categoryId: string) {
   const user = await getOrCreateDevUser();
   await deleteCategory(categoryId, user.id);
+}
+
+export async function reorderCategoriesAction(categoryIds: string[]) {
+  const user = await getOrCreateDevUser();
+  await reorderCategories(user.id, categoryIds);
+}
+
+export async function moveItemToCategory(itemId: string, newCategoryId: string) {
+  const user = await getOrCreateDevUser();
+  await updateItem(itemId, user.id, { categoryId: newCategoryId });
 }
 
 export async function getAiRecommendation(items: Array<{ title: string; priority: string; status: string; dueDate: string | null; dueTime: string | null; remindAt: string | null; category: { name: string } }>) {

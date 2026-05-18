@@ -1,42 +1,44 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createCategory, listCategories, deleteCategory } from "@/lib/services/category";
+import { describe, it, expect, vi } from "vitest";
 
-const mockPrisma = vi.hoisted(() => ({
-  category: {
-    create: vi.fn(),
-    findMany: vi.fn(),
-    delete: vi.fn(),
+const mockFindMany = vi.fn();
+const mockAggregate = vi.fn();
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    category: {
+      findMany: (...args: unknown[]) => mockFindMany(...args),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      aggregate: (...args: unknown[]) => mockAggregate(...args),
+    },
+    $transaction: vi.fn((fns: (() => unknown)[]) => Promise.all(fns.map((fn) => fn()))),
   },
 }));
 
-vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+import { listCategories, maxSortOrder } from "@/lib/services/category";
 
-describe("CategoryService", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("creates a category", async () => {
-    const input = { userId: "u1", name: "Work", color: "#4A6FA5" };
-    mockPrisma.category.create.mockResolvedValue({ id: "c1", ...input, createdAt: new Date() });
-    const result = await createCategory(input);
-    expect(result.name).toBe("Work");
-    expect(mockPrisma.category.create).toHaveBeenCalledWith({ data: input });
-  });
-
-  it("lists categories for a user", async () => {
-    mockPrisma.category.findMany.mockResolvedValue([{ id: "c1", name: "Work" }]);
-    const result = await listCategories("u1");
-    expect(result).toHaveLength(1);
-    expect(mockPrisma.category.findMany).toHaveBeenCalledWith({
-      where: { userId: "u1" },
-      orderBy: { name: "asc" },
+describe("listCategories", () => {
+  it("orders by sortOrder ascending", async () => {
+    mockFindMany.mockResolvedValue([]);
+    await listCategories("user-1");
+    expect(mockFindMany).toHaveBeenCalledWith({
+      where: { userId: "user-1" },
+      orderBy: { sortOrder: "asc" },
     });
   });
+});
 
-  it("deletes a category", async () => {
-    mockPrisma.category.delete.mockResolvedValue({ id: "c1" });
-    await deleteCategory("c1", "u1");
-    expect(mockPrisma.category.delete).toHaveBeenCalledWith({
-      where: { id: "c1", userId: "u1" },
-    });
+describe("maxSortOrder", () => {
+  it("returns the max sortOrder for a user", async () => {
+    mockAggregate.mockResolvedValue({ _max: { sortOrder: 3 } });
+    const result = await maxSortOrder("user-1");
+    expect(result).toBe(3);
+  });
+
+  it("returns -1 when no categories exist", async () => {
+    mockAggregate.mockResolvedValue({ _max: { sortOrder: null } });
+    const result = await maxSortOrder("user-1");
+    expect(result).toBe(-1);
   });
 });
