@@ -7,12 +7,18 @@ import { getAiRecommendation } from "@/app/actions";
 import type { Item } from "@/lib/mock-data";
 
 const CACHE_KEY = "calcapone-ai-priorities";
+const CACHE_HASH_KEY = "calcapone-ai-priorities-hash";
 
 type Priority = { task: string; reason: string };
 
 type Props = {
   items: Item[];
 };
+
+function computeItemsHash(items: Item[]): string {
+  const pending = items.filter((i) => i.status !== "done");
+  return pending.map((i) => `${i.id}:${i.status}:${i.priority}`).sort().join("|");
+}
 
 export function AiRecommendation({ items }: Props) {
   const [priorities, setPriorities] = useState<Priority[] | null>(null);
@@ -36,7 +42,9 @@ export function AiRecommendation({ items }: Props) {
       );
       if (result.priorities) {
         setPriorities(result.priorities);
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(result.priorities));
+        const hash = computeItemsHash(items);
+        localStorage.setItem(CACHE_KEY, JSON.stringify(result.priorities));
+        localStorage.setItem(CACHE_HASH_KEY, hash);
       } else {
         setError(true);
       }
@@ -47,18 +55,19 @@ export function AiRecommendation({ items }: Props) {
   };
 
   useEffect(() => {
-    const cached = sessionStorage.getItem(CACHE_KEY);
-    if (cached) {
+    const currentHash = computeItemsHash(items);
+    const cachedHash = localStorage.getItem(CACHE_HASH_KEY);
+    const cached = localStorage.getItem(CACHE_KEY);
+
+    if (cached && cachedHash === currentHash) {
       try {
         setPriorities(JSON.parse(cached));
         setLoading(false);
-      } catch {
-        fetchRecommendation();
-      }
-    } else {
-      fetchRecommendation();
+        return;
+      } catch {}
     }
-  }, []);
+    fetchRecommendation();
+  }, [items]);
 
   if (error && !priorities) return null;
 
