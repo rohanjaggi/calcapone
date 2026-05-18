@@ -51,7 +51,7 @@ function StatCard({
           {icon}
         </div>
       </div>
-      <p className="text-2xl font-serif font-light text-foreground leading-none">
+      <p className="text-2xl font-serif font-bold text-foreground leading-none">
         <AnimatedNumber value={value} />
       </p>
       <p className="text-[11px] text-muted-foreground mt-1 tracking-wide uppercase">

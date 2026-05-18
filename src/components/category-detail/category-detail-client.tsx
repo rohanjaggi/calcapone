@@ -282,7 +282,7 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
             className="w-3 h-3 rounded-full shrink-0"
             style={{ backgroundColor: category.color }}
           />
-          <h1 className="font-serif text-[2rem] leading-tight font-light text-foreground tracking-tight flex-1">
+          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight flex-1">
             {category.name}
           </h1>
           <div className="relative">
@@ -370,11 +370,11 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
               className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 opacity-20"
               style={{ backgroundColor: category.color }}
             >
-              <span className="text-2xl font-serif text-white">
+              <span className="text-2xl font-serif font-bold text-white">
                 {category.name.charAt(0).toUpperCase()}
               </span>
             </div>
-            <p className="font-serif text-lg text-foreground">No tasks yet</p>
+            <p className="font-serif text-lg font-semibold text-foreground">No tasks yet</p>
             <p className="text-sm text-muted-foreground mt-1">
               Tap + to add a task to {category.name}
             </p>
@@ -441,7 +441,7 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
               <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
               <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
                 <div className="flex items-center justify-between mb-5">
-                  <h3 className="font-serif text-xl font-normal text-foreground">Edit Task</h3>
+                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Task</h3>
                   <button onClick={() => setEditingItem(null)} className="text-muted-foreground hover:text-foreground">
                     <X className="w-5 h-5" />
                   </button>

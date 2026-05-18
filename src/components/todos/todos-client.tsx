@@ -653,7 +653,7 @@ export function TodosClient({ items: initialItems, categories }: Props) {
           Manage
         </p>
         <div className="flex items-center justify-between">
-          <h1 className="font-serif text-[2rem] leading-tight font-light text-foreground tracking-tight">
+          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
             Tasks
           </h1>
           {localCategories.length > 0 && (
@@ -707,7 +707,7 @@ export function TodosClient({ items: initialItems, categories }: Props) {
               <div className="w-14 h-14 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
                 <Inbox className="w-6 h-6 text-muted-foreground/50" />
               </div>
-              <p className="font-serif text-lg text-foreground">No categories yet</p>
+              <p className="font-serif text-lg font-semibold text-foreground">No categories yet</p>
               <p className="text-sm text-muted-foreground mt-1">
                 Tap + to create your first task and category
               </p>
@@ -830,7 +830,7 @@ export function TodosClient({ items: initialItems, categories }: Props) {
               <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
               <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
                 <div className="flex items-center justify-between mb-5">
-                  <h3 className="font-serif text-xl font-normal text-foreground">Edit Task</h3>
+                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Task</h3>
                   <button onClick={() => setEditingItem(null)} className="text-muted-foreground hover:text-foreground">
                     <X className="w-5 h-5" />
                   </button>

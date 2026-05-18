@@ -124,7 +124,7 @@ export function DayTimeline({ items }: { items: TimelineItem[] }) {
       className="mt-7 px-5"
     >
       <div className="flex items-baseline justify-between mb-4">
-        <h2 className="font-serif text-xl font-normal text-foreground">
+        <h2 className="font-serif text-xl font-semibold text-foreground">
           Today
         </h2>
         <Link href="/calendar" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">

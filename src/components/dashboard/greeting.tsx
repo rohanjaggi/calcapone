@@ -30,12 +30,12 @@ export function Greeting({ name }: { name: string }) {
       <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase">
         {weekday}
       </p>
-      <h1 className="font-serif text-[2rem] leading-tight font-light text-foreground mt-0.5 tracking-tight">
+      <h1 className="date-gradient text-[3.25rem] leading-none font-bold mt-0.5 tracking-tighter">
         {monthDay}
       </h1>
-      <p className="text-muted-foreground text-sm mt-1">
+      <p className="text-muted-foreground text-base mt-1.5">
         {greeting},{" "}
-        <span className="text-foreground font-medium">{name}</span>
+        <span className="text-foreground font-semibold">{name}</span>
       </p>
     </motion.header>
   );

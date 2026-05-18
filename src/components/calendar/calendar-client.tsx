@@ -229,7 +229,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
             Schedule
           </p>
         </div>
-        <h1 className="font-serif text-[2rem] leading-tight font-light text-foreground tracking-tight">
+        <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
           Calendar
         </h1>
       </motion.header>
@@ -246,7 +246,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
             <button onClick={prevMonth} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-secondary transition-colors active:scale-90">
               <ChevronLeft className="w-4 h-4 text-muted-foreground" />
             </button>
-            <span className="font-serif text-base text-foreground">
+            <span className="font-serif text-base font-semibold text-foreground">
               {MONTH_NAMES[viewMonth]} {viewYear}
             </span>
             <button onClick={nextMonth} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-secondary transition-colors active:scale-90">
@@ -306,7 +306,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
         className="px-5 mt-5"
       >
-        <h2 className="font-serif text-lg font-normal text-foreground mb-3">
+        <h2 className="font-serif text-lg font-semibold text-foreground mb-3">
           {isSameDay(selectedDate, today)
             ? "Today"
             : selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
@@ -422,7 +422,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
               <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
               <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
                 <div className="flex items-center justify-between mb-5">
-                  <h3 className="font-serif text-xl font-normal text-foreground">Edit Event</h3>
+                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Event</h3>
                   <button onClick={() => setEditingItem(null)} className="text-muted-foreground hover:text-foreground">
                     <X className="w-5 h-5" />
                   </button>

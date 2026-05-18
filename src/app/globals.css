@@ -8,9 +8,9 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-dm-sans);
-  --font-serif: var(--font-cormorant-garamond);
+  --font-serif: var(--font-dm-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-cormorant-garamond);
+  --font-heading: var(--font-dm-sans);
 
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -226,6 +226,24 @@
 .check-animate {
   stroke-dasharray: 24;
   animation: check-draw 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Date gradient */
+@keyframes date-gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.date-gradient {
+  background: linear-gradient(
+    90deg,
+    #92785C, #B87D6B, #C9A96E, #6B8F71, #4A6FA5, #92785C, #B87D6B
+  );
+  background-size: 300% 100%;
+  animation: date-gradient-shift 6s ease infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 /* AI sparkle gradient */

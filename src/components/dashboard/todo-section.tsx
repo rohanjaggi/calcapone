@@ -81,7 +81,7 @@ export function ItemsSection({ items }: { items: Item[] }) {
   return (
     <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4, delay: 0.45 }} className="mt-7 px-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="font-serif text-xl font-normal text-foreground">Tasks</h2>
+        <h2 className="font-serif text-xl font-semibold text-foreground">Tasks</h2>
         <Link href="/todos" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
           See all <ArrowRight className="w-3 h-3" />
         </Link>

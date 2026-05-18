@@ -74,7 +74,7 @@ export function SettingsClient({ userId, settings }: Props) {
         <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase">
           Configuration
         </p>
-        <h1 className="font-serif text-[2rem] leading-tight font-light text-foreground mt-0.5 tracking-tight">
+        <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground mt-0.5 tracking-tight">
           Settings
         </h1>
       </motion.header>

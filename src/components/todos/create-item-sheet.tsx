@@ -106,7 +106,7 @@ export function CreateItemSheet({ open, onClose, categories, defaultCategoryId }
             <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
             <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
               <div className="flex items-center justify-between mb-5">
-                <h3 className="font-serif text-xl font-normal text-foreground">New Task</h3>
+                <h3 className="font-serif text-xl font-semibold text-foreground">New Task</h3>
                 <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
                   <X className="w-5 h-5" />
                 </button>
