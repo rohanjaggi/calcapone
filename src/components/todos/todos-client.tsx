@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "motion/react";
 import { Bell, Plus, ChevronRight, Inbox, Trash2, Pencil, X, MoreHorizontal, GripVertical } from "lucide-react";
@@ -224,6 +224,8 @@ function CategoryCard({
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(category.name);
   const [saving, setSaving] = useState(false);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
 
   const activeItems = items.filter((i) => i.status !== "done");
   const doneItems = items.filter((i) => i.status === "done");
@@ -285,9 +287,16 @@ function CategoryCard({
               <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform duration-150 shrink-0" />
             </Link>
             {!isOrphan && (
-              <div className="relative shrink-0">
+              <div className="shrink-0">
                 <button
-                  onClick={() => setShowMenu((v) => !v)}
+                  ref={menuBtnRef}
+                  onClick={() => {
+                    if (!showMenu && menuBtnRef.current) {
+                      const rect = menuBtnRef.current.getBoundingClientRect();
+                      setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                    }
+                    setShowMenu((v) => !v);
+                  }}
                   className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
                 >
                   <MoreHorizontal className="w-3.5 h-3.5" />
@@ -299,7 +308,8 @@ function CategoryCard({
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95, y: -4 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute right-0 top-9 w-40 bg-card border border-border/50 rounded-xl shadow-lg overflow-hidden z-50"
+                      className="fixed w-40 bg-card border border-border/50 rounded-xl shadow-lg overflow-hidden z-50"
+                      style={{ top: menuPos.top, right: menuPos.right }}
                     >
                       <button
                         onClick={() => { setRenaming(true); setShowMenu(false); }}
@@ -459,6 +469,9 @@ export function TodosClient({ items: initialItems, categories }: Props) {
   const [localCategories, setLocalCategories] = useState(categories);
   const [localItems, setLocalItems] = useState(initialItems);
   const [showCreate, setShowCreate] = useState(false);
+
+  useEffect(() => { setLocalCategories(categories); }, [categories]);
+  useEffect(() => { setLocalItems(initialItems); }, [initialItems]);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
 
   const [editTitle, setEditTitle] = useState("");

@@ -6,14 +6,16 @@ import { RefreshCw } from "lucide-react";
 import { getAiRecommendation } from "@/app/actions";
 import type { Item } from "@/lib/mock-data";
 
-const CACHE_KEY = "calcapone-ai-suggestion";
+const CACHE_KEY = "calcapone-ai-priorities";
+
+type Priority = { task: string; reason: string };
 
 type Props = {
   items: Item[];
 };
 
 export function AiRecommendation({ items }: Props) {
-  const [recommendation, setRecommendation] = useState<string | null>(null);
+  const [priorities, setPriorities] = useState<Priority[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -32,10 +34,9 @@ export function AiRecommendation({ items }: Props) {
           category: i.category,
         }))
       );
-      if (result.recommendation) {
-        const clean = result.recommendation.replace(/\*+/g, "");
-        setRecommendation(clean);
-        sessionStorage.setItem(CACHE_KEY, clean);
+      if (result.priorities) {
+        setPriorities(result.priorities);
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(result.priorities));
       } else {
         setError(true);
       }
@@ -48,14 +49,18 @@ export function AiRecommendation({ items }: Props) {
   useEffect(() => {
     const cached = sessionStorage.getItem(CACHE_KEY);
     if (cached) {
-      setRecommendation(cached);
-      setLoading(false);
+      try {
+        setPriorities(JSON.parse(cached));
+        setLoading(false);
+      } catch {
+        fetchRecommendation();
+      }
     } else {
       fetchRecommendation();
     }
   }, []);
 
-  if (error && !recommendation) return null;
+  if (error && !priorities) return null;
 
   return (
     <motion.section
@@ -69,7 +74,7 @@ export function AiRecommendation({ items }: Props) {
           <div className="flex items-center gap-2">
             <span className="sparkle-icon text-sm ai-sparkle select-none">✦</span>
             <span className="text-xs font-medium text-muted-foreground tracking-wide">
-              AI Suggestion
+              Focus on next
             </span>
           </div>
           <button
@@ -81,22 +86,43 @@ export function AiRecommendation({ items }: Props) {
           </button>
         </div>
 
-        <div className="px-4 pb-4">
+        <div className="px-4 pb-3.5">
           {loading ? (
-            <div className="space-y-2">
-              <div className="h-3 bg-secondary/80 rounded-full w-full animate-pulse" />
-              <div className="h-3 bg-secondary/60 rounded-full w-4/5 animate-pulse" />
-              <div className="h-3 bg-secondary/40 rounded-full w-3/5 animate-pulse" />
+            <div className="space-y-2.5">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="w-5 h-5 rounded-full bg-secondary/60 animate-pulse shrink-0" />
+                  <div className="flex-1 space-y-1">
+                    <div className="h-3 bg-secondary/80 rounded-full w-3/5 animate-pulse" />
+                    <div className="h-2.5 bg-secondary/40 rounded-full w-2/5 animate-pulse" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4 }}
-              className="text-sm text-foreground/80 leading-relaxed"
-            >
-              {recommendation}
-            </motion.p>
+            <div className="space-y-0.5">
+              {priorities?.map((item, i) => (
+                <motion.div
+                  key={item.task}
+                  initial={{ opacity: 0, x: -4 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.3, delay: i * 0.08 }}
+                  className="flex items-start gap-3 py-1.5"
+                >
+                  <span className="w-5 h-5 rounded-full bg-secondary/80 flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0 mt-0.5">
+                    {i + 1}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-medium text-foreground truncate">
+                      {item.task}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground/70">
+                      {item.reason}
+                    </p>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           )}
         </div>
       </div>

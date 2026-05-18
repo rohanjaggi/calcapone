@@ -25,9 +25,12 @@ export async function addItem(data: {
   recurring?: RecurringType;
 }) {
   const user = await getOrCreateDevUser();
+  const cats = await listCategories(user.id);
+  const cat = cats.find((c) => c.id === data.categoryId) ?? cats[0];
+  if (!cat) throw new Error("No categories exist");
   await createItem({
     userId: user.id,
-    categoryId: data.categoryId,
+    categoryId: cat.id,
     title: data.title,
     priority: data.priority,
     description: data.description ?? null,
@@ -136,7 +139,7 @@ export async function moveItemToCategory(itemId: string, newCategoryId: string) 
   await updateItem(itemId, user.id, { categoryId: newCategoryId });
 }
 
-export async function getAiRecommendation(items: Array<{ title: string; priority: string; status: string; dueDate: string | null; dueTime: string | null; remindAt: string | null; category: { name: string } }>) {
+export async function getAiRecommendation(items: Array<{ title: string; priority: string; status: string; dueDate: string | null; dueTime: string | null; remindAt: string | null; category: { name: string } }>): Promise<{ priorities?: Array<{ task: string; reason: string }>; recommendation?: string | null }> {
   const user = await getOrCreateDevUser();
   const aiApiKey = decryptUserApiKey(user.aiApiKey);
 
@@ -152,7 +155,7 @@ export async function getAiRecommendation(items: Array<{ title: string; priority
     return detail;
   }).join("\n");
 
-  const prompt = `Here are my pending tasks:\n${summary}\n\nGive me a brief, actionable recommendation (2-3 sentences max) on what I should focus on right now and why. Be specific — reference actual task names. Keep it warm and encouraging, like a smart assistant. No bullet points, just flowing plain text. Do NOT use any markdown formatting — no asterisks, no bold, no italics, no headers. Pure plain text only.`;
+  const prompt = `Here are my pending tasks:\n${summary}\n\nReturn a JSON array of the top 3 tasks I should focus on right now, ordered by priority. Each item: {"task": "<exact task title>", "reason": "<short reason, max 8 words>"}. Base priority on: overdue > due today > high priority > due soon. Do NOT explain what tasks are or assume their meaning. Only return the JSON array, nothing else.`;
 
   try {
     const { text } = await chatWithAi(
@@ -160,7 +163,15 @@ export async function getAiRecommendation(items: Array<{ title: string; priority
       { telegramUsername: user.telegramUsername, timezone: user.timezone },
       { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel }
     );
-    return { recommendation: text || "Focus on your highest priority items first." };
+    if (!text) return { recommendation: null };
+    try {
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]) as Array<{ task: string; reason: string }>;
+        return { priorities: parsed.slice(0, 3) };
+      }
+    } catch {}
+    return { priorities: [{ task: pending[0].title, reason: "highest priority" }] };
   } catch {
     return { recommendation: null };
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
@@ -40,6 +40,13 @@ export function CreateItemSheet({ open, onClose, categories, defaultCategoryId }
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [saving, setSaving] = useState(false);
   const [localCategories, setLocalCategories] = useState(categories);
+
+  useEffect(() => {
+    setLocalCategories(categories);
+    if (categoryId && !categories.find((c) => c.id === categoryId)) {
+      setCategoryId(categories[0]?.id ?? "");
+    }
+  }, [categories]);
 
   const handleAddCategory = async () => {
     if (!newCategoryName.trim()) return;
