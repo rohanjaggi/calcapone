@@ -141,13 +141,39 @@ export async function executeToolCall(
       const endTime = args.end_time as string;
       const description = (args.description as string) ?? undefined;
 
+      const existing = await getEvents(
+        user.googleRefreshToken,
+        user.googleCalendarId ?? "primary",
+        new Date(startTime),
+        new Date(endTime)
+      );
+
+      if (existing.length > 0) {
+        const conflicts = existing.map((e) => `• ${e.title} (${e.startTime.slice(11, 16)}–${e.endTime.slice(11, 16)})`).join("\n");
+        return `Conflict detected — you already have:\n${conflicts}\n\nStill want me to create "${title}" at that time? Reply yes to confirm.`;
+      }
+
       const event = await createEvent(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
         { title, startTime, endTime, description }
       );
 
-      return `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString()})`;
+      const warnings: string[] = [];
+
+      const eventDate = startTime.split("T")[0];
+      const items = await listItems(userId, { status: "pending" as ItemStatus });
+      const sameDayTasks = items.filter((item) => item.dueDate === eventDate);
+      if (sameDayTasks.length > 0) {
+        const taskList = sameDayTasks.slice(0, 3).map((t) => `• ${t.title}${t.dueTime ? ` (due ${t.dueTime})` : ""}`).join("\n");
+        warnings.push(`Heads up — you have ${sameDayTasks.length} task${sameDayTasks.length > 1 ? "s" : ""} due that day:\n${taskList}`);
+      }
+
+      let result = `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString()})`;
+      if (warnings.length > 0) {
+        result += `\n\n⚠️ ${warnings.join("\n\n")}`;
+      }
+      return result;
     }
 
     case "create_category": {

@@ -55,6 +55,8 @@ function ItemRow({
   const trashOpacity = useTransform(x, [-80, -40, 0], [1, 0.5, 0]);
   const [swiping, setSwiping] = useState(false);
 
+  const bgOpacity = useTransform(x, [-120, -60, 0], [1, 0.8, 0]);
+
   return (
     <div
       className={`relative overflow-hidden ${
@@ -62,10 +64,21 @@ function ItemRow({
       } ${isDone ? "opacity-40" : ""}`}
     >
       <motion.div
-        className="absolute inset-y-0 right-0 flex items-center justify-center bg-destructive"
-        style={{ opacity: trashOpacity, width: 72 }}
+        className="absolute inset-y-0 right-0 flex items-center gap-0"
+        style={{ opacity: bgOpacity }}
       >
-        <Trash2 className="w-5 h-5 text-white" />
+        <button
+          onClick={() => onEdit(item)}
+          className="h-full w-14 flex items-center justify-center bg-secondary"
+        >
+          <Pencil className="w-4 h-4 text-foreground/70" />
+        </button>
+        <button
+          onClick={() => onDelete(item.id)}
+          className="h-full w-14 flex items-center justify-center bg-destructive"
+        >
+          <Trash2 className="w-4 h-4 text-white" />
+        </button>
       </motion.div>
 
       <motion.div
@@ -126,27 +139,25 @@ function ItemRow({
           </p>
         </div>
 
-        <div className="flex items-center gap-0.5 shrink-0">
-          {!isDone && !editMode && (
-            <button
-              onClick={() => onEdit(item)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {isDone && !editMode && (
-            <motion.button
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.2 }}
-              onClick={() => onDelete(item.id)}
-              className="shrink-0 text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all duration-150"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </motion.button>
-          )}
-        </div>
+        {!editMode && !isDone && (
+          <span
+            className="shrink-0 text-[10px] font-medium capitalize px-2 py-0.5 rounded-full border"
+            style={{ color: priorityColors[item.priority], borderColor: `${priorityColors[item.priority]}40` }}
+          >
+            {item.priority}
+          </span>
+        )}
+        {isDone && !editMode && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => onDelete(item.id)}
+            className="shrink-0 text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all duration-150"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </motion.button>
+        )}
       </motion.div>
     </div>
   );
