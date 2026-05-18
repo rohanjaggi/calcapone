@@ -56,6 +56,58 @@ export async function createEvent(
   };
 }
 
+export async function updateEvent(
+  encryptedRefreshToken: string,
+  calendarId: string,
+  googleEventId: string,
+  fields: { title?: string; startTime?: string; endTime?: string; description?: string }
+) {
+  const refreshToken = decrypt(encryptedRefreshToken);
+  if (!refreshToken) throw new Error("Could not decrypt refresh token");
+
+  const client = getOAuthClient();
+  client.setCredentials({ refresh_token: refreshToken });
+
+  const calendar = google.calendar({ version: "v3", auth: client });
+
+  const requestBody: Record<string, unknown> = {};
+  if (fields.title !== undefined) requestBody.summary = fields.title;
+  if (fields.description !== undefined) requestBody.description = fields.description;
+  if (fields.startTime !== undefined) requestBody.start = { dateTime: fields.startTime };
+  if (fields.endTime !== undefined) requestBody.end = { dateTime: fields.endTime };
+
+  const response = await calendar.events.patch({
+    calendarId: calendarId || "primary",
+    eventId: googleEventId,
+    requestBody,
+  });
+
+  return {
+    id: response.data.id!,
+    title: response.data.summary ?? fields.title ?? "",
+    startTime: response.data.start?.dateTime ?? fields.startTime ?? "",
+    endTime: response.data.end?.dateTime ?? fields.endTime ?? "",
+  };
+}
+
+export async function deleteEvent(
+  encryptedRefreshToken: string,
+  calendarId: string,
+  googleEventId: string
+) {
+  const refreshToken = decrypt(encryptedRefreshToken);
+  if (!refreshToken) throw new Error("Could not decrypt refresh token");
+
+  const client = getOAuthClient();
+  client.setCredentials({ refresh_token: refreshToken });
+
+  const calendar = google.calendar({ version: "v3", auth: client });
+  await calendar.events.delete({
+    calendarId: calendarId || "primary",
+    eventId: googleEventId,
+  });
+}
+
 export async function getEvents(
   encryptedRefreshToken: string,
   calendarId: string,

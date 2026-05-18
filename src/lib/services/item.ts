@@ -11,6 +11,7 @@ type CreateItemInput = {
   dueTime?: string | null;
   remindAt?: Date | null;
   recurring?: RecurringType;
+  googleEventId?: string | null;
 };
 
 type ItemFilters = {
@@ -29,6 +30,7 @@ type UpdateItemInput = {
   dueTime?: string | null;
   remindAt?: Date | null;
   recurring?: RecurringType;
+  googleEventId?: string | null;
 };
 
 export async function createItem(data: CreateItemInput) {

@@ -1,6 +1,7 @@
 import { getOrCreateDevUser } from "@/lib/dev-user";
 import { listItems } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
+import { listCategories } from "@/lib/services/category";
 import { CalendarClient } from "@/components/calendar/calendar-client";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,13 @@ export default async function CalendarPage() {
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0);
 
   const items = await listItems(user.id);
+
+  const categories = await listCategories(user.id);
+  const serializedCategories = categories.map((c) => ({
+    id: c.id,
+    name: c.name,
+    color: c.color ?? "#92785C",
+  }));
 
   let googleEvents: Array<{ id: string; title: string; startTime: string; endTime: string }> = [];
   if (user.googleRefreshToken) {
@@ -32,9 +40,15 @@ export default async function CalendarPage() {
     dueTime: item.dueTime,
     remindAt: item.remindAt?.toISOString() ?? null,
     recurring: item.recurring,
+    googleEventId: item.googleEventId ?? null,
   }));
 
   return (
-    <CalendarClient items={serializedItems} googleEvents={googleEvents} hasGoogleCalendar={!!user.googleRefreshToken} />
+    <CalendarClient
+      items={serializedItems}
+      googleEvents={googleEvents}
+      hasGoogleCalendar={!!user.googleRefreshToken}
+      categories={serializedCategories}
+    />
   );
 }

@@ -14,9 +14,11 @@ model User {
   googleRefreshToken String?     @map("google_refresh_token")
   googleCalendarId   String?     @map("google_calendar_id")
   timezone           String      @default("Asia/Singapore")
-  briefingEnabled    Boolean     @default(false) @map("briefing_enabled")
-  briefingTime       String?     @map("briefing_time")
-  aiProvider         AiProvider? @map("ai_provider")
+  briefingEnabled     Boolean     @default(false) @map("briefing_enabled")
+  briefingTime        String?     @map("briefing_time")
+  weeklyDigestEnabled Boolean     @default(false) @map("weekly_digest_enabled")
+  aiSuggestionEnabled Boolean     @default(true)  @map("ai_suggestion_enabled")
+  aiProvider          AiProvider? @map("ai_provider")
   aiApiKey           String?     @map("ai_api_key")
   aiModel            String?     @map("ai_model")
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
@@ -80,6 +82,7 @@ model Item {
   dueTime     String?       @map("due_time")
   remindAt    DateTime?     @map("remind_at") @db.Timestamptz
   recurring   RecurringType @default(none)
+  googleEventId String?       @map("google_event_id")
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 

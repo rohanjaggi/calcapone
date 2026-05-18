@@ -4,10 +4,10 @@ import { resolveAiClient, PROVIDER_DEFAULTS } from "@/lib/services/ai";
 
 describe("AI Service", () => {
   it("has correct default models for each provider", () => {
-    expect(PROVIDER_DEFAULTS.openai).toBe("gpt-4o");
+    expect(PROVIDER_DEFAULTS.openai).toBe("gpt-5.4");
     expect(PROVIDER_DEFAULTS.anthropic).toBe("claude-sonnet-4-6-20250514");
-    expect(PROVIDER_DEFAULTS.gemini).toBe("gemini-2.5-flash");
-    expect(PROVIDER_DEFAULTS.openrouter).toBe("openai/gpt-4o");
+    expect(PROVIDER_DEFAULTS.gemini).toBe("gemini-3-flash-preview");
+    expect(PROVIDER_DEFAULTS.openrouter).toBe("openai/gpt-5.4-mini");
   });
 
   it("throws if no API key provided and no default", () => {

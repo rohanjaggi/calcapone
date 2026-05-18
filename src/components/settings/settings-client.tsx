@@ -4,12 +4,12 @@ import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { AiProviderForm } from "@/components/settings/ai-provider-form";
 import { TimezoneSelect } from "@/components/settings/timezone-select";
-import { BriefingConfig } from "@/components/settings/briefing-config";
+import { NotificationsConfig } from "@/components/settings/notifications-config";
 import { GoogleCalendarCard } from "@/components/settings/google-calendar-card";
 import {
   saveAiConfig,
   saveTimezone,
-  saveBriefing,
+  saveNotifications,
   getGoogleAuthUrl,
   disconnectGoogle,
 } from "@/app/settings/actions";
@@ -20,6 +20,8 @@ type Props = {
     timezone: string;
     briefingEnabled: boolean;
     briefingTime: string | null;
+    weeklyDigestEnabled: boolean;
+    aiSuggestionEnabled: boolean;
     aiProvider: string | null;
     aiModel: string | null;
     hasAiApiKey: boolean;
@@ -41,8 +43,13 @@ export function SettingsClient({ userId, settings }: Props) {
     router.refresh();
   };
 
-  const handleSaveBriefing = async (data: { briefingEnabled: boolean; briefingTime: string | null }) => {
-    await saveBriefing(data);
+  const handleSaveNotifications = async (data: {
+    briefingEnabled: boolean;
+    briefingTime: string | null;
+    weeklyDigestEnabled: boolean;
+    aiSuggestionEnabled: boolean;
+  }) => {
+    await saveNotifications(data);
     router.refresh();
   };
 
@@ -82,10 +89,12 @@ export function SettingsClient({ userId, settings }: Props) {
           currentTimezone={settings.timezone}
           onSave={handleSaveTimezone}
         />
-        <BriefingConfig
-          enabled={settings.briefingEnabled}
-          time={settings.briefingTime}
-          onSave={handleSaveBriefing}
+        <NotificationsConfig
+          briefingEnabled={settings.briefingEnabled}
+          briefingTime={settings.briefingTime}
+          weeklyDigestEnabled={settings.weeklyDigestEnabled}
+          aiSuggestionEnabled={settings.aiSuggestionEnabled}
+          onSave={handleSaveNotifications}
         />
         <GoogleCalendarCard
           isConnected={settings.hasGoogleCalendar}

@@ -23,9 +23,11 @@ export async function saveTimezone(timezone: string) {
   await updateUserSettings(user.id, { timezone });
 }
 
-export async function saveBriefing(data: {
+export async function saveNotifications(data: {
   briefingEnabled: boolean;
   briefingTime: string | null;
+  weeklyDigestEnabled: boolean;
+  aiSuggestionEnabled: boolean;
 }) {
   const user = await getOrCreateDevUser();
   await updateUserSettings(user.id, data);

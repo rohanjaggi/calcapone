@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { motion } from "motion/react";
+import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "motion/react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,8 +11,15 @@ import {
   CheckCircle2,
   Bell,
   LinkIcon,
+  Pencil,
+  Trash2,
+  X,
 } from "lucide-react";
+import { editItem, removeItemWithGcalSync } from "@/app/actions";
+import { priorityColors, priorityLabels } from "@/lib/task-constants";
 import type { Item } from "@/lib/mock-data";
+import type { Category } from "@/lib/mock-data";
+import type { Priority } from "@/generated/prisma/enums";
 
 type GoogleEvent = { id: string; title: string; startTime: string; endTime: string };
 
@@ -41,13 +49,59 @@ type Props = {
   items: Item[];
   googleEvents: GoogleEvent[];
   hasGoogleCalendar: boolean;
+  categories: Category[];
 };
 
-export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props) {
+export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categories }: Props) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState(today);
+
+  const router = useRouter();
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editDueDate, setEditDueDate] = useState("");
+  const [editDueTime, setEditDueTime] = useState("");
+  const [editPriority, setEditPriority] = useState<Priority>("medium");
+  const [editCategoryId, setEditCategoryId] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const openEdit = (item: Item) => {
+    setEditTitle(item.title);
+    setEditDescription(item.description ?? "");
+    setEditDueDate(item.dueDate ?? "");
+    setEditDueTime(item.dueTime ?? "");
+    setEditPriority(item.priority as Priority);
+    setEditCategoryId(item.category.id);
+    setEditingItem(item);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingItem || !editTitle.trim()) return;
+    setEditSaving(true);
+    await editItem(editingItem.id, {
+      title: editTitle.trim(),
+      description: editDescription.trim() || null,
+      dueDate: editDueDate || null,
+      dueTime: editDueTime || null,
+      priority: editPriority,
+      categoryId: editCategoryId,
+    });
+    setEditSaving(false);
+    setEditingItem(null);
+    router.refresh();
+  };
+
+  const handleDelete = async (itemId: string) => {
+    setDeletingId(itemId);
+    await removeItemWithGcalSync(itemId);
+    setDeletingId(null);
+    router.refresh();
+  };
 
   const daysInMonth = getDaysInMonth(viewYear, viewMonth);
   const firstDay = getFirstDayOfMonth(viewYear, viewMonth);
@@ -65,7 +119,11 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
         dates.add(`${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`);
       }
     }
+    const linkedIds = new Set(
+      items.filter((item) => item.googleEventId).map((item) => item.googleEventId!)
+    );
     for (const e of googleEvents) {
+      if (linkedIds.has(e.id)) continue;
       const d = new Date(e.startTime);
       dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
     }
@@ -73,9 +131,26 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
   }, [items, googleEvents]);
 
   const selectedItems = useMemo(() => {
-    const result: Array<{ id: string; type: "event" | "item"; title: string; time: string | null; color: string; subtitle: string; isReminder: boolean }> = [];
+    const result: Array<{
+      id: string;
+      type: "event" | "item";
+      title: string;
+      time: string | null;
+      color: string;
+      subtitle: string;
+      isReminder: boolean;
+      itemData: Item | null;
+    }> = [];
+
+    // Collect googleEventIds from in-app items so we can deduplicate
+    const linkedGcalIds = new Set(
+      items.filter((item) => item.googleEventId).map((item) => item.googleEventId!)
+    );
 
     for (const e of googleEvents) {
+      // Skip Google Calendar events that have a linked in-app item (shown below with edit/delete)
+      if (linkedGcalIds.has(e.id)) continue;
+
       if (isSameDay(new Date(e.startTime), selectedDate)) {
         const start = new Date(e.startTime);
         const end = new Date(e.endTime);
@@ -83,12 +158,12 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
         result.push({
           id: e.id, type: "event", title: e.title, time: e.startTime,
           color: "#4A6FA5", subtitle: `${duration} min`, isReminder: false,
+          itemData: null,
         });
       }
     }
 
     for (const item of items) {
-      // Check if item falls on selected day via dueDate or remindAt
       let matchesDay = false;
       let itemTime: string | null = null;
 
@@ -112,6 +187,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
           id: item.id, type: "item", title: item.title, time: itemTime,
           color: item.category.color, subtitle: `${item.category.name} · ${item.priority}`,
           isReminder: !!item.remindAt,
+          itemData: item,
         });
       }
     }
@@ -244,6 +320,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
           <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
             {selectedItems.map((item, i) => {
               const Icon = item.type === "event" ? Calendar : item.isReminder ? Bell : CheckCircle2;
+              const canEdit = item.type === "item" && item.itemData;
               return (
                 <motion.div
                   key={item.id}
@@ -272,6 +349,23 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
                       )}
                     </div>
                   </div>
+                  {canEdit && (
+                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                      <button
+                        onClick={() => openEdit(item.itemData!)}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        disabled={deletingId === item.id}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all disabled:opacity-40"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </motion.div>
               );
             })}
@@ -306,6 +400,127 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar }: Props
           </div>
         </motion.div>
       )}
+
+      {/* Edit item sheet */}
+      <AnimatePresence>
+        {editingItem && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[55]"
+              onClick={() => setEditingItem(null)}
+            />
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 28, stiffness: 300 }}
+              className="fixed bottom-0 left-0 right-0 z-[60] bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
+            >
+              <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
+              <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
+                <div className="flex items-center justify-between mb-5">
+                  <h3 className="font-serif text-xl font-normal text-foreground">Edit Event</h3>
+                  <button onClick={() => setEditingItem(null)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Event title"
+                    autoFocus
+                    className="w-full h-12 px-4 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                  />
+
+                  <textarea
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder="Description (optional)"
+                    rows={2}
+                    className="w-full px-4 py-3 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all resize-none"
+                  />
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-2">Priority</label>
+                    <div className="flex gap-2">
+                      {(["low", "medium", "high"] as const).map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setEditPriority(p)}
+                          className={`flex-1 h-9 rounded-lg text-xs font-medium border transition-all duration-150 flex items-center justify-center gap-1.5 ${
+                            editPriority === p
+                              ? "border-primary bg-primary/5 text-foreground"
+                              : "border-border/50 text-muted-foreground"
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: priorityColors[p] }} />
+                          {priorityLabels[p]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-2">Category</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {categories.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => setEditCategoryId(c.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs border transition-all duration-150 flex items-center gap-1.5 ${
+                            editCategoryId === c.id
+                              ? "border-primary bg-primary/5 text-foreground font-medium"
+                              : "border-border/50 text-muted-foreground"
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color }} />
+                          {c.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-2">Date</label>
+                    <input
+                      type="date"
+                      value={editDueDate}
+                      onChange={(e) => setEditDueDate(e.target.value)}
+                      className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                    />
+                  </div>
+
+                  {editDueDate && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-2">Time</label>
+                      <input
+                        type="time"
+                        value={editDueTime}
+                        onChange={(e) => setEditDueTime(e.target.value)}
+                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleEditSave}
+                    disabled={!editTitle.trim() || editSaving}
+                    className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {editSaving ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
     </main>
   );

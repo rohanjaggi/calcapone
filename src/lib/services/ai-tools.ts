@@ -95,6 +95,32 @@ export const AI_TOOLS = [
     },
   },
   {
+    name: "update_calendar_event",
+    description: "Update an existing calendar event. Fuzzy-matches by title. Updates both the in-app item and the linked Google Calendar event.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "The title or partial title to find the event" },
+        title: { type: "string", description: "New event title" },
+        start_time: { type: "string", description: "New ISO 8601 start datetime" },
+        end_time: { type: "string", description: "New ISO 8601 end datetime" },
+        description: { type: "string", description: "New event description" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "delete_calendar_event",
+    description: "Delete a calendar event. Fuzzy-matches by title. Deletes both the in-app item and the linked Google Calendar event.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "The title or partial title of the event to delete" },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "suggest_schedule",
     description: "Suggest optimal times to work on pending todos based on free calendar slots",
     parameters: {
@@ -130,11 +156,13 @@ User: ${user.telegramUsername}
 Timezone: ${user.timezone}
 Current time: ${new Date().toISOString()}
 
-You can create items (tasks and reminders), create and check calendar events, and suggest schedule optimizations.
+You can create, update, and delete items (tasks and reminders), create/update/delete calendar events, and suggest schedule optimizations.
 When the user mentions a time without a date, assume today.
 When the user says "tomorrow", use the next calendar day in their timezone.
 Always confirm what you did after performing an action.
 Keep responses concise — this is a Telegram chat, not an essay.
 If the user says something like "Done!" after a reminder, mark the linked todo as complete.
+When the user asks to move, reschedule, or change a calendar event, use update_calendar_event.
+When the user asks to cancel or delete a calendar event, use delete_calendar_event.
 Suggest categories when the user creates items without one.`;
 }

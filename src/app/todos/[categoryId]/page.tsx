@@ -28,6 +28,7 @@ export default async function CategoryDetailPage({ params }: { params: Promise<{
     dueTime: item.dueTime,
     remindAt: item.remindAt?.toISOString() ?? null,
     recurring: item.recurring,
+    googleEventId: item.googleEventId ?? null,
   }));
 
   return (

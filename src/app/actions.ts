@@ -2,8 +2,9 @@
 
 import { createItem, updateItem, deleteItem } from "@/lib/services/item";
 import { getOrCreateDevUser } from "@/lib/dev-user";
-import { createCategory, listCategories } from "@/lib/services/category";
-import { createEvent } from "@/lib/services/calendar";
+import { createCategory, listCategories, updateCategory, deleteCategory } from "@/lib/services/category";
+import { createEvent, updateEvent, deleteEvent } from "@/lib/services/calendar";
+import { prisma } from "@/lib/prisma";
 import { chatWithAi } from "@/lib/services/ai";
 import { decryptUserApiKey } from "@/lib/services/user";
 import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
@@ -39,6 +40,67 @@ export async function addItem(data: {
 
 export async function removeItem(itemId: string) {
   const user = await getOrCreateDevUser();
+
+  const item = await prisma.item.findUnique({ where: { id: itemId, userId: user.id } });
+  if (item?.googleEventId && user.googleRefreshToken) {
+    try {
+      await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId);
+    } catch {
+      // gcal sync failure is non-fatal
+    }
+  }
+
+  await deleteItem(itemId, user.id);
+}
+
+export async function editItem(
+  itemId: string,
+  data: {
+    title?: string;
+    description?: string | null;
+    priority?: Priority;
+    categoryId?: string;
+    dueDate?: string | null;
+    dueTime?: string | null;
+  }
+) {
+  const user = await getOrCreateDevUser();
+  const item = await updateItem(itemId, user.id, data);
+
+  if (item.googleEventId && user.googleRefreshToken) {
+    try {
+      const gcalFields: { title?: string; startTime?: string; endTime?: string; description?: string } = {};
+      if (data.title) gcalFields.title = data.title;
+      if (data.description !== undefined) gcalFields.description = data.description ?? "";
+      if (data.dueDate && data.dueTime) {
+        gcalFields.startTime = `${data.dueDate}T${data.dueTime}:00`;
+        const startHour = parseInt(data.dueTime.split(":")[0]);
+        gcalFields.endTime = `${data.dueDate}T${String(startHour + 1).padStart(2, "0")}:${data.dueTime.split(":")[1]}:00`;
+      }
+      if (Object.keys(gcalFields).length > 0) {
+        await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, gcalFields);
+      }
+    } catch {
+      // gcal sync failure is non-fatal
+    }
+  }
+
+  return item;
+}
+
+export async function removeItemWithGcalSync(itemId: string) {
+  const user = await getOrCreateDevUser();
+
+  const item = await prisma.item.findUnique({ where: { id: itemId, userId: user.id } });
+
+  if (item?.googleEventId && user.googleRefreshToken) {
+    try {
+      await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId);
+    } catch {
+      // gcal sync failure is non-fatal
+    }
+  }
+
   await deleteItem(itemId, user.id);
 }
 
@@ -51,6 +113,16 @@ export async function getCategories() {
   const user = await getOrCreateDevUser();
   const cats = await listCategories(user.id);
   return cats.map((c) => ({ id: c.id, name: c.name, color: c.color }));
+}
+
+export async function editCategory(categoryId: string, data: { name?: string; color?: string | null }) {
+  const user = await getOrCreateDevUser();
+  return updateCategory(categoryId, user.id, data);
+}
+
+export async function removeCategory(categoryId: string) {
+  const user = await getOrCreateDevUser();
+  await deleteCategory(categoryId, user.id);
 }
 
 export async function getAiRecommendation(items: Array<{ title: string; priority: string; status: string; dueDate: string | null; dueTime: string | null; remindAt: string | null; category: { name: string } }>) {
@@ -127,16 +199,38 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
       if (!user.googleRefreshToken) {
         return { success: false, message: "Connect Google Calendar in Settings first" };
       }
+      const title = call.args.title as string;
+      const startTime = call.args.start_time as string;
+      const endTime = call.args.end_time as string;
+      const description = (call.args.description as string) ?? undefined;
+
       const event = await createEvent(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        {
-          title: call.args.title as string,
-          startTime: call.args.start_time as string,
-          endTime: call.args.end_time as string,
-          description: call.args.description as string | undefined,
-        }
+        { title, startTime, endTime, description }
       );
+
+      // Create in-app item linked to gcal event
+      const startDate = new Date(startTime);
+      const dueDate = startDate.toISOString().split("T")[0];
+      const dueTime = startDate.toTimeString().slice(0, 5);
+
+      const cats = await listCategories(user.id);
+      let cat = cats.find((c: { name: string }) => c.name.toLowerCase() === "events");
+      if (!cat) {
+        cat = await createCategory({ userId: user.id, name: "Events" });
+      }
+
+      await createItem({
+        userId: user.id,
+        categoryId: cat.id,
+        title,
+        description: description ?? null,
+        dueDate,
+        dueTime,
+        googleEventId: event.id,
+      });
+
       results.push(`Event created: ${event.title}`);
     } else if (call.name === "create_category") {
       await createCategory({

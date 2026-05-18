@@ -1,7 +1,7 @@
 // src/lib/services/execute-tool.ts
 import { createItem, listItems, updateItem, deleteItem } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
-import { getEvents, createEvent } from "@/lib/services/calendar";
+import { getEvents, createEvent, updateEvent, deleteEvent } from "@/lib/services/calendar";
 import type { Priority, RecurringType, ItemStatus } from "@/generated/prisma/enums";
 
 export async function executeToolCall(
@@ -60,6 +60,15 @@ export async function executeToolCall(
         item.title.toLowerCase().includes((args.title as string).toLowerCase())
       );
       if (!match) return `Couldn't find an item matching "${args.title}"`;
+
+      if (match.googleEventId && user.googleRefreshToken) {
+        try {
+          await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId);
+        } catch {
+          // gcal sync failure is non-fatal
+        }
+      }
+
       await deleteItem(match.id, userId);
       return `Deleted: **${match.title}**`;
     }
@@ -88,6 +97,26 @@ export async function executeToolCall(
       if (args.status !== undefined) updates.status = args.status as ItemStatus;
 
       const updated = await updateItem(match.id, userId, updates);
+
+      if (match.googleEventId && user.googleRefreshToken) {
+        try {
+          const gcalFields: { title?: string; startTime?: string; endTime?: string; description?: string } = {};
+          if (updates.title) gcalFields.title = updates.title;
+          if (updates.dueDate && updates.dueTime) {
+            gcalFields.startTime = `${updates.dueDate}T${updates.dueTime}:00`;
+            const [h, m] = updates.dueTime.split(":").map(Number);
+            if (h < 23) {
+              gcalFields.endTime = `${updates.dueDate}T${String(h + 1).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+            }
+          }
+          if (Object.keys(gcalFields).length > 0) {
+            await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId, gcalFields);
+          }
+        } catch {
+          // gcal sync failure is non-fatal
+        }
+      }
+
       return `Updated: **${updated.title}**`;
     }
 
@@ -105,16 +134,39 @@ export async function executeToolCall(
 
     case "create_calendar_event": {
       if (!user.googleRefreshToken) return "Google Calendar not connected. Connect it in Settings.";
+
+      const title = args.title as string;
+      const startTime = args.start_time as string;
+      const endTime = args.end_time as string;
+      const description = (args.description as string) ?? undefined;
+
       const event = await createEvent(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        {
-          title: args.title as string,
-          startTime: args.start_time as string,
-          endTime: args.end_time as string,
-          description: args.description as string | undefined,
-        }
+        { title, startTime, endTime, description }
       );
+
+      // Also create an in-app item linked to the gcal event
+      const startDate = new Date(startTime);
+      const dueDate = startDate.toISOString().split("T")[0];
+      const dueTime = startDate.toTimeString().slice(0, 5);
+
+      let cats = await listCategories(userId);
+      let cat = cats.find((c) => c.name.toLowerCase() === "events");
+      if (!cat) {
+        cat = await createCategory({ userId, name: "Events" });
+      }
+
+      await createItem({
+        userId,
+        categoryId: cat.id,
+        title,
+        description: description ?? null,
+        dueDate,
+        dueTime,
+        googleEventId: event.id,
+      });
+
       return `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString()})`;
     }
 
@@ -131,6 +183,76 @@ export async function executeToolCall(
       const cats = await listCategories(userId);
       if (cats.length === 0) return "No categories yet.";
       return cats.map((c) => `- ${c.name}`).join("\n");
+    }
+
+    case "update_calendar_event": {
+      const query = (args.query as string).toLowerCase();
+      const items = await listItems(userId);
+      const match = items.find((item) =>
+        item.title.toLowerCase().includes(query) && item.googleEventId
+      );
+      if (!match) {
+        const anyMatch = items.find((item) => item.title.toLowerCase().includes(query));
+        if (anyMatch) return `Found "${anyMatch.title}" but it's not linked to Google Calendar. Use update_item instead.`;
+        return `Couldn't find a calendar event matching "${args.query}"`;
+      }
+
+      const updates: { title?: string; dueDate?: string | null; dueTime?: string | null; description?: string | null } = {};
+      const gcalFields: { title?: string; startTime?: string; endTime?: string; description?: string } = {};
+
+      if (args.title !== undefined) {
+        updates.title = args.title as string;
+        gcalFields.title = args.title as string;
+      }
+      if (args.description !== undefined) {
+        updates.description = args.description as string;
+        gcalFields.description = args.description as string;
+      }
+      if (args.start_time !== undefined) {
+        const startDate = new Date(args.start_time as string);
+        updates.dueDate = startDate.toISOString().split("T")[0];
+        updates.dueTime = startDate.toTimeString().slice(0, 5);
+        gcalFields.startTime = args.start_time as string;
+      }
+      if (args.end_time !== undefined) {
+        gcalFields.endTime = args.end_time as string;
+      }
+
+      await updateItem(match.id, userId, updates);
+
+      if (user.googleRefreshToken && match.googleEventId) {
+        try {
+          await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId, gcalFields);
+        } catch {
+          return `Updated in-app event: **${args.title ?? match.title}** (Google Calendar sync failed)`;
+        }
+      }
+
+      return `Updated calendar event: **${args.title ?? match.title}**`;
+    }
+
+    case "delete_calendar_event": {
+      const query = (args.query as string).toLowerCase();
+      const items = await listItems(userId);
+      const match = items.find((item) =>
+        item.title.toLowerCase().includes(query) && item.googleEventId
+      );
+      if (!match) {
+        const anyMatch = items.find((item) => item.title.toLowerCase().includes(query));
+        if (anyMatch) return `Found "${anyMatch.title}" but it's not linked to Google Calendar. Use delete_item instead.`;
+        return `Couldn't find a calendar event matching "${args.query}"`;
+      }
+
+      if (user.googleRefreshToken && match.googleEventId) {
+        try {
+          await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId);
+        } catch {
+          // gcal sync failure is non-fatal
+        }
+      }
+
+      await deleteItem(match.id, userId);
+      return `Deleted calendar event: **${match.title}**`;
     }
 
     case "suggest_schedule": {

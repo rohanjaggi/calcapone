@@ -15,6 +15,13 @@ export async function listCategories(userId: string) {
   });
 }
 
+export async function updateCategory(id: string, userId: string, data: { name?: string; color?: string | null }) {
+  return prisma.category.update({
+    where: { id, userId },
+    data,
+  });
+}
+
 export async function deleteCategory(id: string, userId: string) {
   return prisma.category.delete({
     where: { id, userId },

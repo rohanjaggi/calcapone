@@ -94,7 +94,22 @@ export async function handleEvent(body: string, ctx: CommandContext): Promise<st
     cat = await createCategory({ userId: ctx.userId, name: "Events" });
   }
 
-  // Create in-app item
+  // Sync to Google Calendar first (if connected) to get the event ID
+  let googleEventId: string | null = null;
+  if (ctx.user.googleRefreshToken) {
+    try {
+      const gcalEvent = await createEvent(
+        ctx.user.googleRefreshToken,
+        ctx.user.googleCalendarId ?? "primary",
+        { title, startTime, endTime, description }
+      );
+      googleEventId = gcalEvent.id;
+    } catch {
+      // gcal sync failure is non-fatal
+    }
+  }
+
+  // Create in-app item (with googleEventId if sync succeeded)
   await createItem({
     userId: ctx.userId,
     categoryId: cat.id,
@@ -102,22 +117,14 @@ export async function handleEvent(body: string, ctx: CommandContext): Promise<st
     description: description ?? null,
     dueDate,
     dueTime,
+    googleEventId,
   });
 
   const parts: string[] = [`Created event: **${title}** (${dueDate} ${dueTime})`];
-
-  // Sync to Google Calendar if connected
-  if (ctx.user.googleRefreshToken) {
-    try {
-      await createEvent(
-        ctx.user.googleRefreshToken,
-        ctx.user.googleCalendarId ?? "primary",
-        { title, startTime, endTime, description }
-      );
-      parts.push("Synced to Google Calendar");
-    } catch {
-      parts.push("Failed to sync to Google Calendar");
-    }
+  if (googleEventId) {
+    parts.push("Synced to Google Calendar");
+  } else if (ctx.user.googleRefreshToken) {
+    parts.push("Failed to sync to Google Calendar");
   }
 
   return parts.join("\n");

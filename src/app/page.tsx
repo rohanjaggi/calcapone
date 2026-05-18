@@ -19,7 +19,15 @@ export default async function Dashboard() {
     dueTime: item.dueTime,
     remindAt: item.remindAt?.toISOString() ?? null,
     recurring: item.recurring,
+    googleEventId: item.googleEventId ?? null,
   }));
 
-  return <DashboardClient userName={user.telegramUsername} items={serializedItems} eventCount={0} />;
+  return (
+    <DashboardClient
+      userName={user.telegramUsername}
+      items={serializedItems}
+      eventCount={0}
+      aiSuggestionEnabled={user.aiSuggestionEnabled}
+    />
+  );
 }

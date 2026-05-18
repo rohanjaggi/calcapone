@@ -23,6 +23,7 @@ export default async function TodosPage() {
     dueTime: item.dueTime,
     remindAt: item.remindAt?.toISOString() ?? null,
     recurring: item.recurring,
+    googleEventId: item.googleEventId ?? null,
   }));
 
   const serializedCategories = categories.map((c) => ({

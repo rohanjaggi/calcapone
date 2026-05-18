@@ -34,9 +34,10 @@ type Props = {
   userName: string;
   items: Item[];
   eventCount: number;
+  aiSuggestionEnabled: boolean;
 };
 
-export function DashboardClient({ userName, items, eventCount }: Props) {
+export function DashboardClient({ userName, items, eventCount, aiSuggestionEnabled }: Props) {
   const timeline = buildTimeline(items);
   const pendingItems = items.filter((i) => i.status !== "done").length;
   const pendingReminders = items.filter((i) => i.remindAt && i.status !== "done").length;
@@ -47,7 +48,7 @@ export function DashboardClient({ userName, items, eventCount }: Props) {
       <StatsRow taskCount={pendingItems} eventCount={eventCount} reminderCount={pendingReminders} />
       <AiInput />
       <DayTimeline items={timeline} />
-      <AiRecommendation items={items} />
+      {aiSuggestionEnabled && <AiRecommendation items={items} />}
     </main>
   );
 }

@@ -20,6 +20,7 @@ export type Item = {
   dueTime: string | null;
   remindAt: string | null;
   recurring: "none" | "daily" | "weekly" | "monthly";
+  googleEventId: string | null;
 };
 
 export type TimelineItem = {

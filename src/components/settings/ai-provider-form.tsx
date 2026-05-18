@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "motion/react";
-import { Key, Eye, EyeOff, Check, Cpu } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { Key, Eye, EyeOff, Check, Cpu, ChevronDown } from "lucide-react";
 import { AI_MODELS } from "@/lib/models";
 
 const PROVIDERS = [
@@ -20,6 +20,7 @@ type Props = {
 };
 
 export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSave }: Props) {
+  const [open, setOpen] = useState(false);
   const [provider, setProvider] = useState(currentProvider ?? "openai");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -46,15 +47,30 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
 
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.1 }} className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-      <div className="px-4 py-3 border-b border-border/40 flex items-center gap-2">
-        <div className="w-7 h-7 rounded-lg bg-brass-light flex items-center justify-center">
-          <Cpu className="w-3.5 h-3.5 text-brass" />
+      <button
+        onClick={() => setOpen(!open)}
+        className={`w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-muted/30 ${open ? "border-b border-border/40" : ""}`}
+      >
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-brass-light flex items-center justify-center">
+            <Cpu className="w-3.5 h-3.5 text-brass" />
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-foreground">AI Provider</h3>
+            <p className="text-[11px] text-muted-foreground">Bring your own API key</p>
+          </div>
         </div>
-        <div>
-          <h3 className="text-sm font-medium text-foreground">AI Provider</h3>
-          <p className="text-[11px] text-muted-foreground">Bring your own API key</p>
-        </div>
-      </div>
+        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
       <div className="p-4 space-y-4">
         <div>
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Provider</label>
@@ -92,6 +108,9 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
           {saved ? <><Check className="w-4 h-4" />Saved</> : saving ? "Saving..." : "Save AI Configuration"}
         </button>
       </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
