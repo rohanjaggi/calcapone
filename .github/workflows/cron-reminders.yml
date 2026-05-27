@@ -11,6 +11,14 @@ jobs:
     steps:
       - name: Trigger reminder cron endpoint
         run: |
-          curl -s -X POST "${{ secrets.APP_URL }}/api/cron/reminders" \
+          response=$(curl -s -L -w "\n%{http_code}" -X POST "${{ secrets.APP_URL }}/api/cron/reminders" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json"
+            -H "Content-Type: application/json")
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | sed '$d')
+          echo "Status: $http_code"
+          echo "Response: $body"
+          if [ "$http_code" -ne 200 ]; then
+            echo "::error::Cron endpoint returned $http_code"
+            exit 1
+          fi
