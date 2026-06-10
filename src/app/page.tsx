@@ -1,5 +1,6 @@
 import { getOrCreateDevUser } from "@/lib/dev-user";
 import { listItems } from "@/lib/services/item";
+import { getEvents } from "@/lib/services/calendar";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,26 @@ export const dynamic = "force-dynamic";
 export default async function Dashboard() {
   const user = await getOrCreateDevUser();
   const items = await listItems(user.id);
+
+  let eventCount = 0;
+  if (user.googleRefreshToken) {
+    try {
+      const now = new Date();
+      const todayStart = new Date(now.toLocaleString("en-US", { timeZone: user.timezone }));
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(todayStart);
+      todayEnd.setHours(23, 59, 59, 999);
+      const events = await getEvents(
+        user.googleRefreshToken,
+        user.googleCalendarId ?? "primary",
+        todayStart,
+        todayEnd
+      );
+      eventCount = events.length;
+    } catch {
+      // calendar fetch failure is non-fatal
+    }
+  }
 
   const serializedItems = items.map((item) => ({
     id: item.id,
@@ -26,7 +47,7 @@ export default async function Dashboard() {
     <DashboardClient
       userName={user.telegramUsername}
       items={serializedItems}
-      eventCount={0}
+      eventCount={eventCount}
       aiSuggestionEnabled={user.aiSuggestionEnabled}
     />
   );

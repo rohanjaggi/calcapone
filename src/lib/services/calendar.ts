@@ -29,7 +29,8 @@ export async function exchangeCode(code: string) {
 export async function createEvent(
   encryptedRefreshToken: string,
   calendarId: string,
-  event: { title: string; startTime: string; endTime: string; description?: string }
+  event: { title: string; startTime: string; endTime: string; description?: string },
+  timezone?: string
 ) {
   const refreshToken = decrypt(encryptedRefreshToken);
   if (!refreshToken) throw new Error("Could not decrypt refresh token");
@@ -43,8 +44,8 @@ export async function createEvent(
     requestBody: {
       summary: event.title,
       description: event.description,
-      start: { dateTime: event.startTime },
-      end: { dateTime: event.endTime },
+      start: { dateTime: event.startTime, timeZone: timezone },
+      end: { dateTime: event.endTime, timeZone: timezone },
     },
   });
 
@@ -60,7 +61,8 @@ export async function updateEvent(
   encryptedRefreshToken: string,
   calendarId: string,
   googleEventId: string,
-  fields: { title?: string; startTime?: string; endTime?: string; description?: string }
+  fields: { title?: string; startTime?: string; endTime?: string; description?: string },
+  timezone?: string
 ) {
   const refreshToken = decrypt(encryptedRefreshToken);
   if (!refreshToken) throw new Error("Could not decrypt refresh token");
@@ -73,8 +75,8 @@ export async function updateEvent(
   const requestBody: Record<string, unknown> = {};
   if (fields.title !== undefined) requestBody.summary = fields.title;
   if (fields.description !== undefined) requestBody.description = fields.description;
-  if (fields.startTime !== undefined) requestBody.start = { dateTime: fields.startTime };
-  if (fields.endTime !== undefined) requestBody.end = { dateTime: fields.endTime };
+  if (fields.startTime !== undefined) requestBody.start = { dateTime: fields.startTime, timeZone: timezone };
+  if (fields.endTime !== undefined) requestBody.end = { dateTime: fields.endTime, timeZone: timezone };
 
   const response = await calendar.events.patch({
     calendarId: calendarId || "primary",

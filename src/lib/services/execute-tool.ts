@@ -111,7 +111,7 @@ export async function executeToolCall(
             }
           }
           if (Object.keys(gcalFields).length > 0) {
-            await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId, gcalFields);
+            await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId, gcalFields, user.timezone);
           }
         } catch {
           // gcal sync failure is non-fatal
@@ -156,7 +156,8 @@ export async function executeToolCall(
       const event = await createEvent(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        { title, startTime, endTime, description }
+        { title, startTime, endTime, description },
+        user.timezone
       );
 
       const warnings: string[] = [];
@@ -169,7 +170,7 @@ export async function executeToolCall(
         warnings.push(`Heads up — you have ${sameDayTasks.length} task${sameDayTasks.length > 1 ? "s" : ""} due that day:\n${taskList}`);
       }
 
-      let result = `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString()})`;
+      let result = `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString("en-US", { timeZone: user.timezone })})`;
       if (warnings.length > 0) {
         result += `\n\n⚠️ ${warnings.join("\n\n")}`;
       }
@@ -228,7 +229,7 @@ export async function executeToolCall(
 
       if (user.googleRefreshToken && match.googleEventId) {
         try {
-          await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId, gcalFields);
+          await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId, gcalFields, user.timezone);
         } catch {
           return `Updated in-app event: **${args.title ?? match.title}** (Google Calendar sync failed)`;
         }

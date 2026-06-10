@@ -154,11 +154,13 @@ export function buildSystemPrompt(user: { telegramUsername: string; timezone: st
     ? `Available categories: ${user.categories.join(", ")}`
     : "No categories exist yet.";
 
+  const now = new Date().toLocaleString("en-US", { timeZone: user.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
   return `You are Calcapone, a smart personal assistant that helps manage calendar, todos, and reminders.
 
 User: ${user.telegramUsername}
 Timezone: ${user.timezone}
-Current time: ${new Date().toISOString()}
+Current time in user's timezone: ${now}
 
 ${categoryList}
 
