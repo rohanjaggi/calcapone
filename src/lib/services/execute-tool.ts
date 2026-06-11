@@ -203,11 +203,29 @@ export async function executeToolCall(
         user.timezone
       );
 
+      // Link event to an in-app item so update/delete can find it
+      const cats = await listCategories(userId);
+      const cat = cats[0];
+      if (cat) {
+        const eventLocalStart = new Date(event.startTime);
+        const linkedDate = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(eventLocalStart);
+        const linkedTime = new Intl.DateTimeFormat("en-GB", { timeZone: user.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(eventLocalStart);
+        await createItem({
+          userId,
+          categoryId: cat.id,
+          title: event.title,
+          description: description ?? null,
+          dueDate: linkedDate,
+          dueTime: linkedTime,
+          googleEventId: event.id,
+        });
+      }
+
       const warnings: string[] = [];
 
       const eventDate = startTime.split("T")[0];
       const items = await listItems(userId, { status: "pending" as ItemStatus });
-      const sameDayTasks = items.filter((item) => item.dueDate === eventDate);
+      const sameDayTasks = items.filter((item) => item.dueDate === eventDate && !item.googleEventId);
       if (sameDayTasks.length > 0) {
         const taskList = sameDayTasks.slice(0, 3).map((t) => `• ${t.title}${t.dueTime ? ` (due ${t.dueTime})` : ""}`).join("\n");
         warnings.push(`Heads up — you have ${sameDayTasks.length} task${sameDayTasks.length > 1 ? "s" : ""} due that day:\n${taskList}`);
@@ -260,8 +278,8 @@ export async function executeToolCall(
       }
       if (args.start_time !== undefined) {
         const startDate = new Date(args.start_time as string);
-        updates.dueDate = startDate.toISOString().split("T")[0];
-        updates.dueTime = startDate.toTimeString().slice(0, 5);
+        updates.dueDate = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(startDate);
+        updates.dueTime = new Intl.DateTimeFormat("en-GB", { timeZone: user.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(startDate);
         gcalFields.startTime = args.start_time as string;
       }
       if (args.end_time !== undefined) {

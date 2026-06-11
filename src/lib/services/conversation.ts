@@ -20,12 +20,22 @@ export async function getRecentMessages(
     select: { role: true, content: true },
   });
 
-  return messages
-    .reverse()
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    }));
+  const ordered = messages.reverse().map((m) => ({
+    role: m.role as "user" | "assistant",
+    content: m.content,
+  }));
+
+  // Coalesce consecutive same-role messages (Anthropic rejects them)
+  const coalesced: typeof ordered = [];
+  for (const msg of ordered) {
+    const prev = coalesced[coalesced.length - 1];
+    if (prev && prev.role === msg.role) {
+      prev.content += `\n${msg.content}`;
+    } else {
+      coalesced.push(msg);
+    }
+  }
+  return coalesced;
 }
 
 export async function saveMessage(

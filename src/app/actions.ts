@@ -78,11 +78,16 @@ export async function editItem(
       if (data.description !== undefined) gcalFields.description = data.description ?? "";
       if (data.dueDate && data.dueTime) {
         gcalFields.startTime = `${data.dueDate}T${data.dueTime}:00`;
-        const startHour = parseInt(data.dueTime.split(":")[0]);
-        gcalFields.endTime = `${data.dueDate}T${String(startHour + 1).padStart(2, "0")}:${data.dueTime.split(":")[1]}:00`;
+        const [h, m] = data.dueTime.split(":").map(Number);
+        if (h < 23) {
+          gcalFields.endTime = `${data.dueDate}T${String(h + 1).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+        } else {
+          const nextDay = new Date(new Date(`${data.dueDate}T00:00:00`).getTime() + 86400000).toISOString().split("T")[0];
+          gcalFields.endTime = `${nextDay}T00:${String(m).padStart(2, "0")}:00`;
+        }
       }
       if (Object.keys(gcalFields).length > 0) {
-        await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, gcalFields);
+        await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, gcalFields, user.timezone);
       }
     } catch {
       // gcal sync failure is non-fatal
@@ -235,8 +240,23 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
       const event = await createEvent(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        { title, startTime, endTime, description }
+        { title, startTime, endTime, description },
+        user.timezone
       );
+
+      // Link event to an in-app item so update/delete can find it
+      const eventCats = await listCategories(user.id);
+      const eventCat = eventCats[0];
+      if (eventCat) {
+        await createItem({
+          userId: user.id,
+          categoryId: eventCat.id,
+          title: event.title,
+          dueDate: startTime.split("T")[0],
+          dueTime: startTime.slice(11, 16),
+          googleEventId: event.id,
+        });
+      }
 
       results.push(`Event created: ${event.title}`);
     } else if (call.name === "create_category") {

@@ -9,9 +9,10 @@ export async function POST(request: NextRequest) {
   return runCronJob(request, {
     filter: { weeklyDigestEnabled: true },
     shouldRun: (user, now) => {
-      const userHour = new Intl.DateTimeFormat("en-GB", {
+      const userTime = new Intl.DateTimeFormat("en-GB", {
         timeZone: user.timezone,
         hour: "2-digit",
+        minute: "2-digit",
         hour12: false,
       }).format(now);
 
@@ -21,9 +22,7 @@ export async function POST(request: NextRequest) {
       }).format(now);
 
       const targetDay = DAY_NAMES[user.digestDay];
-      const targetHour = user.digestTime.split(":")[0];
-
-      return userHour.startsWith(targetHour) && userWeekday === targetDay;
+      return userTime === user.digestTime && userWeekday === targetDay;
     },
     handler: async (user, now) => {
       const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(now);

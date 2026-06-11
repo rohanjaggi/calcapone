@@ -27,8 +27,9 @@ export async function POST(request: NextRequest) {
       let calendarSummary = "";
       if (user.googleRefreshToken) {
         try {
-          const startOfDay = new Date(`${todayStr}T00:00:00Z`);
-          const endOfDay = new Date(`${todayStr}T23:59:59Z`);
+          const offsetMs = getTimezoneOffsetMs(user.timezone, now);
+          const startOfDay = new Date(new Date(`${todayStr}T00:00:00Z`).getTime() - offsetMs);
+          const endOfDay = new Date(startOfDay.getTime() + 86400000 - 1);
           const events = await getEvents(user.googleRefreshToken, user.googleCalendarId ?? "primary", startOfDay, endOfDay);
           if (events.length > 0) {
             calendarSummary = `\nCalendar: ${events.map((e) => `${e.startTime.slice(11, 16)} ${e.title}`).join(", ")}`;
@@ -57,6 +58,12 @@ export async function POST(request: NextRequest) {
       await sendMessage(Number(user.telegramId), message);
     },
   });
+}
+
+function getTimezoneOffsetMs(timezone: string, date: Date): number {
+  const utcStr = date.toLocaleString("en-US", { timeZone: "UTC" });
+  const tzStr = date.toLocaleString("en-US", { timeZone: timezone });
+  return new Date(tzStr).getTime() - new Date(utcStr).getTime();
 }
 
 function fallbackBriefing(date: string, taskCount: number, overdueCount: number, calendarSummary: string): string {

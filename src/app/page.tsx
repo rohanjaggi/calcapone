@@ -14,10 +14,12 @@ export default async function Dashboard() {
   if (user.googleRefreshToken) {
     try {
       const now = new Date();
-      const todayStart = new Date(now.toLocaleString("en-US", { timeZone: user.timezone }));
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date(todayStart);
-      todayEnd.setHours(23, 59, 59, 999);
+      const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(now);
+      const utcStr = now.toLocaleString("en-US", { timeZone: "UTC" });
+      const tzStr = now.toLocaleString("en-US", { timeZone: user.timezone });
+      const offsetMs = new Date(tzStr).getTime() - new Date(utcStr).getTime();
+      const todayStart = new Date(new Date(`${todayStr}T00:00:00Z`).getTime() - offsetMs);
+      const todayEnd = new Date(todayStart.getTime() + 86400000 - 1);
       const events = await getEvents(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",

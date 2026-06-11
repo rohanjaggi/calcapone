@@ -58,7 +58,8 @@ export async function handleToday(ctx: CommandContext): Promise<string> {
 
   if (ctx.user.googleRefreshToken) {
     try {
-      const startOfDay = new Date(`${todayStr}T00:00:00Z`);
+      const offsetMs = getTimezoneOffsetMs(ctx.user.timezone, now);
+      const startOfDay = new Date(new Date(`${todayStr}T00:00:00Z`).getTime() - offsetMs);
       const threeDaysOut = new Date(startOfDay);
       threeDaysOut.setDate(startOfDay.getDate() + 3);
       const events = await getEvents(
@@ -97,4 +98,10 @@ export async function handleList(body: string, ctx: CommandContext): Promise<str
       return `${i + 1}. ${icon} ${item.title}${due}`;
     })
     .join("\n");
+}
+
+function getTimezoneOffsetMs(timezone: string, date: Date): number {
+  const utcStr = date.toLocaleString("en-US", { timeZone: "UTC" });
+  const tzStr = date.toLocaleString("en-US", { timeZone: timezone });
+  return new Date(tzStr).getTime() - new Date(utcStr).getTime();
 }

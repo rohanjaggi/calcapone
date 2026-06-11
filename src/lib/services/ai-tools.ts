@@ -263,7 +263,7 @@ Rules:
 - Keep responses concise — this is a Telegram chat.
 - If the user references "that", "it", or "the reminder/task" without a name, check conversation history for context.
 - When creating tasks, ONLY use one of the existing categories listed above. Never invent new category names.
-- Calendar events are separate from tasks — do NOT create an in-app task when creating a calendar event.
+- Calendar events are automatically tracked in-app — do NOT also create a separate task for the same event.
 - When the user asks to move, reschedule, or change a calendar event, use update_calendar_event.
 - When the user asks to cancel or delete a calendar event, use delete_calendar_event.
 

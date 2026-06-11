@@ -19,11 +19,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (body.description !== undefined) gcalFields.description = body.description ?? "";
       if (body.dueDate && body.dueTime) {
         gcalFields.startTime = `${body.dueDate}T${body.dueTime}:00`;
-        const startHour = parseInt(body.dueTime.split(":")[0]);
-        gcalFields.endTime = `${body.dueDate}T${String(startHour + 1).padStart(2, "0")}:${body.dueTime.split(":")[1]}:00`;
+        const [h, m] = body.dueTime.split(":").map(Number);
+        if (h < 23) {
+          gcalFields.endTime = `${body.dueDate}T${String(h + 1).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+        } else {
+          const nextDay = new Date(new Date(`${body.dueDate}T00:00:00`).getTime() + 86400000).toISOString().split("T")[0];
+          gcalFields.endTime = `${nextDay}T00:${String(m).padStart(2, "0")}:00`;
+        }
       }
       if (Object.keys(gcalFields).length > 0) {
-        await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, gcalFields);
+        await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, gcalFields, user.timezone);
       }
     } catch {
       // gcal sync failure is non-fatal

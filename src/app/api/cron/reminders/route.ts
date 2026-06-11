@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDueItems, markItemSent, createNextOccurrence, createItem, getEscalationCandidates, updateNotificationStage } from "@/lib/services/item";
 import { sendMessage } from "@/lib/services/telegram";
 import { shouldNotify } from "@/lib/services/cron-utils";
+import { pruneOldMessages } from "@/lib/services/conversation";
 
 export async function POST(request: NextRequest) {
   const secret = request.headers.get("authorization");
@@ -98,7 +99,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ processed: dueItems.length, sent, skipped, errors, escalated });
+  const pruned = await pruneOldMessages();
+
+  return NextResponse.json({ processed: dueItems.length, sent, skipped, errors, escalated, pruned });
 }
 
 function toMinutes(dateStr: string, timeStr: string): number {
