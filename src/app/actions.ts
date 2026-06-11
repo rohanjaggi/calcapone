@@ -113,6 +113,21 @@ export async function removeItemWithGcalSync(itemId: string) {
   await deleteItem(itemId, user.id);
 }
 
+export async function deleteGoogleCalendarEvent(googleEventId: string) {
+  const user = await getOrCreateDevUser();
+  if (!user.googleRefreshToken) throw new Error("Google Calendar not connected");
+  await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", googleEventId);
+}
+
+export async function editGoogleCalendarEvent(
+  googleEventId: string,
+  data: { title?: string; description?: string; startTime?: string; endTime?: string }
+) {
+  const user = await getOrCreateDevUser();
+  if (!user.googleRefreshToken) throw new Error("Google Calendar not connected");
+  await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", googleEventId, data, user.timezone);
+}
+
 export async function addCategory(name: string, color: string) {
   const user = await getOrCreateDevUser();
   const max = await maxSortOrder(user.id);

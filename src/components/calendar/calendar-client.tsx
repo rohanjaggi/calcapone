@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { editItem, removeItemWithGcalSync } from "@/app/actions";
+import { editItem, removeItemWithGcalSync, deleteGoogleCalendarEvent, editGoogleCalendarEvent } from "@/app/actions";
 import { priorityColors, priorityLabels } from "@/lib/task-constants";
 import type { Item } from "@/lib/mock-data";
 import type { Category } from "@/lib/mock-data";
@@ -70,6 +70,13 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
   const [editCategoryId, setEditCategoryId] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
+  const [editingGcalEvent, setEditingGcalEvent] = useState<GoogleEvent | null>(null);
+  const [gcalTitle, setGcalTitle] = useState("");
+  const [gcalDate, setGcalDate] = useState("");
+  const [gcalStartTime, setGcalStartTime] = useState("");
+  const [gcalEndTime, setGcalEndTime] = useState("");
+  const [gcalSaving, setGcalSaving] = useState(false);
+
   const openEdit = (item: Item) => {
     setEditTitle(item.title);
     setEditDescription(item.description ?? "");
@@ -78,6 +85,27 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
     setEditPriority(item.priority as Priority);
     setEditCategoryId(item.category.id);
     setEditingItem(item);
+  };
+
+  const openGcalEdit = (event: GoogleEvent) => {
+    setGcalTitle(event.title);
+    setGcalDate(event.startTime.slice(0, 10));
+    setGcalStartTime(event.startTime.slice(11, 16));
+    setGcalEndTime(event.endTime.slice(11, 16));
+    setEditingGcalEvent(event);
+  };
+
+  const handleGcalEditSave = async () => {
+    if (!editingGcalEvent || !gcalTitle.trim()) return;
+    setGcalSaving(true);
+    await editGoogleCalendarEvent(editingGcalEvent.id, {
+      title: gcalTitle.trim(),
+      startTime: `${gcalDate}T${gcalStartTime}:00`,
+      endTime: `${gcalDate}T${gcalEndTime}:00`,
+    });
+    setGcalSaving(false);
+    setEditingGcalEvent(null);
+    router.refresh();
   };
 
   const handleEditSave = async () => {
@@ -99,6 +127,13 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
   const handleDelete = async (itemId: string) => {
     setDeletingId(itemId);
     await removeItemWithGcalSync(itemId);
+    setDeletingId(null);
+    router.refresh();
+  };
+
+  const handleDeleteGcalEvent = async (eventId: string) => {
+    setDeletingId(eventId);
+    await deleteGoogleCalendarEvent(eventId);
     setDeletingId(null);
     router.refresh();
   };
@@ -140,6 +175,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
       subtitle: string;
       isReminder: boolean;
       itemData: Item | null;
+      eventData: GoogleEvent | null;
     }> = [];
 
     // Collect googleEventIds from in-app items so we can deduplicate
@@ -158,7 +194,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
         result.push({
           id: e.id, type: "event", title: e.title, time: e.startTime,
           color: "#4A6FA5", subtitle: `${duration} min`, isReminder: false,
-          itemData: null,
+          itemData: null, eventData: e,
         });
       }
     }
@@ -187,7 +223,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
           id: item.id, type: "item", title: item.title, time: itemTime,
           color: item.category.color, subtitle: `${item.category.name} · ${item.priority}`,
           isReminder: !!item.remindAt,
-          itemData: item,
+          itemData: item, eventData: null,
         });
       }
     }
@@ -321,6 +357,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
             {selectedItems.map((item, i) => {
               const Icon = item.type === "event" ? Calendar : item.isReminder ? Bell : CheckCircle2;
               const canEdit = item.type === "item" && item.itemData;
+              const canDeleteGcal = item.type === "event";
               return (
                 <motion.div
                   key={item.id}
@@ -359,6 +396,23 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
                       </button>
                       <button
                         onClick={() => handleDelete(item.id)}
+                        disabled={deletingId === item.id}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all disabled:opacity-40"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  {canDeleteGcal && (
+                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                      <button
+                        onClick={() => item.eventData && openGcalEdit(item.eventData)}
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteGcalEvent(item.id)}
                         disabled={deletingId === item.id}
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all disabled:opacity-40"
                       >
@@ -514,6 +568,88 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
                     className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {editSaving ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Edit gcal event sheet */}
+      <AnimatePresence>
+        {editingGcalEvent && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[55]"
+              onClick={() => setEditingGcalEvent(null)}
+            />
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 28, stiffness: 300 }}
+              className="fixed bottom-0 left-0 right-0 z-[60] bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
+            >
+              <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
+              <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
+                <div className="flex items-center justify-between mb-5">
+                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Event</h3>
+                  <button onClick={() => setEditingGcalEvent(null)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    value={gcalTitle}
+                    onChange={(e) => setGcalTitle(e.target.value)}
+                    placeholder="Event title"
+                    autoFocus
+                    className="w-full h-12 px-4 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                  />
+
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-2">Date</label>
+                    <input
+                      type="date"
+                      value={gcalDate}
+                      onChange={(e) => setGcalDate(e.target.value)}
+                      className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-2">Start</label>
+                      <input
+                        type="time"
+                        value={gcalStartTime}
+                        onChange={(e) => setGcalStartTime(e.target.value)}
+                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-2">End</label>
+                      <input
+                        type="time"
+                        value={gcalEndTime}
+                        onChange={(e) => setGcalEndTime(e.target.value)}
+                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleGcalEditSave}
+                    disabled={!gcalTitle.trim() || !gcalDate || !gcalStartTime || !gcalEndTime || gcalSaving}
+                    className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {gcalSaving ? "Saving..." : "Save Changes"}
                   </button>
                 </div>
               </div>

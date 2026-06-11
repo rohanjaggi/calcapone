@@ -6,6 +6,12 @@ import { searchItems } from "@/lib/services/search";
 import { paramsToRRule, type RecurrenceParams } from "@/lib/services/recurrence";
 import type { Priority, RecurringType, ItemStatus } from "@/generated/prisma/enums";
 
+function fuzzyMatch(title: string, query: string): boolean {
+  const t = title.toLowerCase();
+  const q = query.toLowerCase();
+  return t.includes(q) || q.includes(t);
+}
+
 export async function executeToolCall(
   name: string,
   args: Record<string, unknown>,
@@ -257,7 +263,7 @@ export async function executeToolCall(
       // Try linked in-app item first
       const items = await listItems(userId);
       const match = items.find((item) =>
-        item.title.toLowerCase().includes(query) && item.googleEventId
+        fuzzyMatch(item.title, query) && item.googleEventId
       );
 
       if (match) {
@@ -282,7 +288,7 @@ export async function executeToolCall(
       const now = new Date();
       const searchEnd = new Date(now.getTime() + 90 * 86400000);
       const events = await getEvents(user.googleRefreshToken, user.googleCalendarId ?? "primary", now, searchEnd);
-      const gcalMatch = events.find((e) => e.title.toLowerCase().includes(query));
+      const gcalMatch = events.find((e) => fuzzyMatch(e.title, query));
       if (!gcalMatch) return `Couldn't find a calendar event matching "${args.query}"`;
 
       try {
@@ -301,7 +307,7 @@ export async function executeToolCall(
       // Try linked in-app item first
       const items = await listItems(userId);
       const match = items.find((item) =>
-        item.title.toLowerCase().includes(query) && item.googleEventId
+        fuzzyMatch(item.title, query) && item.googleEventId
       );
 
       if (match) {
@@ -318,7 +324,7 @@ export async function executeToolCall(
       const now = new Date();
       const searchEnd = new Date(now.getTime() + 90 * 86400000);
       const events = await getEvents(user.googleRefreshToken, user.googleCalendarId ?? "primary", now, searchEnd);
-      const gcalMatch = events.find((e) => e.title.toLowerCase().includes(query));
+      const gcalMatch = events.find((e) => fuzzyMatch(e.title, query));
       if (!gcalMatch) return `Couldn't find a calendar event matching "${args.query}"`;
 
       try {

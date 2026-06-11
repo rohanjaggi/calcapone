@@ -1,11 +1,19 @@
 import { GoogleGenAI } from "@google/genai";
 import { prisma } from "@/lib/prisma";
 
-const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+let genai: GoogleGenAI | null = null;
+
+function getClient(): GoogleGenAI {
+  if (!genai) {
+    if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not set");
+    genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  return genai;
+}
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const result = await genai.models.embedContent({
-    model: "text-embedding-004",
+  const result = await getClient().models.embedContent({
+    model: "gemini-embedding-001",
     contents: text,
     config: { outputDimensionality: 768 },
   });
@@ -33,7 +41,7 @@ export async function upsertItemEmbedding(
     await prisma.$executeRaw`
       UPDATE items SET embedding = ${vectorStr}::vector WHERE id = ${itemId}::uuid
     `;
-  } catch {
-    // Embedding failure is non-fatal — keyword search still works
+  } catch (e) {
+    console.error("[embeddings] failed to upsert embedding:", e);
   }
 }
