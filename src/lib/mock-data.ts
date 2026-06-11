@@ -21,6 +21,8 @@ export type Item = {
   remindAt: string | null;
   recurring: "none" | "daily" | "weekly" | "monthly";
   googleEventId: string | null;
+  parentId?: string | null;
+  subtasks?: Item[];
 };
 
 export type TimelineItem = {

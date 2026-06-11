@@ -13,7 +13,21 @@ export const AI_TOOLS = [
         due_date: { type: "string", description: "Due date in YYYY-MM-DD format" },
         due_time: { type: "string", description: "Due time in HH:mm format (24h)" },
         remind_at: { type: "string", description: "ISO 8601 datetime to send a Telegram reminder notification" },
-        recurring: { type: "string", enum: ["none", "daily", "weekly", "monthly"], description: "Recurrence pattern for reminders" },
+        recurring: { type: "string", enum: ["none", "daily", "weekly", "monthly"], description: "Legacy simple recurrence. Prefer 'recurrence' object for complex patterns." },
+        recurrence: {
+          type: "object",
+          description: "Rich recurrence pattern. Use for any repeating schedule.",
+          properties: {
+            frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"], description: "Base frequency" },
+            interval: { type: "number", description: "Repeat every N units (default 1). interval=2 + frequency=weekly means every 2 weeks." },
+            byDay: { type: "array", items: { type: "string", enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] }, description: "Days of week" },
+            byMonthDay: { type: "array", items: { type: "number" }, description: "Days of month (1-31)" },
+            bySetPos: { type: "number", description: "Position in set. 1=first, 2=second, -1=last. E.g. byDay=['MO'], bySetPos=1 means first Monday." },
+            until: { type: "string", description: "End date ISO 8601. Recurrence stops after this." },
+            count: { type: "number", description: "Max number of occurrences" },
+          },
+          required: ["frequency"],
+        },
       },
       required: ["title", "category"],
     },
@@ -64,6 +78,21 @@ export const AI_TOOLS = [
         remind_at: { type: ["string", "null"] as unknown as "string", description: "New reminder ISO 8601 datetime, or null to clear" },
         priority: { type: "string", enum: ["low", "medium", "high"], description: "New priority" },
         status: { type: "string", enum: ["pending", "in_progress", "done"], description: "New status" },
+        recurrence: {
+          type: "object",
+          description: "New recurrence pattern to set on this item",
+          properties: {
+            frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"], description: "Base frequency" },
+            interval: { type: "number", description: "Repeat every N units (default 1)" },
+            byDay: { type: "array", items: { type: "string", enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] }, description: "Days of week" },
+            byMonthDay: { type: "array", items: { type: "number" }, description: "Days of month (1-31)" },
+            bySetPos: { type: "number", description: "Position in set. 1=first, -1=last." },
+            until: { type: "string", description: "End date ISO 8601" },
+            count: { type: "number", description: "Max occurrences" },
+          },
+          required: ["frequency"],
+        },
+        clear_recurrence: { type: "boolean", description: "Set true to remove all recurrence from this item" },
       },
       required: ["query"],
     },
@@ -90,6 +119,20 @@ export const AI_TOOLS = [
         start_time: { type: "string", description: "ISO 8601 datetime for event start" },
         end_time: { type: "string", description: "ISO 8601 datetime for event end" },
         description: { type: "string", description: "Optional event description" },
+        recurrence: {
+          type: "object",
+          description: "Recurrence pattern for the calendar event",
+          properties: {
+            frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"], description: "Base frequency" },
+            interval: { type: "number", description: "Repeat every N units (default 1)" },
+            byDay: { type: "array", items: { type: "string", enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] }, description: "Days of week" },
+            byMonthDay: { type: "array", items: { type: "number" }, description: "Days of month (1-31)" },
+            bySetPos: { type: "number", description: "Position in set. 1=first, -1=last." },
+            until: { type: "string", description: "End date ISO 8601" },
+            count: { type: "number", description: "Max occurrences" },
+          },
+          required: ["frequency"],
+        },
       },
       required: ["title", "start_time", "end_time"],
     },
@@ -105,6 +148,21 @@ export const AI_TOOLS = [
         start_time: { type: "string", description: "New ISO 8601 start datetime" },
         end_time: { type: "string", description: "New ISO 8601 end datetime" },
         description: { type: "string", description: "New event description" },
+        recurrence: {
+          type: "object",
+          description: "New recurrence pattern for the event",
+          properties: {
+            frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"], description: "Base frequency" },
+            interval: { type: "number", description: "Repeat every N units (default 1)" },
+            byDay: { type: "array", items: { type: "string", enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] }, description: "Days of week" },
+            byMonthDay: { type: "array", items: { type: "number" }, description: "Days of month (1-31)" },
+            bySetPos: { type: "number", description: "Position in set. 1=first, -1=last." },
+            until: { type: "string", description: "End date ISO 8601" },
+            count: { type: "number", description: "Max occurrences" },
+          },
+          required: ["frequency"],
+        },
+        clear_recurrence: { type: "boolean", description: "Set true to remove recurrence from this event" },
       },
       required: ["query"],
     },
@@ -147,22 +205,54 @@ export const AI_TOOLS = [
     description: "List the user's categories",
     parameters: { type: "object" as const, properties: {} },
   },
+  {
+    name: "search_items",
+    description: "Search through all tasks and reminders by keyword. Use when the user asks about a specific task they can't remember the exact name of.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        query: { type: "string", description: "Search query (keywords to match against titles and descriptions)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "decompose_task",
+    description: "Break a task into smaller subtasks. Creates subtasks as children of the specified parent task.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        parent_title: { type: "string", description: "Title of the parent task to decompose (fuzzy match)" },
+        subtasks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Subtask title" },
+              priority: { type: "string", enum: ["low", "medium", "high"] },
+            },
+            required: ["title"],
+          },
+          description: "Array of subtasks to create",
+        },
+      },
+      required: ["parent_title", "subtasks"],
+    },
+  },
 ] as const;
 
-export function buildSystemPrompt(user: { telegramUsername: string; timezone: string; categories?: string[]; lastAction?: string | null }): string {
+export function buildSystemPrompt(user: { telegramUsername: string; timezone: string; categories?: string[] }): string {
   const categoryList = user.categories?.length
     ? `Available categories: ${user.categories.join(", ")}`
     : "No categories exist yet.";
 
   const now = new Date().toLocaleString("en-US", { timeZone: user.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-  const lastActionLine = user.lastAction ? `\nLast action: ${user.lastAction}` : "";
-
   return `You are Calcapone, a smart personal assistant that helps manage calendar, todos, and reminders.
 
 User: ${user.telegramUsername}
 Timezone: ${user.timezone}
-Current time in user's timezone: ${now}${lastActionLine}
+Current time in user's timezone: ${now}
 
 ${categoryList}
 
@@ -171,7 +261,7 @@ Rules:
 - When the user says "tomorrow", use the next calendar day in their timezone.
 - Always confirm what you did after performing an action.
 - Keep responses concise — this is a Telegram chat.
-- If the user references "that", "it", or "the reminder/task" without a name, use the Last action context above.
+- If the user references "that", "it", or "the reminder/task" without a name, check conversation history for context.
 - When creating tasks, ONLY use one of the existing categories listed above. Never invent new category names.
 - Calendar events are separate from tasks — do NOT create an in-app task when creating a calendar event.
 - When the user asks to move, reschedule, or change a calendar event, use update_calendar_event.
@@ -187,6 +277,24 @@ User: "buy groceries by friday"
 User: "lunch with Sarah tomorrow noon to 1pm"
 → Use create_calendar_event with title "Lunch with Sarah", start_time tomorrow 12:00, end_time tomorrow 13:00
 
-User: "actually make that 2pm" (with Last action: "Created reminder: Call mom at 2026-01-15 15:00")
-→ Use update_item with query "Call mom", remind_at set to 2026-01-15 14:00`;
+User: "actually make that 2pm" (referring to a previously created item)
+→ Use update_item with query matching the recently mentioned task
+
+User: "remind me every other Tuesday at 10am to check reports"
+→ Use create_item with remind_at and recurrence: { frequency: "weekly", interval: 2, byDay: ["TU"] }
+
+User: "set a reminder for weekdays at 9am"
+→ Use create_item with recurrence: { frequency: "weekly", byDay: ["MO", "TU", "WE", "TH", "FR"] }
+
+User: "remind me on the first Monday of every month"
+→ Use create_item with recurrence: { frequency: "monthly", byDay: ["MO"], bySetPos: 1 }
+
+User: "create a meeting every first Monday at 9am"
+→ Use create_calendar_event with recurrence: { frequency: "monthly", byDay: ["MO"], bySetPos: 1 }
+
+User: "change my weekly standup to every 2 weeks"
+→ Use update_item with recurrence: { frequency: "weekly", interval: 2 }
+
+User: "stop that recurring reminder"
+→ Use update_item with clear_recurrence: true`;
 }

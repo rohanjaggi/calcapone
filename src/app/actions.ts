@@ -4,6 +4,7 @@ import { createItem, updateItem, deleteItem } from "@/lib/services/item";
 import { getOrCreateDevUser } from "@/lib/dev-user";
 import { createCategory, listCategories, updateCategory, deleteCategory, reorderCategories, maxSortOrder } from "@/lib/services/category";
 import { createEvent, updateEvent, deleteEvent } from "@/lib/services/calendar";
+import { searchItems } from "@/lib/services/search";
 import { prisma } from "@/lib/prisma";
 import { chatWithAi } from "@/lib/services/ai";
 import { decryptUserApiKey } from "@/lib/services/user";
@@ -252,4 +253,9 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
   }
 
   return { success: true, message: results.join(". ") || "Done!" };
+}
+
+export async function searchAction(query: string) {
+  const user = await getOrCreateDevUser();
+  return searchItems(user.id, query);
 }

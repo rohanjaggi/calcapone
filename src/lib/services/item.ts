@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
+import { getNextOccurrence } from "@/lib/services/recurrence";
 
 type CreateItemInput = {
   userId: string;
@@ -11,7 +12,10 @@ type CreateItemInput = {
   dueTime?: string | null;
   remindAt?: Date | null;
   recurring?: RecurringType;
+  recurrenceRule?: string | null;
+  recurrenceEnd?: Date | null;
   googleEventId?: string | null;
+  parentId?: string | null;
 };
 
 type ItemFilters = {
@@ -30,6 +34,8 @@ type UpdateItemInput = {
   dueTime?: string | null;
   remindAt?: Date | null;
   recurring?: RecurringType;
+  recurrenceRule?: string | null;
+  recurrenceEnd?: Date | null;
   googleEventId?: string | null;
 };
 
@@ -42,9 +48,17 @@ export async function createItem(data: CreateItemInput) {
 
 export async function listItems(userId: string, filters: ItemFilters = {}) {
   return prisma.item.findMany({
-    where: { userId, ...filters },
-    include: { category: true },
+    where: { userId, parentId: null, ...filters },
+    include: { category: true, subtasks: { include: { category: true }, orderBy: { createdAt: "asc" } } },
     orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+  });
+}
+
+export async function listSubtasks(parentId: string, userId: string) {
+  return prisma.item.findMany({
+    where: { parentId, userId },
+    include: { category: true },
+    orderBy: { createdAt: "asc" },
   });
 }
 
@@ -74,7 +88,10 @@ export async function markItemSent(id: string) {
   });
 }
 
-export function createNextOccurrence(current: Date, recurring: RecurringType): Date {
+export function createNextOccurrence(current: Date, recurring: RecurringType, recurrenceRule?: string | null): Date | null {
+  if (recurrenceRule) {
+    return getNextOccurrence(recurrenceRule, current);
+  }
   const next = new Date(current);
   switch (recurring) {
     case "daily":
@@ -88,4 +105,24 @@ export function createNextOccurrence(current: Date, recurring: RecurringType): D
       break;
   }
   return next;
+}
+
+export async function getEscalationCandidates() {
+  return prisma.item.findMany({
+    where: {
+      status: { not: "done" },
+      dueDate: { not: null },
+      remindAt: null,
+      notificationStage: { lt: 3 },
+      parentId: null,
+    },
+    include: { user: true, category: true },
+  });
+}
+
+export async function updateNotificationStage(id: string, stage: number) {
+  return prisma.item.update({
+    where: { id },
+    data: { notificationStage: stage },
+  });
 }

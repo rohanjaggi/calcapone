@@ -57,11 +57,8 @@ describe("executeToolCall", () => {
       expect(result).toBe("Created Task: **Write report** in Work");
     });
 
-    it("creates a new category if not found", async () => {
+    it("returns error when no categories exist", async () => {
       mockListCategories.mockResolvedValue([]);
-      const newCat = { id: "c2", name: "Personal" };
-      mockCreateCategory.mockResolvedValue(newCat);
-      mockCreateItem.mockResolvedValue({ id: "i2", title: "Buy milk", remindAt: null });
 
       const result = await executeToolCall(
         "create_item",
@@ -70,8 +67,7 @@ describe("executeToolCall", () => {
         baseUser
       );
 
-      expect(mockCreateCategory).toHaveBeenCalledWith({ userId: "u1", name: "Personal" });
-      expect(result).toBe("Created Task: **Buy milk** in Personal");
+      expect(result).toBe("No categories exist yet. Create one in the app first.");
     });
 
     it("labels item as Reminder when remindAt is set", async () => {

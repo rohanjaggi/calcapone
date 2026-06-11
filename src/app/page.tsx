@@ -2,6 +2,7 @@ import { getOrCreateDevUser } from "@/lib/dev-user";
 import { listItems } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
+import { SearchDialog } from "@/components/search/search-dialog";
 
 export const dynamic = "force-dynamic";
 
@@ -44,11 +45,16 @@ export default async function Dashboard() {
   }));
 
   return (
-    <DashboardClient
-      userName={user.telegramUsername}
-      items={serializedItems}
-      eventCount={eventCount}
-      aiSuggestionEnabled={user.aiSuggestionEnabled}
-    />
+    <>
+      <div className="fixed top-4 right-4 z-50">
+        <SearchDialog />
+      </div>
+      <DashboardClient
+        userName={user.telegramUsername}
+        items={serializedItems}
+        eventCount={eventCount}
+        aiSuggestionEnabled={user.aiSuggestionEnabled}
+      />
+    </>
   );
 }

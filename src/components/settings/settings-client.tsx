@@ -2,6 +2,8 @@
 
 import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { HelpCircle, ChevronRight } from "lucide-react";
 import { AiProviderForm } from "@/components/settings/ai-provider-form";
 import { TimezoneSelect } from "@/components/settings/timezone-select";
 import { NotificationsConfig } from "@/components/settings/notifications-config";
@@ -89,34 +91,79 @@ export function SettingsClient({ userId, settings }: Props) {
         </h1>
       </motion.header>
       <div className="px-5 mt-5 space-y-4">
-        <AiProviderForm
-          currentProvider={settings.aiProvider}
-          currentModel={settings.aiModel}
-          hasApiKey={settings.hasAiApiKey}
-          onSave={handleSaveAi}
-        />
-        <TimezoneSelect
-          currentTimezone={settings.timezone}
-          onSave={handleSaveTimezone}
-        />
-        <NotificationsConfig
-          briefingEnabled={settings.briefingEnabled}
-          briefingTime={settings.briefingTime}
-          weeklyDigestEnabled={settings.weeklyDigestEnabled}
-          aiSuggestionEnabled={settings.aiSuggestionEnabled}
-          quietStart={settings.quietStart}
-          quietEnd={settings.quietEnd}
-          notifyMinPriority={settings.notifyMinPriority}
-          digestDay={settings.digestDay}
-          digestTime={settings.digestTime}
-          onSave={handleSaveNotifications}
-        />
-        <GoogleCalendarCard
-          isConnected={settings.hasGoogleCalendar}
-          calendarId={settings.googleCalendarId}
-          onConnect={handleConnectGoogle}
-          onDisconnect={handleDisconnectGoogle}
-        />
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.06 }}
+        >
+          <AiProviderForm
+            currentProvider={settings.aiProvider}
+            currentModel={settings.aiModel}
+            hasApiKey={settings.hasAiApiKey}
+            onSave={handleSaveAi}
+          />
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.12 }}
+        >
+          <TimezoneSelect
+            currentTimezone={settings.timezone}
+            onSave={handleSaveTimezone}
+          />
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.18 }}
+        >
+          <NotificationsConfig
+            briefingEnabled={settings.briefingEnabled}
+            briefingTime={settings.briefingTime}
+            weeklyDigestEnabled={settings.weeklyDigestEnabled}
+            aiSuggestionEnabled={settings.aiSuggestionEnabled}
+            quietStart={settings.quietStart}
+            quietEnd={settings.quietEnd}
+            notifyMinPriority={settings.notifyMinPriority}
+            digestDay={settings.digestDay}
+            digestTime={settings.digestTime}
+            onSave={handleSaveNotifications}
+          />
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.24 }}
+        >
+          <GoogleCalendarCard
+            isConnected={settings.hasGoogleCalendar}
+            calendarId={settings.googleCalendarId}
+            onConnect={handleConnectGoogle}
+            onDisconnect={handleDisconnectGoogle}
+          />
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.3 }}
+        >
+          <Link
+            href="/how-to-use"
+            className="flex items-center gap-3 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3.5 group transition-colors hover:bg-secondary/30"
+          >
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+              <HelpCircle className="w-4.5 h-4.5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">How To Use</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Learn how to get the most out of CalCapone
+              </p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0" />
+          </Link>
+        </motion.div>
       </div>
     </main>
   );

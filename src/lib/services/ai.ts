@@ -40,8 +40,9 @@ function openaiToolsFormat() {
 
 export async function chatWithAi(
   userMessage: string,
-  user: { telegramUsername: string; timezone: string; categories?: string[]; lastAction?: string | null },
-  config: AiConfig
+  user: { telegramUsername: string; timezone: string; categories?: string[] },
+  config: AiConfig,
+  history?: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<{ text: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }> }> {
   const { provider, apiKey, model } = resolveAiClient(config);
   const systemPrompt = buildSystemPrompt(user);
@@ -53,12 +54,14 @@ export async function chatWithAi(
         apiKey,
         ...(provider === "openrouter" && { baseURL: "https://openrouter.ai/api/v1" }),
       });
+      const messages: OpenAI.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemPrompt },
+        ...(history ?? []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+        { role: "user", content: userMessage },
+      ];
       const response = await client.chat.completions.create({
         model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage },
-        ],
+        messages,
         tools: openaiToolsFormat(),
       });
       const choice = response.choices[0];
@@ -77,7 +80,10 @@ export async function chatWithAi(
         model,
         max_tokens: 1024,
         system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }],
+        messages: [
+          ...(history ?? []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+          { role: "user", content: userMessage },
+        ],
         tools: AI_TOOLS.map((t) => ({
           name: t.name,
           description: t.description,
@@ -99,7 +105,13 @@ export async function chatWithAi(
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model,
-        contents: [{ role: "user", parts: [{ text: userMessage }] }],
+        contents: [
+          ...(history ?? []).map((m) => ({
+            role: m.role === "assistant" ? "model" : "user",
+            parts: [{ text: m.content }],
+          })),
+          { role: "user", parts: [{ text: userMessage }] },
+        ],
         config: {
           systemInstruction: systemPrompt,
           tools: [{

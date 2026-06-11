@@ -31,8 +31,8 @@ describe("ItemService", () => {
     mockPrisma.item.findMany.mockResolvedValue([]);
     await listItems("u1", { status: "pending", categoryId: "c1" });
     expect(mockPrisma.item.findMany).toHaveBeenCalledWith({
-      where: { userId: "u1", status: "pending", categoryId: "c1" },
-      include: { category: true },
+      where: { userId: "u1", parentId: null, status: "pending", categoryId: "c1" },
+      include: { category: true, subtasks: { include: { category: true }, orderBy: { createdAt: "asc" } } },
       orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
     });
   });
@@ -68,18 +68,18 @@ describe("ItemService", () => {
   it("creates next occurrence for daily recurring", () => {
     const base = new Date("2026-05-16T17:00:00Z");
     const next = createNextOccurrence(base, "daily");
-    expect(next.toISOString()).toBe("2026-05-17T17:00:00.000Z");
+    expect(next!.toISOString()).toBe("2026-05-17T17:00:00.000Z");
   });
 
   it("creates next occurrence for weekly recurring", () => {
     const base = new Date("2026-05-16T17:00:00Z");
     const next = createNextOccurrence(base, "weekly");
-    expect(next.toISOString()).toBe("2026-05-23T17:00:00.000Z");
+    expect(next!.toISOString()).toBe("2026-05-23T17:00:00.000Z");
   });
 
   it("creates next occurrence for monthly recurring", () => {
     const base = new Date("2026-05-16T17:00:00Z");
     const next = createNextOccurrence(base, "monthly");
-    expect(next.toISOString()).toBe("2026-06-16T17:00:00.000Z");
+    expect(next!.toISOString()).toBe("2026-06-16T17:00:00.000Z");
   });
 });

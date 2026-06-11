@@ -4,24 +4,40 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 
 ## Features
 
+### Core
 - **Natural language input** — type freely in Telegram, AI parses intent and takes action
+- **Voice notes** — send a voice message in Telegram and it's transcribed + processed automatically
 - **Slash commands** — `/todo`, `/remind`, `/event`, `/done`, `/today`, `/list` for quick entry
+- **Subtasks** — break tasks into smaller pieces manually or via AI decomposition
+- **Global search** — Cmd+K on web, or ask "find my task about X" in Telegram
+
+### Calendar
 - **Google Calendar sync** — create, update, delete events; conflict detection; agenda view
+- **Schedule suggestions** — AI recommends optimal time slots based on your calendar
+
+### Notifications
 - **Recurring reminders** — daily, weekly, or monthly with automatic rescheduling
+- **Deadline escalation** — progressive alerts at 24h, 2h before due, and when overdue
 - **Morning briefing** — AI-generated daily summary at your chosen time
 - **Weekly digest** — configurable day/time recap of completed, overdue, and upcoming work
 - **Quiet hours** — suppress notifications during a time window (e.g., 23:00–07:00)
 - **Priority filter** — only get pinged for medium+ or high-priority items
-- **Conversational follow-ups** — "actually make that 10am" works without repeating context
-- **Multi-provider AI** — OpenAI, Anthropic, Gemini, or OpenRouter with your own key
+
+### AI
+- **Conversation memory** — multi-turn context (last 10 messages, 4h window) for natural follow-ups
+- **Task decomposition** — "break down my presentation prep" creates subtasks automatically
+- **Smart recommendations** — dashboard suggests your top 3 priority tasks
+- **Multi-provider** — OpenAI, Anthropic, Gemini, or OpenRouter with your own key
 
 ## Stack
 
-- **Next.js 14** (App Router, server actions)
-- **Prisma + PostgreSQL** (Supabase)
+- **Next.js 16** (App Router, server actions)
+- **Prisma 7 + PostgreSQL** (Supabase)
 - **Telegram Bot API** (webhooks)
 - **Google Calendar API** (OAuth2)
-- **OpenAI / Anthropic / Gemini SDKs**
+- **OpenAI SDK** (chat + transcription)
+- **Anthropic / Gemini SDKs** (alternative providers)
+- **Tailwind CSS 4 + Framer Motion**
 
 ## Setup
 
@@ -60,17 +76,23 @@ curl -X POST https://your-domain.com/api/telegram/register \
 ## Architecture
 
 ```
-Telegram message
+Telegram message (text or voice)
   → /api/telegram (webhook)
+  → Voice? → OpenAI transcription → text
   → Slash command? → DB-direct handler (/done, /today, /list)
   → Otherwise    → AI chat path (parses intent, calls tools)
-                    → execute-tool.ts (CRUD items, calendar ops)
-                    → response + last-action context saved
+                    → conversation history loaded (last 10 msgs, 4h)
+                    → execute-tool.ts (CRUD items, calendar, search, decompose)
+                    → response saved to conversation memory
+
+Web dashboard
+  → Server actions → same service layer
+  → Cmd+K search dialog → searchItems service
 
 Cron jobs (external trigger every minute):
-  → /api/cron/briefing   — morning summary
-  → /api/cron/reminders  — fires due reminders (respects quiet hours + priority)
-  → /api/cron/weekly-digest — configurable weekly recap
+  → /api/cron/briefing       — AI morning summary
+  → /api/cron/reminders      — fires due reminders + deadline escalation
+  → /api/cron/weekly-digest  — configurable weekly recap
 ```
 
 ## Telegram Commands
@@ -85,4 +107,25 @@ Cron jobs (external trigger every minute):
 | `/list` | Lists all pending items |
 | `/help` | Shows available commands |
 
-You can also just type naturally — "move my dentist appointment to 3pm" or "what do I have tomorrow" — and the AI handles it.
+You can also just type naturally — "move my dentist appointment to 3pm", "break down my presentation prep", or "find that task about the client meeting" — and the AI handles it. Voice messages work too.
+
+## AI Tools
+
+The AI has access to 15 tools:
+
+| Tool | Purpose |
+|------|---------|
+| `create_item` | Create task or reminder |
+| `list_items` | List items with filters |
+| `complete_item` | Mark task done |
+| `delete_item` | Delete task |
+| `update_item` | Reschedule, rename, change priority |
+| `get_calendar` | Fetch calendar events |
+| `create_calendar_event` | Create Google Calendar event |
+| `update_calendar_event` | Update calendar event |
+| `delete_calendar_event` | Delete calendar event |
+| `suggest_schedule` | Find optimal time slots |
+| `create_category` | Create a new category |
+| `list_categories` | List categories |
+| `search_items` | Search tasks by keyword |
+| `decompose_task` | Break task into subtasks |

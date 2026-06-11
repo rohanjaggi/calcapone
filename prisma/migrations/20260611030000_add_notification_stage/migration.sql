@@ -1,0 +1,1 @@
+ALTER TABLE "items" ADD COLUMN "notification_stage" INTEGER NOT NULL DEFAULT 0;

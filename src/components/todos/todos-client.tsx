@@ -159,6 +159,31 @@ function ItemRow({
           </motion.button>
         )}
       </motion.div>
+      {item.subtasks && item.subtasks.length > 0 && (
+        <div className="pl-10 border-t border-border/20">
+          {item.subtasks.map((sub, si) => {
+            const SubIcon = statusIcon[sub.status];
+            return (
+              <div
+                key={sub.id}
+                className={`flex items-center gap-3 px-4 py-2 ${si > 0 ? "border-t border-border/15" : ""} ${sub.status === "done" ? "opacity-40" : ""}`}
+              >
+                <button
+                  onClick={() => onToggle(sub.id, sub.status)}
+                  className="shrink-0 active:scale-90 transition-transform duration-150"
+                >
+                  <SubIcon
+                    className={`w-[14px] h-[14px] ${sub.status === "done" ? "text-sage" : "text-muted-foreground/30"}`}
+                  />
+                </button>
+                <p className={`text-xs leading-snug truncate ${sub.status === "done" ? "line-through text-muted-foreground" : "text-foreground/80"}`}>
+                  {sub.title}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

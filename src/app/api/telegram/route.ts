@@ -5,7 +5,7 @@ import { sendMessage } from "@/lib/services/telegram";
 import { executeToolCall } from "@/lib/services/execute-tool";
 import { parseSlashCommand, handleCommand, isAiHintCommand, getAiHint } from "@/lib/services/commands";
 import { listCategories } from "@/lib/services/category";
-import { getLastAction, setLastAction } from "@/lib/services/last-action";
+import { getRecentMessages, saveMessage } from "@/lib/services/conversation";
 import type { TelegramUpdate } from "@/lib/services/telegram";
 
 export async function POST(request: NextRequest) {
@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   const update: TelegramUpdate = await request.json();
   const message = update.message;
-  if (!message?.text || !message.from) {
+  if (!message?.from || (!message.text && !message.voice)) {
     return NextResponse.json({ ok: true });
   }
 
@@ -28,8 +28,26 @@ export async function POST(request: NextRequest) {
   const aiApiKey = decryptUserApiKey(user.aiApiKey);
   const aiConfig = { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel };
 
+  let messageText = message.text ?? "";
+
+  if (message.voice && !messageText) {
+    try {
+      const { downloadFile } = await import("@/lib/services/telegram");
+      const { transcribeVoice } = await import("@/lib/services/transcribe");
+      const audioBuffer = await downloadFile(message.voice.file_id);
+      messageText = await transcribeVoice(audioBuffer, aiConfig);
+      if (!messageText.trim()) {
+        await sendMessage(chatId, "I couldn't understand that voice message. Try again?");
+        return NextResponse.json({ ok: true });
+      }
+    } catch {
+      await sendMessage(chatId, "Sorry, I couldn't process that voice message.");
+      return NextResponse.json({ ok: true });
+    }
+  }
+
   try {
-    const parsed = parseSlashCommand(message.text);
+    const parsed = parseSlashCommand(messageText);
 
     if (parsed && !isAiHintCommand(parsed.command)) {
       const response = await handleCommand(parsed, {
@@ -43,7 +61,7 @@ export async function POST(request: NextRequest) {
       });
       await sendMessage(chatId, response);
     } else {
-      let userMessage = message.text;
+      let userMessage = messageText;
       if (parsed && isAiHintCommand(parsed.command)) {
         if (!parsed.body) {
           await sendMessage(chatId, `Usage: /${parsed.command} <description>`);
@@ -54,12 +72,14 @@ export async function POST(request: NextRequest) {
 
       const categories = await listCategories(user.id);
       const categoryNames = categories.map((c) => c.name);
-      const lastAction = getLastAction(chatId);
+      const history = await getRecentMessages(user.id, chatId);
+      await saveMessage(user.id, chatId, "user", userMessage);
 
       const { text, toolCalls } = await chatWithAi(
         userMessage,
-        { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categoryNames, lastAction },
-        aiConfig
+        { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categoryNames },
+        aiConfig,
+        history
       );
 
       const results: string[] = [];
@@ -70,7 +90,7 @@ export async function POST(request: NextRequest) {
 
       const response = [text, ...results].filter(Boolean).join("\n\n");
       if (response) {
-        setLastAction(chatId, response.slice(0, 200));
+        await saveMessage(user.id, chatId, "assistant", response.slice(0, 500));
         await sendMessage(chatId, response);
       }
     }

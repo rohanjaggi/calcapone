@@ -82,6 +82,25 @@ export async function setChatMenuButton(webAppUrl: string) {
   return res.json();
 }
 
+export async function getFileUrl(fileId: string): Promise<string> {
+  const res = await fetch(`${TELEGRAM_API}${getToken()}/getFile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  if (!res.ok) throw new Error(`getFile failed: ${res.status}`);
+  const data = await res.json();
+  const filePath = data.result.file_path;
+  return `https://api.telegram.org/file/bot${getToken()}/${filePath}`;
+}
+
+export async function downloadFile(fileId: string): Promise<Buffer> {
+  const url = await getFileUrl(fileId);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
 export type TelegramUpdate = {
   update_id: number;
   message?: {
@@ -95,5 +114,12 @@ export type TelegramUpdate = {
     chat: { id: number; type: string };
     date: number;
     text?: string;
+    voice?: {
+      file_id: string;
+      file_unique_id: string;
+      duration: number;
+      mime_type?: string;
+      file_size?: number;
+    };
   };
 };

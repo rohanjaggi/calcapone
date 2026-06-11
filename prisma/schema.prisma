@@ -31,6 +31,7 @@ model User {
 
   categories Category[]
   items      Item[]
+  messages   Message[]
 
   @@map("users")
 }
@@ -88,7 +89,13 @@ model Item {
   dueTime     String?       @map("due_time")
   remindAt    DateTime?     @map("remind_at") @db.Timestamptz
   recurring   RecurringType @default(none)
+  recurrenceRule  String?   @map("recurrence_rule")
+  recurrenceEnd   DateTime? @map("recurrence_end") @db.Timestamptz
   googleEventId String?       @map("google_event_id")
+  parentId    String?       @map("parent_id") @db.Uuid
+  parent      Item?         @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks    Item[]        @relation("Subtasks")
+  notificationStage Int    @default(0) @map("notification_stage")
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -96,4 +103,18 @@ model Item {
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@map("items")
+}
+
+model Message {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  chatId    BigInt   @map("chat_id")
+  role      String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, chatId, createdAt])
+  @@map("messages")
 }

@@ -51,7 +51,7 @@ export async function exchangeCode(code: string) {
 export async function createEvent(
   encryptedRefreshToken: string,
   calendarId: string,
-  event: { title: string; startTime: string; endTime: string; description?: string },
+  event: { title: string; startTime: string; endTime: string; description?: string; recurrence?: string[] },
   timezone?: string
 ) {
   const refreshToken = decrypt(encryptedRefreshToken);
@@ -68,6 +68,7 @@ export async function createEvent(
       description: event.description,
       start: { dateTime: event.startTime, timeZone: timezone },
       end: { dateTime: event.endTime, timeZone: timezone },
+      ...(event.recurrence && { recurrence: event.recurrence }),
     },
   });
 
@@ -83,7 +84,7 @@ export async function updateEvent(
   encryptedRefreshToken: string,
   calendarId: string,
   googleEventId: string,
-  fields: { title?: string; startTime?: string; endTime?: string; description?: string },
+  fields: { title?: string; startTime?: string; endTime?: string; description?: string; recurrence?: string[] | null },
   timezone?: string
 ) {
   const refreshToken = decrypt(encryptedRefreshToken);
@@ -99,6 +100,7 @@ export async function updateEvent(
   if (fields.description !== undefined) requestBody.description = fields.description;
   if (fields.startTime !== undefined) requestBody.start = { dateTime: fields.startTime, timeZone: timezone };
   if (fields.endTime !== undefined) requestBody.end = { dateTime: fields.endTime, timeZone: timezone };
+  if (fields.recurrence !== undefined) requestBody.recurrence = fields.recurrence;
 
   const response = await calendar.events.patch({
     calendarId: calendarId || "primary",

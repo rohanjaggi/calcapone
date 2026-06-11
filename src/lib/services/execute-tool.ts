@@ -1,7 +1,9 @@
 // src/lib/services/execute-tool.ts
-import { createItem, listItems, updateItem, deleteItem } from "@/lib/services/item";
+import { createItem, listItems, updateItem, deleteItem, listSubtasks } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
 import { getEvents, createEvent, updateEvent, deleteEvent } from "@/lib/services/calendar";
+import { searchItems } from "@/lib/services/search";
+import { paramsToRRule, type RecurrenceParams } from "@/lib/services/recurrence";
 import type { Priority, RecurringType, ItemStatus } from "@/generated/prisma/enums";
 
 export async function executeToolCall(
@@ -19,6 +21,15 @@ export async function executeToolCall(
         cat = cats[0];
       }
       if (!cat) return "No categories exist yet. Create one in the app first.";
+
+      let recurrenceRule: string | null = null;
+      let recurrenceEnd: Date | null = null;
+      if (args.recurrence) {
+        const params = args.recurrence as RecurrenceParams;
+        recurrenceRule = paramsToRRule(params);
+        if (params.until) recurrenceEnd = new Date(params.until);
+      }
+
       const item = await createItem({
         userId,
         categoryId: cat.id,
@@ -29,6 +40,8 @@ export async function executeToolCall(
         dueTime: (args.due_time as string) ?? null,
         remindAt: args.remind_at ? new Date(args.remind_at as string) : null,
         recurring: (args.recurring as RecurringType) ?? "none",
+        recurrenceRule,
+        recurrenceEnd,
       });
       const label = item.remindAt ? "Reminder" : "Task";
       return `Created ${label}: **${item.title}** in ${cat.name}`;
@@ -96,6 +109,9 @@ export async function executeToolCall(
         remindAt?: Date | null;
         priority?: Priority;
         status?: ItemStatus;
+        recurring?: RecurringType;
+        recurrenceRule?: string | null;
+        recurrenceEnd?: Date | null;
       } = {};
       if (args.title !== undefined) updates.title = args.title as string;
       if (args.due_date !== undefined) updates.dueDate = args.due_date as string | null;
@@ -103,6 +119,20 @@ export async function executeToolCall(
       if (args.remind_at !== undefined) updates.remindAt = args.remind_at ? new Date(args.remind_at as string) : null;
       if (args.priority !== undefined) updates.priority = args.priority as Priority;
       if (args.status !== undefined) updates.status = args.status as ItemStatus;
+      if (args.recurrence) {
+        const params = args.recurrence as RecurrenceParams;
+        updates.recurrenceRule = paramsToRRule(params);
+        updates.recurrenceEnd = params.until ? new Date(params.until) : null;
+        updates.recurring = params.frequency === "daily" ? "daily"
+          : params.frequency === "weekly" ? "weekly"
+          : params.frequency === "monthly" ? "monthly"
+          : "none";
+      }
+      if (args.clear_recurrence) {
+        updates.recurrenceRule = null;
+        updates.recurrenceEnd = null;
+        updates.recurring = "none";
+      }
 
       const updated = await updateItem(match.id, userId, updates);
 
@@ -160,10 +190,16 @@ export async function executeToolCall(
         return `Conflict detected — you already have:\n${conflicts}\n\nStill want me to create "${title}" at that time? Reply yes to confirm.`;
       }
 
+      let recurrence: string[] | undefined;
+      if (args.recurrence) {
+        const params = args.recurrence as RecurrenceParams;
+        recurrence = [paramsToRRule(params)];
+      }
+
       const event = await createEvent(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        { title, startTime, endTime, description },
+        { title, startTime, endTime, description, recurrence },
         user.timezone
       );
 
@@ -230,6 +266,14 @@ export async function executeToolCall(
       }
       if (args.end_time !== undefined) {
         gcalFields.endTime = args.end_time as string;
+      }
+
+      if (args.recurrence) {
+        const params = args.recurrence as RecurrenceParams;
+        (gcalFields as Record<string, unknown>).recurrence = [paramsToRRule(params)];
+      }
+      if (args.clear_recurrence) {
+        (gcalFields as Record<string, unknown>).recurrence = null;
       }
 
       await updateItem(match.id, userId, updates);
@@ -324,6 +368,41 @@ export async function executeToolCall(
       const freeLines = freeBlocks.slice(0, 6).join(", ") || "No free blocks found in working hours (9am–6pm)";
 
       return `*Pending tasks:*\n${taskLines}\n\n*Free blocks this week:*\n${freeLines}\n\n*Suggested:* Work on your highest-priority tasks during morning free blocks. Consider blocking calendar time for deep work items.`;
+    }
+
+    case "decompose_task": {
+      const query = (args.parent_title as string).toLowerCase();
+      const items = await listItems(userId);
+      const match = items.find((item) =>
+        item.status !== "done" && item.title.toLowerCase().includes(query)
+      );
+      if (!match) return `Couldn't find a task matching "${args.parent_title}"`;
+
+      const subtasks = args.subtasks as Array<{ title: string; priority?: string }>;
+      const created: string[] = [];
+      for (const sub of subtasks) {
+        await createItem({
+          userId,
+          categoryId: match.categoryId,
+          title: sub.title,
+          priority: (sub.priority as Priority) ?? match.priority,
+          parentId: match.id,
+        });
+        created.push(sub.title);
+      }
+      return `Decomposed **${match.title}** into ${created.length} subtasks:\n${created.map((t) => `• ${t}`).join("\n")}`;
+    }
+
+    case "search_items": {
+      const results = await searchItems(userId, args.query as string);
+      if (results.length === 0) return `No items matching "${args.query}"`;
+      return results
+        .map((r, i) => {
+          const icon = r.type === "reminder" ? "🔔" : "📋";
+          const status = r.status === "done" ? "✓" : r.status === "in_progress" ? "⟳" : "○";
+          return `${i + 1}. ${icon} ${status} ${r.title}${r.dueDate ? ` (${r.dueDate})` : ""} — ${r.category.name}`;
+        })
+        .join("\n");
     }
 
     default:
