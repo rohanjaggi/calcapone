@@ -244,19 +244,7 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
         user.timezone
       );
 
-      // Link event to an in-app item so update/delete can find it
-      const eventCats = await listCategories(user.id);
-      const eventCat = eventCats[0];
-      if (eventCat) {
-        await createItem({
-          userId: user.id,
-          categoryId: eventCat.id,
-          title: event.title,
-          dueDate: startTime.split("T")[0],
-          dueTime: startTime.slice(11, 16),
-          googleEventId: event.id,
-        });
-      }
+
 
       results.push(`Event created: ${event.title}`);
     } else if (call.name === "create_category") {

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
 import { getNextOccurrence } from "@/lib/services/recurrence";
+import { buildEmbeddingText, upsertItemEmbedding } from "@/lib/services/embeddings";
 
 type CreateItemInput = {
   userId: string;
@@ -40,10 +41,15 @@ type UpdateItemInput = {
 };
 
 export async function createItem(data: CreateItemInput) {
-  return prisma.item.create({
+  const item = await prisma.item.create({
     data,
     include: { category: true },
   });
+
+  const text = buildEmbeddingText({ title: item.title, description: item.description, category: item.category.name });
+  upsertItemEmbedding(item.id, text);
+
+  return item;
 }
 
 export async function listItems(userId: string, filters: ItemFilters = {}) {
@@ -63,11 +69,18 @@ export async function listSubtasks(parentId: string, userId: string) {
 }
 
 export async function updateItem(id: string, userId: string, data: UpdateItemInput) {
-  return prisma.item.update({
+  const item = await prisma.item.update({
     where: { id, userId },
     data,
     include: { category: true },
   });
+
+  if (data.title !== undefined || data.description !== undefined) {
+    const text = buildEmbeddingText({ title: item.title, description: item.description, category: item.category.name });
+    upsertItemEmbedding(item.id, text);
+  }
+
+  return item;
 }
 
 export async function deleteItem(id: string, userId: string) {

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { generateEmbedding } from "@/lib/services/embeddings";
 
 type SearchResult = {
   id: string;
@@ -11,10 +12,7 @@ type SearchResult = {
   type: "task" | "reminder";
 };
 
-export async function searchItems(
-  userId: string,
-  query: string
-): Promise<SearchResult[]> {
+async function keywordSearch(userId: string, query: string): Promise<SearchResult[]> {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [];
 
@@ -40,6 +38,70 @@ export async function searchItems(
     priority: item.priority,
     category: { name: item.category.name, color: item.category.color ?? "#A8A29E" },
     dueDate: item.dueDate,
-    type: item.remindAt ? "reminder" as const : "task" as const,
+    type: item.remindAt ? ("reminder" as const) : ("task" as const),
   }));
+}
+
+async function semanticSearch(userId: string, query: string): Promise<SearchResult[]> {
+  try {
+    const embedding = await generateEmbedding(query);
+    const vectorStr = `[${embedding.join(",")}]`;
+
+    const matches: Array<{ id: string; similarity: number }> = await prisma.$queryRaw`
+      SELECT id::text, 1 - (embedding <=> ${vectorStr}::vector) as similarity
+      FROM items
+      WHERE user_id = ${userId}::uuid
+        AND parent_id IS NULL
+        AND embedding IS NOT NULL
+        AND 1 - (embedding <=> ${vectorStr}::vector) > 0.3
+      ORDER BY embedding <=> ${vectorStr}::vector
+      LIMIT 20
+    `;
+
+    if (matches.length === 0) return [];
+
+    const ids = matches.map((m) => m.id);
+    const items = await prisma.item.findMany({
+      where: { id: { in: ids } },
+      include: { category: true },
+    });
+
+    const similarityMap = new Map(matches.map((m) => [m.id, m.similarity]));
+    items.sort((a, b) => (similarityMap.get(b.id) ?? 0) - (similarityMap.get(a.id) ?? 0));
+
+    return items.map((item) => ({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      status: item.status,
+      priority: item.priority,
+      category: { name: item.category.name, color: item.category.color ?? "#A8A29E" },
+      dueDate: item.dueDate,
+      type: item.remindAt ? ("reminder" as const) : ("task" as const),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function searchItems(userId: string, query: string): Promise<SearchResult[]> {
+  if (!query.trim()) return [];
+
+  const keywordResults = await keywordSearch(userId, query);
+
+  if (keywordResults.length >= 3) return keywordResults;
+
+  const semanticResults = await semanticSearch(userId, query);
+
+  // Merge: keyword results first (exact matches are high confidence), then semantic results not already present
+  const seenIds = new Set(keywordResults.map((r) => r.id));
+  const merged = [...keywordResults];
+  for (const result of semanticResults) {
+    if (!seenIds.has(result.id)) {
+      merged.push(result);
+      seenIds.add(result.id);
+    }
+  }
+
+  return merged.slice(0, 20);
 }

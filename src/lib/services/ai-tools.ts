@@ -207,11 +207,11 @@ export const AI_TOOLS = [
   },
   {
     name: "search_items",
-    description: "Search through all tasks and reminders by keyword. Use when the user asks about a specific task they can't remember the exact name of.",
+    description: "Search through all tasks and reminders. Supports both keyword matching and semantic/natural language search. Use when the user asks about a specific task, even if they describe it vaguely or use different words than the original title.",
     parameters: {
       type: "object" as const,
       properties: {
-        query: { type: "string", description: "Search query (keywords to match against titles and descriptions)" },
+        query: { type: "string", description: "Search query — can be keywords OR a natural language description of what the user is looking for" },
       },
       required: ["query"],
     },
@@ -263,7 +263,7 @@ Rules:
 - Keep responses concise — this is a Telegram chat.
 - If the user references "that", "it", or "the reminder/task" without a name, check conversation history for context.
 - When creating tasks, ONLY use one of the existing categories listed above. Never invent new category names.
-- Calendar events are automatically tracked in-app — do NOT also create a separate task for the same event.
+- Calendar events are separate from tasks — do NOT create an in-app task when creating a calendar event.
 - When the user asks to move, reschedule, or change a calendar event, use update_calendar_event.
 - When the user asks to cancel or delete a calendar event, use delete_calendar_event.
 
