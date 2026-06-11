@@ -35,8 +35,15 @@ export async function executeToolCall(
     }
 
     case "list_items": {
+      let categoryId: string | undefined;
+      if (args.category) {
+        const cats = await listCategories(userId);
+        const cat = cats.find((c) => c.name.toLowerCase() === (args.category as string).toLowerCase());
+        if (cat) categoryId = cat.id;
+      }
       const items = await listItems(userId, {
         status: args.status as ItemStatus | undefined,
+        categoryId,
       });
       if (items.length === 0) return "No items found.";
       return items.map((item, i) => {
@@ -46,9 +53,9 @@ export async function executeToolCall(
     }
 
     case "complete_item": {
-      const items = await listItems(userId, { status: "pending" as ItemStatus });
+      const items = await listItems(userId);
       const match = items.find((item) =>
-        item.title.toLowerCase().includes((args.title as string).toLowerCase())
+        item.status !== "done" && item.title.toLowerCase().includes((args.title as string).toLowerCase())
       );
       if (!match) return `Couldn't find an item matching "${args.title}"`;
       await updateItem(match.id, userId, { status: "done" as ItemStatus });
@@ -76,9 +83,9 @@ export async function executeToolCall(
 
     case "update_item": {
       const query = (args.query as string).toLowerCase();
-      const items = await listItems(userId, { status: "pending" as ItemStatus });
+      const items = await listItems(userId);
       const match = items.find((item) =>
-        item.title.toLowerCase().includes(query)
+        item.status !== "done" && item.title.toLowerCase().includes(query)
       );
       if (!match) return `Couldn't find an item matching "${args.query}". Try a different title.`;
 
@@ -266,7 +273,9 @@ export async function executeToolCall(
       const pending = await listItems(userId, { status: "pending" as ItemStatus });
       if (pending.length === 0) return "No pending tasks to schedule.";
 
-      const today = new Date();
+      const now = new Date();
+      const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(now);
+      const today = new Date(`${todayStr}T00:00:00`);
       const sevenDaysOut = new Date(today);
       sevenDaysOut.setDate(today.getDate() + 7);
 
@@ -282,7 +291,7 @@ export async function executeToolCall(
       const events = await getEvents(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        today,
+        now,
         sevenDaysOut
       );
 
@@ -293,7 +302,7 @@ export async function executeToolCall(
       for (let d = 0; d < 7; d++) {
         const day = new Date(today);
         day.setDate(today.getDate() + d);
-        const dateStr = day.toISOString().split("T")[0];
+        const dateStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(day);
         const dayEvents = events
           .filter((e) => e.startTime.startsWith(dateStr))
           .sort((a, b) => a.startTime.localeCompare(b.startTime));

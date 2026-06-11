@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeCode } from "@/lib/services/calendar";
+import { exchangeCode, verifyOAuthState } from "@/lib/services/calendar";
 import { updateUserSettings } from "@/lib/services/user";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const userId = url.searchParams.get("state");
+  const state = url.searchParams.get("state");
 
-  if (!code || !userId) {
+  if (!code || !state) {
     return NextResponse.redirect(new URL("/settings?error=missing_params", request.url));
+  }
+
+  const userId = verifyOAuthState(state);
+  if (!userId) {
+    return NextResponse.redirect(new URL("/settings?error=invalid_state", request.url));
   }
 
   try {

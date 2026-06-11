@@ -38,13 +38,13 @@ export async function setWebhook(url: string, secret: string) {
 
 export async function setMyCommands() {
   const commands = [
-    { command: "todo", description: "Create a todo — /todo buy groceries by Friday" },
-    { command: "remind", description: "Set a reminder — /remind medication daily 9am" },
-    { command: "event", description: "Create calendar event — /event lunch tomorrow noon" },
-    { command: "done", description: "Complete a task — /done buy groceries" },
+    { command: "todo", description: "Add a task" },
+    { command: "remind", description: "Set a reminder" },
+    { command: "event", description: "Create a calendar event" },
+    { command: "done", description: "Mark a task complete" },
     { command: "today", description: "Today's agenda" },
-    { command: "list", description: "List pending tasks" },
-    { command: "help", description: "Show available commands" },
+    { command: "list", description: "All pending tasks" },
+    { command: "help", description: "Show commands" },
   ];
 
   const res = await fetch(`${TELEGRAM_API}${getToken()}/setMyCommands`, {

@@ -27,6 +27,11 @@ type Props = {
     hasAiApiKey: boolean;
     hasGoogleCalendar: boolean;
     googleCalendarId: string | null;
+    quietStart: string | null;
+    quietEnd: string | null;
+    notifyMinPriority: string;
+    digestDay: number;
+    digestTime: string;
   };
 };
 
@@ -48,6 +53,11 @@ export function SettingsClient({ userId, settings }: Props) {
     briefingTime: string | null;
     weeklyDigestEnabled: boolean;
     aiSuggestionEnabled: boolean;
+    quietStart: string | null;
+    quietEnd: string | null;
+    notifyMinPriority: string;
+    digestDay: number;
+    digestTime: string;
   }) => {
     await saveNotifications(data);
     router.refresh();
@@ -94,6 +104,11 @@ export function SettingsClient({ userId, settings }: Props) {
           briefingTime={settings.briefingTime}
           weeklyDigestEnabled={settings.weeklyDigestEnabled}
           aiSuggestionEnabled={settings.aiSuggestionEnabled}
+          quietStart={settings.quietStart}
+          quietEnd={settings.quietEnd}
+          notifyMinPriority={settings.notifyMinPriority}
+          digestDay={settings.digestDay}
+          digestTime={settings.digestTime}
           onSave={handleSaveNotifications}
         />
         <GoogleCalendarCard

@@ -40,7 +40,7 @@ function openaiToolsFormat() {
 
 export async function chatWithAi(
   userMessage: string,
-  user: { telegramUsername: string; timezone: string; categories?: string[] },
+  user: { telegramUsername: string; timezone: string; categories?: string[]; lastAction?: string | null },
   config: AiConfig
 ): Promise<{ text: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }> }> {
   const { provider, apiKey, model } = resolveAiClient(config);

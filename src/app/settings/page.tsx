@@ -20,6 +20,11 @@ export default async function SettingsPage() {
         hasAiApiKey: !!user.aiApiKey,
         hasGoogleCalendar: !!user.googleRefreshToken,
         googleCalendarId: user.googleCalendarId,
+        quietStart: user.quietStart,
+        quietEnd: user.quietEnd,
+        notifyMinPriority: user.notifyMinPriority,
+        digestDay: user.digestDay,
+        digestTime: user.digestTime,
       }}
     />
   );

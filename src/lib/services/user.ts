@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { encrypt, decrypt } from "@/lib/encryption";
-import type { AiProvider } from "@/generated/prisma/enums";
+import type { AiProvider, Priority } from "@/generated/prisma/enums";
 
 export async function findOrCreateUser(telegramId: bigint, username: string) {
   return prisma.user.upsert({
@@ -31,6 +31,11 @@ export async function updateUserSettings(
     aiModel?: string | null;
     googleRefreshToken?: string | null;
     googleCalendarId?: string | null;
+    quietStart?: string | null;
+    quietEnd?: string | null;
+    notifyMinPriority?: Priority;
+    digestDay?: number;
+    digestTime?: string;
   }
 ) {
   const updateData = { ...data };

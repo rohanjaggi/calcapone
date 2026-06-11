@@ -1,11 +1,4 @@
-import {
-  handleTodo,
-  handleRemind,
-  handleEvent,
-  handleDone,
-  handleToday,
-  handleList,
-} from "./handlers";
+import { handleDone, handleToday, handleList } from "./handlers";
 
 export type ParsedCommand = {
   command: string;
@@ -20,23 +13,10 @@ export type CommandContext = {
     googleRefreshToken: string | null;
     googleCalendarId: string | null;
   };
-  aiConfig: {
-    provider: string | null;
-    apiKey: string | null;
-    model: string | null;
-  };
 };
 
-export const COMMANDS = new Set([
-  "todo",
-  "remind",
-  "event",
-  "done",
-  "today",
-  "list",
-  "start",
-  "help",
-]);
+const AI_HINT_COMMANDS = new Set(["todo", "remind", "event"]);
+const DB_COMMANDS = new Set(["done", "today", "list", "start", "help"]);
 
 const COMMAND_REGEX = /^\/(\w+)(?:@\w+)?(?:\s+([\s\S]+))?$/;
 
@@ -45,37 +25,42 @@ export function parseSlashCommand(text: string): ParsedCommand | null {
   if (!match) return null;
 
   const command = match[1].toLowerCase();
-  if (!COMMANDS.has(command)) return null;
+  if (!AI_HINT_COMMANDS.has(command) && !DB_COMMANDS.has(command)) return null;
 
-  return {
-    command,
-    body: match[2]?.trim() ?? "",
-  };
+  return { command, body: match[2]?.trim() ?? "" };
 }
 
-export const HELP_TEXT = `
-Available commands:
-/todo <task> — Add a new task or reminder (AI-parsed)
-/remind <reminder> — Set a reminder (AI-parsed)
-/event <details> — Create a calendar event (AI-parsed)
-/done <task> — Mark a task as done
-/today — Show today's agenda (tasks + calendar)
-/list — List all pending tasks
-/start — Get started with Calcapone
-/help — Show this help message
-`.trim();
+export function isAiHintCommand(command: string): boolean {
+  return AI_HINT_COMMANDS.has(command);
+}
+
+const AI_HINTS: Record<string, string> = {
+  todo: "Create a todo item (not a reminder, no remind_at):",
+  remind: "Set a reminder (MUST include remind_at). If user says daily/weekly/monthly, set recurring:",
+  event: "Create a calendar event:",
+};
+
+export function getAiHint(command: string): string {
+  return AI_HINTS[command] ?? "";
+}
+
+export const HELP_TEXT = `*Calcapone* — your task & calendar assistant
+
+*Quick commands*
+/todo buy groceries by Friday
+/remind take meds daily at 9am
+/event lunch with Sarah tomorrow noon
+/done buy groceries
+/today — agenda at a glance
+/list — all pending tasks
+
+Or just type naturally — I'll figure out the rest.`;
 
 export async function handleCommand(
   parsed: ParsedCommand,
   ctx: CommandContext
 ): Promise<string> {
   switch (parsed.command) {
-    case "todo":
-      return handleTodo(parsed.body, ctx);
-    case "remind":
-      return handleRemind(parsed.body, ctx);
-    case "event":
-      return handleEvent(parsed.body, ctx);
     case "done":
       return handleDone(parsed.body, ctx);
     case "today":
@@ -83,7 +68,6 @@ export async function handleCommand(
     case "list":
       return handleList(parsed.body, ctx);
     case "start":
-      return HELP_TEXT;
     case "help":
       return HELP_TEXT;
     default:

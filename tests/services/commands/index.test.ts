@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSlashCommand, COMMANDS } from "@/lib/services/commands";
+import { parseSlashCommand, isAiHintCommand } from "@/lib/services/commands";
 
 describe("parseSlashCommand", () => {
   it("parses /todo with body", () => {
@@ -83,15 +83,18 @@ describe("parseSlashCommand", () => {
   });
 });
 
-describe("COMMANDS", () => {
-  it("contains expected commands", () => {
-    expect(COMMANDS.has("todo")).toBe(true);
-    expect(COMMANDS.has("remind")).toBe(true);
-    expect(COMMANDS.has("event")).toBe(true);
-    expect(COMMANDS.has("done")).toBe(true);
-    expect(COMMANDS.has("today")).toBe(true);
-    expect(COMMANDS.has("list")).toBe(true);
-    expect(COMMANDS.has("start")).toBe(true);
-    expect(COMMANDS.has("help")).toBe(true);
+describe("isAiHintCommand", () => {
+  it("returns true for AI-routed commands", () => {
+    expect(isAiHintCommand("todo")).toBe(true);
+    expect(isAiHintCommand("remind")).toBe(true);
+    expect(isAiHintCommand("event")).toBe(true);
+  });
+
+  it("returns false for DB-direct commands", () => {
+    expect(isAiHintCommand("done")).toBe(false);
+    expect(isAiHintCommand("today")).toBe(false);
+    expect(isAiHintCommand("list")).toBe(false);
+    expect(isAiHintCommand("start")).toBe(false);
+    expect(isAiHintCommand("help")).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 // src/lib/services/calendar.ts
 import { google } from "googleapis";
+import { createHmac } from "crypto";
 import { decrypt } from "@/lib/encryption";
 
 function getOAuthClient() {
@@ -10,13 +11,34 @@ function getOAuthClient() {
   );
 }
 
-export function getAuthUrl(state: string): string {
+function getStateSecret(): string {
+  const key = process.env.ENCRYPTION_KEY;
+  if (!key) throw new Error("ENCRYPTION_KEY required for OAuth state signing");
+  return key;
+}
+
+export function signOAuthState(userId: string): string {
+  const hmac = createHmac("sha256", getStateSecret()).update(userId).digest("hex");
+  return `${userId}.${hmac}`;
+}
+
+export function verifyOAuthState(state: string): string | null {
+  const dotIndex = state.lastIndexOf(".");
+  if (dotIndex === -1) return null;
+  const userId = state.slice(0, dotIndex);
+  const signature = state.slice(dotIndex + 1);
+  const expected = createHmac("sha256", getStateSecret()).update(userId).digest("hex");
+  if (signature !== expected) return null;
+  return userId;
+}
+
+export function getAuthUrl(userId: string): string {
   const client = getOAuthClient();
   return client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
     scope: ["https://www.googleapis.com/auth/calendar.events"],
-    state,
+    state: signOAuthState(userId),
   });
 }
 

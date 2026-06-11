@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { Sparkles, Send, Check, Loader2 } from "lucide-react";
+import { Send, Check, Loader2 } from "lucide-react";
 import { aiAddItem } from "@/app/actions";
 
 const modes = [

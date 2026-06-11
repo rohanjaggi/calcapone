@@ -3,7 +3,7 @@
 import { updateUserSettings } from "@/lib/services/user";
 import { getOrCreateDevUser } from "@/lib/dev-user";
 import { getAuthUrl } from "@/lib/services/calendar";
-import type { AiProvider } from "@/generated/prisma/enums";
+import type { AiProvider, Priority } from "@/generated/prisma/enums";
 
 export async function saveAiConfig(data: {
   aiProvider: string;
@@ -28,9 +28,17 @@ export async function saveNotifications(data: {
   briefingTime: string | null;
   weeklyDigestEnabled: boolean;
   aiSuggestionEnabled: boolean;
+  quietStart: string | null;
+  quietEnd: string | null;
+  notifyMinPriority: string;
+  digestDay: number;
+  digestTime: string;
 }) {
   const user = await getOrCreateDevUser();
-  await updateUserSettings(user.id, data);
+  await updateUserSettings(user.id, {
+    ...data,
+    notifyMinPriority: data.notifyMinPriority as Priority,
+  });
 }
 
 export async function getGoogleAuthUrl() {

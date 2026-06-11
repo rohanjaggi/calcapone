@@ -22,6 +22,17 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
-  const item = await createItem({ userId: user.id, ...body });
+  const item = await createItem({
+    userId: user.id,
+    categoryId: body.categoryId,
+    title: body.title,
+    description: body.description ?? null,
+    priority: body.priority ?? "medium",
+    dueDate: body.dueDate ?? null,
+    dueTime: body.dueTime ?? null,
+    remindAt: body.remindAt ? new Date(body.remindAt) : null,
+    recurring: body.recurring ?? "none",
+    googleEventId: body.googleEventId ?? null,
+  });
   return NextResponse.json(item, { status: 201 });
 }

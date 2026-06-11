@@ -1,11 +1,11 @@
-// src/app/api/telegram/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { findOrCreateUser, decryptUserApiKey } from "@/lib/services/user";
 import { chatWithAi } from "@/lib/services/ai";
 import { sendMessage } from "@/lib/services/telegram";
 import { executeToolCall } from "@/lib/services/execute-tool";
-import { parseSlashCommand, handleCommand } from "@/lib/services/commands";
+import { parseSlashCommand, handleCommand, isAiHintCommand, getAiHint } from "@/lib/services/commands";
 import { listCategories } from "@/lib/services/category";
+import { getLastAction, setLastAction } from "@/lib/services/last-action";
 import type { TelegramUpdate } from "@/lib/services/telegram";
 
 export async function POST(request: NextRequest) {
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   try {
     const parsed = parseSlashCommand(message.text);
 
-    if (parsed) {
+    if (parsed && !isAiHintCommand(parsed.command)) {
       const response = await handleCommand(parsed, {
         userId: user.id,
         user: {
@@ -40,15 +40,25 @@ export async function POST(request: NextRequest) {
           googleRefreshToken: user.googleRefreshToken,
           googleCalendarId: user.googleCalendarId,
         },
-        aiConfig,
       });
       await sendMessage(chatId, response);
     } else {
+      let userMessage = message.text;
+      if (parsed && isAiHintCommand(parsed.command)) {
+        if (!parsed.body) {
+          await sendMessage(chatId, `Usage: /${parsed.command} <description>`);
+          return NextResponse.json({ ok: true });
+        }
+        userMessage = `${getAiHint(parsed.command)} ${parsed.body}`;
+      }
+
       const categories = await listCategories(user.id);
       const categoryNames = categories.map((c) => c.name);
+      const lastAction = getLastAction(chatId);
+
       const { text, toolCalls } = await chatWithAi(
-        message.text,
-        { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categoryNames },
+        userMessage,
+        { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categoryNames, lastAction },
         aiConfig
       );
 
@@ -60,6 +70,7 @@ export async function POST(request: NextRequest) {
 
       const response = [text, ...results].filter(Boolean).join("\n\n");
       if (response) {
+        setLastAction(chatId, response.slice(0, 200));
         await sendMessage(chatId, response);
       }
     }

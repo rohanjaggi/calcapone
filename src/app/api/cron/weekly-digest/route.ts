@@ -1,24 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { runCronJob } from "@/lib/services/cron-utils";
 import { sendMessage } from "@/lib/services/telegram";
 
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get("authorization");
-  if (secret !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const now = new Date();
-
-  const users = await prisma.user.findMany({
-    where: { weeklyDigestEnabled: true },
-  });
-
-  let sent = 0;
-  let errors = 0;
-
-  for (const user of users) {
-    try {
+  return runCronJob(request, {
+    filter: { weeklyDigestEnabled: true },
+    shouldRun: (user, now) => {
       const userHour = new Intl.DateTimeFormat("en-GB", {
         timeZone: user.timezone,
         hour: "2-digit",
@@ -30,79 +20,60 @@ export async function POST(request: NextRequest) {
         weekday: "long",
       }).format(now);
 
-      // Send at 19:xx on Sunday in user's timezone
-      if (!userHour.startsWith("19") || userWeekday !== "Sunday") continue;
-      if (!user.telegramId) continue;
+      const targetDay = DAY_NAMES[user.digestDay];
+      const targetHour = user.digestTime.split(":")[0];
 
-      // Monday of this week
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - 6);
-      monday.setUTCHours(0, 0, 0, 0);
-
+      return userHour.startsWith(targetHour) && userWeekday === targetDay;
+    },
+    handler: async (user, now) => {
       const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(now);
-      const mondayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(monday);
 
-      // Next Monday
-      const nextMonday = new Date(monday);
-      nextMonday.setDate(monday.getDate() + 7);
-      const nextMondayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(nextMonday);
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - 6);
+      weekStart.setUTCHours(0, 0, 0, 0);
+      const weekStartStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(weekStart);
 
-      // Next Sunday
-      const nextSunday = new Date(nextMonday);
-      nextSunday.setDate(nextMonday.getDate() + 6);
-      const nextSundayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(nextSunday);
+      const nextWeekStart = new Date(now);
+      nextWeekStart.setDate(now.getDate() + 1);
+      const nextWeekEnd = new Date(nextWeekStart);
+      nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
+      const nextWeekStartStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(nextWeekStart);
+      const nextWeekEndStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(nextWeekEnd);
 
       const [completed, overdue, upcoming] = await Promise.all([
         prisma.item.findMany({
-          where: {
-            userId: user.id,
-            status: "done",
-            updatedAt: { gte: monday, lte: now },
-          },
+          where: { userId: user.id, status: "done", updatedAt: { gte: weekStart, lte: now } },
         }),
         prisma.item.findMany({
-          where: {
-            userId: user.id,
-            status: { not: "done" },
-            dueDate: { lt: todayStr },
-          },
+          where: { userId: user.id, status: { not: "done" }, dueDate: { lt: todayStr } },
         }),
         prisma.item.findMany({
-          where: {
-            userId: user.id,
-            status: { not: "done" },
-            dueDate: { gte: nextMondayStr, lte: nextSundayStr },
-          },
+          where: { userId: user.id, status: { not: "done" }, dueDate: { gte: nextWeekStartStr, lte: nextWeekEndStr } },
           orderBy: { dueDate: "asc" },
           take: 10,
         }),
       ]);
 
-      const lines: string[] = [`📊 *Weekly Digest — week of ${mondayStr}*\n`];
+      const lines: string[] = [`*Week of ${weekStartStr}*\n`];
 
-      lines.push(`✅ *Completed (${completed.length})*`);
+      lines.push(`*Done (${completed.length})*`);
       if (completed.length > 0) {
         completed.slice(0, 10).forEach((i) => lines.push(`• ${i.title}`));
       } else {
-        lines.push("• Nothing completed this week");
+        lines.push("• —");
       }
 
       if (overdue.length > 0) {
-        lines.push(`\n⚠️ *Still overdue (${overdue.length})*`);
-        overdue.slice(0, 5).forEach((i) => lines.push(`• ${i.title} (due ${i.dueDate})`));
+        lines.push(`\n*Overdue (${overdue.length})*`);
+        overdue.slice(0, 5).forEach((i) => lines.push(`• ${i.title} — ${i.dueDate}`));
       }
 
       if (upcoming.length > 0) {
-        lines.push(`\n📅 *Next week (${upcoming.length} items)*`);
+        lines.push(`\n*Next week*`);
         upcoming.forEach((i) => lines.push(`• ${i.title}${i.dueDate ? ` — ${i.dueDate}` : ""}`));
       }
 
       await sendMessage(Number(user.telegramId), lines.join("\n"));
-      sent++;
-    } catch {
-      errors++;
-    }
-  }
-
-  return NextResponse.json({ sent, errors });
+    },
+  });
 }
