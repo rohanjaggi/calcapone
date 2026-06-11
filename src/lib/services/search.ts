@@ -42,6 +42,21 @@ async function keywordSearch(userId: string, query: string): Promise<SearchResul
   }));
 }
 
+function recencyDecay(updatedAt: Date): number {
+  const daysSince = (Date.now() - updatedAt.getTime()) / (1000 * 60 * 60 * 24);
+  return Math.max(0, 1 - daysSince / 30);
+}
+
+function statusBoost(status: string): number {
+  if (status === "pending") return 1;
+  if (status === "in_progress") return 0.8;
+  return 0.2;
+}
+
+function hybridScore(similarity: number, updatedAt: Date, status: string): number {
+  return 0.7 * similarity + 0.2 * recencyDecay(updatedAt) + 0.1 * statusBoost(status);
+}
+
 async function semanticSearch(userId: string, query: string): Promise<SearchResult[]> {
   try {
     const embedding = await generateEmbedding(query);
@@ -67,7 +82,11 @@ async function semanticSearch(userId: string, query: string): Promise<SearchResu
     });
 
     const similarityMap = new Map(matches.map((m) => [m.id, m.similarity]));
-    items.sort((a, b) => (similarityMap.get(b.id) ?? 0) - (similarityMap.get(a.id) ?? 0));
+    items.sort((a, b) => {
+      const scoreA = hybridScore(similarityMap.get(a.id) ?? 0, a.updatedAt, a.status);
+      const scoreB = hybridScore(similarityMap.get(b.id) ?? 0, b.updatedAt, b.status);
+      return scoreB - scoreA;
+    });
 
     return items.map((item) => ({
       id: item.id,
