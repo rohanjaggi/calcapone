@@ -35,6 +35,38 @@ describe("mdToHtml", () => {
   it("renders links", () => {
     expect(mdToHtml("[docs](https://example.com)")).toBe('<a href="https://example.com">docs</a>');
   });
+
+  it("never emits badly-nested tags when emphasis markers cross", () => {
+    // <b>bold <i>italic</b> end</i> is Telegram's canonical "invalid entities" case: it 400s,
+    // and the plain-text retry then showed the user the raw tags.
+    const out = mdToHtml("**bold *italic** end*");
+    expect(out).toBe("<b>bold *italic</b> end*");
+    expect(out).not.toMatch(/<i>[^<]*<\/b>/);
+  });
+
+  it("keeps tags balanced for the mixed-emphasis shapes a model actually writes", () => {
+    for (const input of ["**Remember, *don't* forget**", "*a **b** c*", "**a *b* c**"]) {
+      const tags = [...mdToHtml(input).matchAll(/<(\/?)([a-z]+)[^>]*>/g)].map(([, slash, tag]) => `${slash}${tag}`);
+      const stack: string[] = [];
+      for (const tag of tags) {
+        if (tag.startsWith("/")) expect(stack.pop()).toBe(tag.slice(1));
+        else stack.push(tag);
+      }
+      expect(stack).toEqual([]);
+    }
+  });
+
+  it("strips literal sentinel codepoints instead of splicing in parked spans", () => {
+    expect(mdToHtml("note 5 done")).toBe("note 5 done");
+    expect(mdToHtml("call `foo()` then 0 rest")).toBe("call <code>foo()</code> then 0 rest");
+  });
+
+  it("treats an unclosed code fence as code rather than leaking backticks", () => {
+    const out = mdToHtml("```js\nx = *a\nthen **bold** here");
+    expect(out).toContain("<pre>");
+    expect(out).not.toContain("```");
+    expect(out).not.toContain("<b>");
+  });
 });
 
 describe("htmlToPlain", () => {

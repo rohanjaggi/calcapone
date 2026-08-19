@@ -40,8 +40,12 @@ export async function notifyOwner(context: string, error: unknown, now = Date.no
 
   const previous = lastSent.get(context);
   if (previous !== undefined && now - previous < COOLDOWN_MS) return;
+  // Marked before the send so a burst in flight can't flood, but cleared again if the send
+  // failed — otherwise an outage that breaks both the fault and the alert would suppress
+  // every later notification for the whole cooldown, which is exactly when you need them.
   lastSent.set(context, now);
 
   const detail = error instanceof Error ? error.message : String(error);
-  await sendMessageSafe(chatId, `${b("Calcapone fault")}\n${esc(context)}\n\n${esc(detail.slice(0, 500))}`);
+  const sent = await sendMessageSafe(chatId, `${b("Calcapone fault")}\n${esc(context)}\n\n${esc(detail.slice(0, 500))}`);
+  if (!sent) lastSent.delete(context);
 }

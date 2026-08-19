@@ -7,6 +7,7 @@ import {
   createItem,
   getEscalationCandidates,
   updateNotificationStage,
+  claimNotificationStage,
 } from "@/lib/services/item";
 import { sendMessage, b, TelegramBlockedError } from "@/lib/services/telegram";
 import { reminderKeyboard, doneOnlyKeyboard } from "@/lib/services/callbacks";
@@ -78,7 +79,9 @@ export async function POST(request: NextRequest) {
           continue;
         }
         if (originalRemindAt) {
-          await restoreDueReminder(item.id, originalRemindAt, item.status);
+          // Only hand back a status if the claim actually set one — otherwise a Done press
+          // that landed during the retry would be overwritten by this stale value.
+          await restoreDueReminder(item.id, originalRemindAt, markDone ? item.status : null);
           restored++;
         }
         throw error;
@@ -154,18 +157,25 @@ export async function POST(request: NextRequest) {
       }
 
       if (newStage > item.notificationStage) {
+        // Ticks are ~60s apart while maxDuration is 60s, so two runs can overlap. Claiming
+        // the stage first means only one of them can alert; sending first and writing after
+        // let both pass the check and send the same "Due soon" twice.
+        if (!(await claimNotificationStage(item.id, item.notificationStage, newStage))) {
+          skipped++;
+          continue;
+        }
         try {
           await sendMessage(Number(item.user.telegramId), message, { keyboard: doneOnlyKeyboard(item.id) });
         } catch (error) {
-          // The stage is only advanced after a successful send, so a failure here retries
-          // on the next tick by itself — except for a blocked chat, which never will.
+          // A blocked chat keeps the claim: no retry can ever deliver it, and rolling back
+          // would re-alert on every future tick. Anything else rolls back to retry.
           if (error instanceof TelegramBlockedError) {
             blocked++;
             continue;
           }
+          await updateNotificationStage(item.id, item.notificationStage);
           throw error;
         }
-        await updateNotificationStage(item.id, newStage);
         escalated++;
       }
     } catch (error) {

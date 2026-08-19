@@ -5,8 +5,18 @@ const mockClaimDueReminder = vi.hoisted(() => vi.fn());
 const mockCreateItem = vi.hoisted(() => vi.fn());
 const mockGetEscalationCandidates = vi.hoisted(() => vi.fn());
 const mockUpdateNotificationStage = vi.hoisted(() => vi.fn());
+const mockClaimNotificationStage = vi.hoisted(() => vi.fn());
 const mockSendMessage = vi.hoisted(() => vi.fn());
 const mockPrune = vi.hoisted(() => vi.fn());
+const MockTelegramBlockedError = vi.hoisted(
+  () =>
+    class TelegramBlockedError extends Error {
+      constructor() {
+        super("blocked");
+        this.name = "TelegramBlockedError";
+      }
+    }
+);
 
 vi.mock("@/lib/services/item", async (importOriginal) => {
   // createNextOccurrence stays real: the recurrence maths is part of what's under test.
@@ -18,14 +28,19 @@ vi.mock("@/lib/services/item", async (importOriginal) => {
     createItem: mockCreateItem,
     getEscalationCandidates: mockGetEscalationCandidates,
     updateNotificationStage: mockUpdateNotificationStage,
+    claimNotificationStage: mockClaimNotificationStage,
   };
 });
 
 vi.mock("@/lib/services/telegram", () => ({
   sendMessage: mockSendMessage,
+  sendMessageSafe: vi.fn(),
+  esc: (t: unknown) => String(t ?? ""),
   b: (t: unknown) => `<b>${t}</b>`,
+  TelegramBlockedError: MockTelegramBlockedError,
 }));
 
+vi.mock("@/lib/services/alert", () => ({ notifyOwner: vi.fn() }));
 vi.mock("@/lib/services/conversation", () => ({ pruneOldMessages: mockPrune }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
@@ -85,6 +100,7 @@ beforeEach(() => {
   mockGetDueItems.mockResolvedValue([]);
   mockGetEscalationCandidates.mockResolvedValue([]);
   mockClaimDueReminder.mockResolvedValue(true);
+  mockClaimNotificationStage.mockResolvedValue(true);
   mockPrune.mockResolvedValue(0);
   mockSendMessage.mockResolvedValue({});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -194,8 +210,34 @@ describe("POST /api/cron/reminders", () => {
     const body = await (await POST(request())).json();
 
     expectSent(12345, "Overdue");
-    expect(mockUpdateNotificationStage).toHaveBeenCalledWith("i1", 3);
+    // The stage is claimed *before* the send so overlapping ticks can't both alert;
+    // updateNotificationStage is now only the rollback path, so it must stay untouched here.
+    expect(mockClaimNotificationStage).toHaveBeenCalledWith("i1", 0, 3);
+    expect(mockUpdateNotificationStage).not.toHaveBeenCalled();
     expect(body.escalated).toBe(1);
+  });
+
+  it("does not alert when another tick already claimed the stage", async () => {
+    mockGetEscalationCandidates.mockResolvedValue([
+      { ...dueItem({ remindAt: null, dueDate: "2026-06-14", dueTime: "09:00" }), notificationStage: 0 },
+    ]);
+    mockClaimNotificationStage.mockResolvedValue(false);
+    const body = await (await POST(request())).json();
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(body.escalated).toBe(0);
+  });
+
+  it("rolls the stage back when the escalation send fails, so the next tick retries", async () => {
+    mockGetEscalationCandidates.mockResolvedValue([
+      { ...dueItem({ remindAt: null, dueDate: "2026-06-14", dueTime: "09:00" }), notificationStage: 0 },
+    ]);
+    mockSendMessage.mockRejectedValueOnce(new Error("telegram down"));
+    const body = await (await POST(request())).json();
+
+    expect(mockUpdateNotificationStage).toHaveBeenCalledWith("i1", 0);
+    expect(body.escalated).toBe(0);
+    expect(body.errors).toBe(1);
   });
 
   it("applies the priority floor to escalation nags", async () => {

@@ -56,11 +56,18 @@ export function mdToHtml(raw: string): string {
     return `${PARK_OPEN}${parked.length - 1}${PARK_CLOSE}`;
   };
 
+  // A literal sentinel in the input would be mistaken for a parked span on the way back,
+  // splicing in unrelated content or deleting the run outright. Drop them first.
+  const sanitized = esc(raw).replace(/[]/g, "");
+
   // Code spans go first so their contents can never be reinterpreted as emphasis.
-  const withoutCode = esc(raw)
+  const withoutCode = sanitized
     .replace(/```(?:[a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g, (_m, code: string) =>
       park(`<pre>${code.replace(/\n$/, "")}</pre>`)
     )
+    // An unclosed fence would otherwise leave its body exposed to the emphasis rules and
+    // its backticks visible in the message; treat the remainder as code.
+    .replace(/```(?:[a-zA-Z0-9_+-]*)\n?([\s\S]*)$/, (_m, code: string) => park(`<pre>${code}</pre>`))
     .replace(/`([^`\n]+)`/g, (_m, code: string) => park(`<code>${code}</code>`));
 
   const formatted = withoutCode
@@ -71,9 +78,11 @@ export function mdToHtml(raw: string): string {
     .replace(/__([^\n]+?)__/g, "<b>$1</b>")
     .replace(/~~([^\n]+?)~~/g, "<s>$1</s>")
     // Single-char emphasis last, and only when not touching a word character, so
-    // snake_case identifiers and `3 * 4` survive intact.
-    .replace(/(^|[^\w*])\*([^\s*][^*\n]*?)\*(?![\w*])/g, "$1<i>$2</i>")
-    .replace(/(^|[^\w_])_([^\s_][^_\n]*?)_(?![\w_])/g, "$1<i>$2</i>")
+    // snake_case identifiers and `3 * 4` survive intact. The content also may not cross a
+    // `<`: without that guard, "**bold *italic** end*" produced <b>bold <i>italic</b> end</i>,
+    // which Telegram rejects as badly nested.
+    .replace(/(^|[^\w*])\*([^\s*][^*\n<]*?)\*(?![\w*])/g, "$1<i>$2</i>")
+    .replace(/(^|[^\w_])_([^\s_][^_\n<]*?)_(?![\w_])/g, "$1<i>$2</i>")
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
 
   return formatted.replace(
@@ -212,22 +221,24 @@ export async function sendMessage(chatId: number | bigint, text: string, options
 
   for (const [index, chunk] of chunks.entries()) {
     const isLast = index === chunks.length - 1;
-    const payload = (mode: "HTML" | null) => ({
+    const payload = (mode: "HTML" | null, text: string) => ({
       chat_id: chatId.toString(),
-      text: chunk,
+      text,
       ...(mode ? { parse_mode: mode } : {}),
       link_preview_options: { is_disabled: true },
       ...(isLast && keyboard?.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
     });
 
-    let res = await callTelegram("sendMessage", payload(parseMode));
+    let res = await callTelegram("sendMessage", payload(parseMode, chunk));
 
     const entityError =
       !res.ok &&
       res.status === 400 &&
       Boolean(parseMode) &&
       /parse entities|can't find end|unsupported start tag|can't parse/i.test(res.body);
-    if (entityError) res = await callTelegram("sendMessage", payload(null));
+    // Retry as plain text with the markup *stripped*. Resending the same string merely
+    // turned a rejected message into one where the user reads the raw tags.
+    if (entityError) res = await callTelegram("sendMessage", payload(null, htmlToPlain(chunk)));
 
     if (!res.ok) throw new Error(`Telegram sendMessage failed: ${res.status} ${res.body}`);
     last = res.result;
@@ -282,14 +293,27 @@ export async function editMessageText(
   options: SendOptions = {}
 ): Promise<boolean> {
   const keyboard = options.keyboard ? sanitizeKeyboard(options.keyboard) : undefined;
-  const res = await callTelegram("editMessageText", {
+  const asHtml = options.parseMode !== null;
+  const payload = (mode: "HTML" | null, body: string) => ({
     chat_id: chatId.toString(),
     message_id: messageId,
-    text: text.slice(0, MAX_MESSAGE_LENGTH),
-    ...(options.parseMode === null ? {} : { parse_mode: "HTML" }),
+    text: body.slice(0, MAX_MESSAGE_LENGTH),
+    ...(mode ? { parse_mode: mode } : {}),
     link_preview_options: { is_disabled: true },
     reply_markup: { inline_keyboard: keyboard ?? [] },
   });
+
+  let res = await callTelegram("editMessageText", payload(asHtml ? "HTML" : null, text));
+
+  // Same entity fallback as sendMessage: without it a rejected edit silently leaves the
+  // message showing its stale pre-button text.
+  const entityError =
+    !res.ok &&
+    res.status === 400 &&
+    asHtml &&
+    /parse entities|can't find end|unsupported start tag|can't parse/i.test(res.body);
+  if (entityError) res = await callTelegram("editMessageText", payload(null, htmlToPlain(text)));
+
   if (!res.ok) console.error(`[telegram] editMessageText failed: ${res.status} ${res.body}`);
   return res.ok;
 }

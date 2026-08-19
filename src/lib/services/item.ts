@@ -133,7 +133,9 @@ export async function getDueItems(now: Date) {
  */
 export async function claimDueReminder(id: string, markDone: boolean): Promise<boolean> {
   const result = await prisma.item.updateMany({
-    where: { id, remindAt: { not: null } },
+    // `status` is re-checked here, not just in getDueItems: an item completed between the
+    // fetch and this claim would otherwise still fire a reminder for finished work.
+    where: { id, remindAt: { not: null }, status: { not: "done" } },
     data: { remindAt: null, ...(markDone ? { status: "done" as ItemStatus } : {}) },
   });
   return result.count === 1;
@@ -149,10 +151,19 @@ export async function claimDueReminder(id: string, markDone: boolean): Promise<b
  * Guarded on `remindAt: null` so a reminder the user re-armed in the meantime is never
  * clobbered by a late failure from the previous attempt.
  */
-export async function restoreDueReminder(id: string, remindAt: Date, status: ItemStatus): Promise<boolean> {
+export async function restoreDueReminder(
+  id: string,
+  remindAt: Date,
+  /**
+   * Only pass a status when the claim actually changed one. Writing a remembered status
+   * back unconditionally would un-complete an item the user finished (via the Done button)
+   * while the failing send was still being retried.
+   */
+  status: ItemStatus | null
+): Promise<boolean> {
   const result = await prisma.item.updateMany({
     where: { id, remindAt: null },
-    data: { remindAt, status },
+    data: { remindAt, ...(status ? { status } : {}) },
   });
   return result.count === 1;
 }
@@ -210,4 +221,17 @@ export async function updateNotificationStage(id: string, stage: number) {
     where: { id },
     data: { notificationStage: stage },
   });
+}
+
+/**
+ * Claim an escalation stage before alerting, so two overlapping cron ticks can't both pass
+ * the stage check and send the same "Due soon" twice. Roll back with
+ * {@link updateNotificationStage} if the send then fails.
+ */
+export async function claimNotificationStage(id: string, fromStage: number, toStage: number): Promise<boolean> {
+  const result = await prisma.item.updateMany({
+    where: { id, notificationStage: fromStage },
+    data: { notificationStage: toStage },
+  });
+  return result.count === 1;
 }
