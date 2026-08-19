@@ -1,4 +1,4 @@
-import { handleDone, handleToday, handleList } from "./handlers";
+import { handleDone, handleToday, handleList, handleTimezone } from "./handlers";
 
 export type ParsedCommand = {
   command: string;
@@ -16,7 +16,7 @@ export type CommandContext = {
 };
 
 const AI_HINT_COMMANDS = new Set(["todo", "remind", "event"]);
-const DB_COMMANDS = new Set(["done", "today", "list", "start", "help"]);
+const DB_COMMANDS = new Set(["done", "today", "list", "timezone", "start", "help"]);
 
 const COMMAND_REGEX = /^\/(\w+)(?:@\w+)?(?:\s+([\s\S]+))?$/;
 
@@ -53,6 +53,7 @@ export const HELP_TEXT = `<b>Calcapone</b> — your task &amp; calendar assistan
 /done buy groceries
 /today — agenda at a glance
 /list — all pending tasks
+/timezone — show or change your timezone
 
 Or just type naturally — I'll figure out the rest.`;
 
@@ -67,6 +68,8 @@ export async function handleCommand(
       return handleToday(ctx);
     case "list":
       return handleList(parsed.body, ctx);
+    case "timezone":
+      return handleTimezone(parsed.body, ctx);
     case "start":
     case "help":
       return HELP_TEXT;

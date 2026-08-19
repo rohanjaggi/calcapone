@@ -15,9 +15,9 @@ import {
   getGoogleAuthUrl,
   disconnectGoogle,
 } from "@/app/settings/actions";
+import { openExternal } from "@/lib/telegram-webapp";
 
 type Props = {
-  userId: string;
   settings: {
     timezone: string;
     briefingEnabled: boolean;
@@ -37,7 +37,7 @@ type Props = {
   };
 };
 
-export function SettingsClient({ userId, settings }: Props) {
+export function SettingsClient({ settings }: Props) {
   const router = useRouter();
 
   const handleSaveAi = async (data: { aiProvider: string; aiApiKey?: string; aiModel: string }) => {
@@ -67,7 +67,8 @@ export function SettingsClient({ userId, settings }: Props) {
 
   const handleConnectGoogle = async () => {
     const url = await getGoogleAuthUrl();
-    window.location.href = url;
+    // System browser, not the Mini App webview: Google rejects OAuth in embedded webviews.
+    openExternal(url);
   };
 
   const handleDisconnectGoogle = async () => {

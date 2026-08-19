@@ -1,10 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/services/item", () => ({ createItem: vi.fn(), listItems: vi.fn(), updateItem: vi.fn() }));
+const mockUpdateUserSettings = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/services/item", () => ({
+  createItem: vi.fn(),
+  listItems: vi.fn(),
+  updateItem: vi.fn(),
+  OPEN_STATUSES: ["pending", "in_progress"],
+}));
 vi.mock("@/lib/services/category", () => ({ listCategories: vi.fn(), createCategory: vi.fn() }));
 vi.mock("@/lib/services/calendar", () => ({ createEvent: vi.fn(), getEvents: vi.fn() }));
+vi.mock("@/lib/services/user", () => ({ updateUserSettings: mockUpdateUserSettings }));
 
-import { handleDone, handleToday, handleList } from "@/lib/services/commands/handlers";
+import { handleDone, handleToday, handleList, handleTimezone } from "@/lib/services/commands/handlers";
 import type { CommandContext } from "@/lib/services/commands";
 import { listItems, updateItem } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
@@ -46,7 +54,7 @@ describe("handleDone", () => {
     notificationStage: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
-    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() },
+    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date(), updatedAt: new Date() },
   });
 
   it("returns usage hint when body is empty", async () => {
@@ -108,7 +116,7 @@ describe("handleToday", () => {
     notificationStage: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
-    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() },
+    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date(), updatedAt: new Date() },
     ...overrides,
   });
 
@@ -220,7 +228,7 @@ describe("handleList", () => {
     notificationStage: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
-    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date() },
+    category: { id: "c1", name: "General", userId: "u1", color: null, sortOrder: 0, createdAt: new Date(), updatedAt: new Date() },
   });
 
   it("lists pending items by default", async () => {
@@ -228,7 +236,7 @@ describe("handleList", () => {
 
     const result = await handleList("", ctx);
 
-    expect(mockListItems).toHaveBeenCalledWith("u1", { status: "pending" });
+    expect(mockListItems).toHaveBeenCalledWith("u1", { status: ["pending", "in_progress"] });
     expect(result).toContain("Buy milk");
     expect(result).toContain("Write tests");
   });
@@ -247,5 +255,39 @@ describe("handleList", () => {
     const result = await handleList("", ctx);
 
     expect(result).toBe("No items found.");
+  });
+});
+
+describe("handleTimezone", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("reports the current timezone when given no argument", async () => {
+    const result = await handleTimezone("", ctx);
+    expect(result).toContain("Asia/Singapore");
+    expect(mockUpdateUserSettings).not.toHaveBeenCalled();
+  });
+
+  it("rejects something that isn't an IANA zone", async () => {
+    const result = await handleTimezone("Mars/Olympus", ctx);
+    expect(result).toContain("don't recognise");
+    expect(mockUpdateUserSettings).not.toHaveBeenCalled();
+  });
+
+  it("rejects a friendly abbreviation with a hint", async () => {
+    const result = await handleTimezone("PST", ctx);
+    expect(result).toContain("IANA");
+    expect(mockUpdateUserSettings).not.toHaveBeenCalled();
+  });
+
+  it("saves a valid zone", async () => {
+    const result = await handleTimezone("Europe/London", ctx);
+    expect(mockUpdateUserSettings).toHaveBeenCalledWith("u1", { timezone: "Europe/London" });
+    expect(result).toContain("Europe/London");
+  });
+
+  it("skips the write when the zone is unchanged", async () => {
+    const result = await handleTimezone("Asia/Singapore", ctx);
+    expect(mockUpdateUserSettings).not.toHaveBeenCalled();
+    expect(result).toContain("Already set");
   });
 });

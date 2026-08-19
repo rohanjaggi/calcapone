@@ -1,29 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Script from "next/script";
 import Image from "next/image";
-
-declare global {
-  interface Window {
-    Telegram?: { WebApp?: { initData?: string; ready?: () => void; expand?: () => void } };
-  }
-}
+import { telegramWebApp } from "@/lib/telegram-webapp";
 
 export function LoginClient() {
   const [status, setStatus] = useState<"idle" | "working" | "outside" | "failed">("idle");
+  /** Both the Script onLoad and the mount check can fire; only one sign-in POST should go out. */
+  const started = useRef(false);
 
   // Exchange Telegram Mini App initData for a session cookie, then load the app.
-  const signIn = async () => {
-    const initData = window.Telegram?.WebApp?.initData;
+  const signIn = useCallback(async () => {
+    const webApp = telegramWebApp();
+    const initData = webApp?.initData;
     if (!initData) {
       setStatus("outside");
       return;
     }
+    if (started.current) return;
+    started.current = true;
     setStatus("working");
     try {
-      window.Telegram?.WebApp?.ready?.();
-      window.Telegram?.WebApp?.expand?.();
+      webApp?.ready?.();
+      webApp?.expand?.();
       const res = await fetch("/api/auth/telegram/miniapp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -32,14 +32,20 @@ export function LoginClient() {
       if (!res.ok) throw new Error(`status ${res.status}`);
       window.location.replace("/");
     } catch {
+      started.current = false;
       setStatus("failed");
     }
-  };
-
-  // If the SDK is already available (cached), attempt sign-in without waiting for onLoad.
-  useEffect(() => {
-    if (window.Telegram?.WebApp?.initData) signIn();
   }, []);
+
+  // The SDK may already be cached from a previous open, in which case onLoad won't tell us
+  // anything new. Run the check from a timer callback rather than the effect body so the
+  // status update lands in its own render pass instead of cascading out of this one.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      if (telegramWebApp()?.initData) void signIn();
+    }, 0);
+    return () => clearTimeout(id);
+  }, [signIn]);
 
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-background">

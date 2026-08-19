@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import { Search, X, Bell } from "lucide-react";
 import { searchAction } from "@/app/actions";
@@ -11,18 +12,32 @@ type SearchResult = {
   description: string | null;
   status: string;
   priority: string;
-  category: { name: string; color: string };
+  category: { id: string; name: string; color: string };
   dueDate: string | null;
   type: "task" | "reminder";
 };
 
 export function SearchDialog() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  /** Monotonic id so a slow earlier request can't overwrite a newer result set. */
+  const requestRef = useRef(0);
+
+  /** Close and reset. Doing this here rather than in an effect keeps it one render. */
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+    setResults([]);
+    setActive(0);
+    setLoading(false);
+    requestRef.current++; // abandon anything still in flight
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -30,36 +45,61 @@ export function SearchDialog() {
         e.preventDefault();
         setOpen((v) => !v);
       }
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [close]);
 
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 50);
-    if (!open) { setQuery(""); setResults([]); }
+    if (!open) return;
+    const id = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(id);
   }, [open]);
 
   const doSearch = useCallback(async (q: string) => {
+    const id = ++requestRef.current;
     if (q.trim().length < 2) {
       setResults([]);
+      setLoading(false);
       return;
     }
     setLoading(true);
     try {
       const r = await searchAction(q.trim());
+      if (id !== requestRef.current) return; // a newer query has since been issued
       setResults(r);
+      setActive(0);
     } catch {
-      setResults([]);
+      if (id === requestRef.current) setResults([]);
     }
-    setLoading(false);
+    if (id === requestRef.current) setLoading(false);
   }, []);
 
   const handleInput = (value: string) => {
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => doSearch(value), 300);
+  };
+
+  /** Open the list the result lives in — the dashboard has no per-item route. */
+  const openResult = (result: SearchResult) => {
+    close();
+    router.push(result.category.id ? `/todos/${result.category.id}` : "/todos");
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (results.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((i) => (i + 1) % results.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) => (i - 1 + results.length) % results.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      openResult(results[active]);
+    }
   };
 
   return (
@@ -80,7 +120,7 @@ export function SearchDialog() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[70]"
-              onClick={() => setOpen(false)}
+              onClick={close}
             />
             <motion.div
               initial={{ opacity: 0, y: -20, scale: 0.95 }}
@@ -96,6 +136,7 @@ export function SearchDialog() {
                   type="text"
                   value={query}
                   onChange={(e) => handleInput(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
                   placeholder="Search tasks and reminders..."
                   className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
                 />
@@ -111,8 +152,16 @@ export function SearchDialog() {
                   <div className="px-4 py-8 text-center text-sm text-muted-foreground">Searching...</div>
                 ) : results.length > 0 ? (
                   <div className="py-2">
-                    {results.map((item) => (
-                      <div key={item.id} className="px-4 py-2.5 hover:bg-muted/30 transition-colors">
+                    {results.map((item, i) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => openResult(item)}
+                        onMouseEnter={() => setActive(i)}
+                        className={`w-full min-h-11 px-4 py-2.5 text-left transition-colors active:scale-[0.99] ${
+                          i === active ? "bg-muted/40" : "hover:bg-muted/30"
+                        }`}
+                      >
                         <div className="flex items-center gap-2">
                           {item.type === "reminder" && <Bell className="w-3 h-3 text-muted-foreground/60 shrink-0" />}
                           <span className={`text-sm truncate ${item.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>
@@ -128,7 +177,7 @@ export function SearchDialog() {
                             {item.category.name}{item.dueDate ? ` · ${item.dueDate}` : ""}
                           </span>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 ) : query.length >= 2 ? (

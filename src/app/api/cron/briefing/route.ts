@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { runCronJob } from "@/lib/services/cron-utils";
-import { listItems } from "@/lib/services/item";
+import { listItems, OPEN_STATUSES } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
 import { sendMessage, esc, b } from "@/lib/services/telegram";
 import { decryptUserApiKey } from "@/lib/services/user";
@@ -35,7 +35,8 @@ export async function POST(request: NextRequest) {
       });
       if (claimed.count === 0) return;
 
-      const pending = await listItems(user.id, { status: "pending" });
+      // in_progress counts too — a task you started is still on today's plate.
+      const pending = await listItems(user.id, { status: OPEN_STATUSES });
       const overdue = pending.filter((i) => i.dueDate && i.dueDate < todayStr && !i.remindAt);
       const todayItems = pending.filter((i) => i.dueDate === todayStr);
 

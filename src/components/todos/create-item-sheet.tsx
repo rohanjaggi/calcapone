@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
@@ -41,12 +41,16 @@ export function CreateItemSheet({ open, onClose, categories, defaultCategoryId }
   const [saving, setSaving] = useState(false);
   const [localCategories, setLocalCategories] = useState(categories);
 
-  useEffect(() => {
+  // Adjust state during render rather than in an effect — see React's "adjusting state when
+  // a prop changes". Also re-points the selection when the chosen category disappears.
+  const [syncedCategories, setSyncedCategories] = useState(categories);
+  if (categories !== syncedCategories) {
+    setSyncedCategories(categories);
     setLocalCategories(categories);
     if (categoryId && !categories.find((c) => c.id === categoryId)) {
       setCategoryId(categories[0]?.id ?? "");
     }
-  }, [categories]);
+  }
 
   const handleAddCategory = async () => {
     if (!newCategoryName.trim()) return;

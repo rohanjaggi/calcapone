@@ -5,6 +5,9 @@ import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
  * Defense in depth: send signed-out browsers to /login. The authoritative check is
  * `requireUser()` in every page and server action.
  *
+ * `/google/done` is excluded: the Google OAuth callback lands there in the system browser,
+ * which has no Mini App session, and it only reports the outcome.
+ *
  * Only plain GET navigations are redirected — server-action POSTs carry a `next-action`
  * header and must reach the action (it handles the redirect itself); a 3xx here would
  * break the action client.
@@ -23,6 +26,6 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Everything except: API routes, the login page, Next internals, and static assets.
-    "/((?!api/|login|how-to-use|_next/|icon\\.png|logo\\.png|favicon\\.ico|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico|txt|xml|woff2?)$).*)",
+    "/((?!api/|login|how-to-use|google/done|_next/|icon\\.png|logo\\.png|favicon\\.ico|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico|txt|xml|woff2?)$).*)",
   ],
 };

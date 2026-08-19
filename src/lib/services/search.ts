@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { generateEmbedding } from "@/lib/services/embeddings";
+import { generateEmbedding, isEmbeddingConfigured } from "@/lib/services/embeddings";
 
 type SearchResult = {
   id: string;
@@ -7,7 +7,7 @@ type SearchResult = {
   description: string | null;
   status: string;
   priority: string;
-  category: { name: string; color: string };
+  category: { id: string; name: string; color: string };
   dueDate: string | null;
   type: "task" | "reminder";
 };
@@ -36,7 +36,7 @@ async function keywordSearch(userId: string, query: string): Promise<SearchResul
     description: item.description,
     status: item.status,
     priority: item.priority,
-    category: { name: item.category.name, color: item.category.color ?? "#A8A29E" },
+    category: { id: item.category.id, name: item.category.name, color: item.category.color ?? "#A8A29E" },
     dueDate: item.dueDate,
     type: item.remindAt ? ("reminder" as const) : ("task" as const),
   }));
@@ -57,7 +57,13 @@ function hybridScore(similarity: number, updatedAt: Date, status: string): numbe
   return 0.7 * similarity + 0.2 * recencyDecay(updatedAt) + 0.1 * statusBoost(status);
 }
 
+/**
+ * Vector search over item embeddings. Returns [] on failure — semantic results are a bonus
+ * on top of keyword search — but logs first: swallowing silently meant a missing API key or
+ * a dropped pgvector index looked exactly like "no similar items".
+ */
 async function semanticSearch(userId: string, query: string): Promise<SearchResult[]> {
+  if (!isEmbeddingConfigured()) return [];
   try {
     const embedding = await generateEmbedding(query);
     const vectorStr = `[${embedding.join(",")}]`;
@@ -94,11 +100,12 @@ async function semanticSearch(userId: string, query: string): Promise<SearchResu
       description: item.description,
       status: item.status,
       priority: item.priority,
-      category: { name: item.category.name, color: item.category.color ?? "#A8A29E" },
+      category: { id: item.category.id, name: item.category.name, color: item.category.color ?? "#A8A29E" },
       dueDate: item.dueDate,
       type: item.remindAt ? ("reminder" as const) : ("task" as const),
     }));
-  } catch {
+  } catch (error) {
+    console.error("[search] semantic search failed:", error instanceof Error ? error.message : error);
     return [];
   }
 }

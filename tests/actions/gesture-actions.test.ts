@@ -22,6 +22,7 @@ vi.mock("@/lib/services/item", () => ({
   updateItem: (...args: unknown[]) => mockUpdateItem(...args),
   createItem: vi.fn(),
   listItems: vi.fn(),
+  OPEN_STATUSES: ["pending", "in_progress"],
   deleteItem: vi.fn(),
 }));
 

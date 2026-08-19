@@ -1,24 +1,28 @@
-import { listItems, updateItem } from "@/lib/services/item";
+import { listItems, updateItem, OPEN_STATUSES } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
 import { esc, b } from "@/lib/services/telegram";
-import { todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
+import { matchByTitle } from "@/lib/services/match-items";
+import { todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz, isSelectableTz } from "@/lib/tz";
+import { updateUserSettings } from "@/lib/services/user";
 import type { ItemStatus } from "@/generated/prisma/enums";
 import type { CommandContext } from "./index";
 
 export async function handleDone(body: string, ctx: CommandContext): Promise<string> {
   if (!body) return "Usage: /done task name";
 
-  const open = (await listItems(ctx.userId)).filter((item) => item.status !== "done");
-  const needle = body.toLowerCase();
-  // Prefer an exact title match; otherwise fall back to the first substring match.
-  const match =
-    open.find((item) => item.title.toLowerCase() === needle) ??
-    open.find((item) => item.title.toLowerCase().includes(needle));
+  const open = await listItems(ctx.userId, { status: OPEN_STATUSES });
+  const found = matchByTitle(open, body);
 
-  if (!match) return `No open task matching "${esc(body)}"`;
+  if (found.kind === "none") return `No open task matching "${esc(body)}"`;
+  // Several hits: taking the first silently completed the wrong task ("call" -> "Call dentist").
+  if (found.kind === "many") {
+    const options = found.items.slice(0, 5).map((item) => `\u2022 ${esc(item.title)}`).join("\n");
+    const more = found.items.length > 5 ? `\n\u2026and ${found.items.length - 5} more` : "";
+    return `That matches ${found.items.length} tasks \u2014 which one?\n${options}${more}`;
+  }
 
-  await updateItem(match.id, ctx.userId, { status: "done" as ItemStatus });
-  return `Completed: ${b(match.title)}`;
+  await updateItem(found.item.id, ctx.userId, { status: "done" as ItemStatus });
+  return `Completed: ${b(found.item.title)}`;
 }
 
 export async function handleToday(ctx: CommandContext): Promise<string> {
@@ -26,7 +30,7 @@ export async function handleToday(ctx: CommandContext): Promise<string> {
   const tz = ctx.user.timezone;
   const todayStr = todayInTz(tz, now);
 
-  const allPending = await listItems(ctx.userId, { status: "pending" as ItemStatus });
+  const allPending = await listItems(ctx.userId, { status: OPEN_STATUSES });
 
   const overdue = allPending.filter(
     (item) => item.dueDate && item.dueDate < todayStr && !item.remindAt
@@ -94,7 +98,7 @@ export async function handleToday(ctx: CommandContext): Promise<string> {
 }
 
 export async function handleList(body: string, ctx: CommandContext): Promise<string> {
-  const filters = body === "all" ? {} : { status: "pending" as ItemStatus };
+  const filters = body === "all" ? {} : { status: OPEN_STATUSES };
   const items = await listItems(ctx.userId, filters);
 
   if (items.length === 0) return "No items found.";
@@ -106,4 +110,29 @@ export async function handleList(body: string, ctx: CommandContext): Promise<str
       return `${i + 1}. ${icon} ${esc(item.title)}${due}`;
     })
     .join("\n");
+}
+
+/**
+ * Show or change the timezone every date in the bot is rendered in. Without this a non-SG
+ * user was stuck on the Asia/Singapore default with no way to change it from Telegram.
+ */
+export async function handleTimezone(body: string, ctx: CommandContext): Promise<string> {
+  const current = ctx.user.timezone;
+  if (!body) {
+    return [
+      `Your timezone is ${b(current)} — it's ${formatHHmmInTz(new Date(), current)} for you right now.`,
+      "",
+      "To change it, send the IANA name, e.g. <code>/timezone Europe/London</code>",
+    ].join("\n");
+  }
+
+  const requested = body.trim();
+  if (!isSelectableTz(requested)) {
+    return `I don't recognise ${b(requested)}. Use an IANA name like <code>Europe/London</code>, <code>America/New_York</code> or <code>Asia/Singapore</code>.`;
+  }
+
+  if (requested === current) return `Already set to ${b(current)}.`;
+
+  await updateUserSettings(ctx.userId, { timezone: requested });
+  return `Timezone set to ${b(requested)} — it's ${formatHHmmInTz(new Date(), requested)} there now.`;
 }

@@ -73,6 +73,7 @@ model Category {
   color     String?
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   items Item[]
@@ -125,6 +126,8 @@ model Message {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, chatId, createdAt])
+  // pruneOldMessages filters on createdAt alone, which the composite index above can't serve.
+  @@index([createdAt])
   @@map("messages")
 }
 
@@ -134,4 +137,16 @@ model TelegramUpdate {
 
   @@index([createdAt])
   @@map("telegram_updates")
+}
+
+/// Single-use nonces for in-flight Google OAuth flows. The row is deleted when the callback
+/// consumes it, so a captured callback URL can't be replayed; expired rows are pruned by cron.
+model OAuthState {
+  nonce     String   @id
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([expiresAt])
+  @@map("oauth_states")
 }

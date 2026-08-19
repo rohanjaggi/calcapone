@@ -8,7 +8,6 @@ export default async function SettingsPage() {
 
   return (
     <SettingsClient
-      userId={user.id}
       settings={{
         timezone: user.timezone,
         briefingEnabled: user.briefingEnabled,

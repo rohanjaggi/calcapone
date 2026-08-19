@@ -19,11 +19,25 @@ type ResolvedConfig = {
   model: string;
 };
 
+/**
+ * The user's AI setup is wrong or missing — as opposed to the provider failing at runtime.
+ *
+ * These messages are written by us and name no secrets, so callers can safely show them to
+ * the user. That matters: a misconfigured key previously surfaced as a generic "something
+ * went wrong", leaving the one person who could fix it with nothing to act on.
+ */
+export class AiConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiConfigError";
+  }
+}
+
 export function resolveAiClient(config: AiConfig): ResolvedConfig {
   const defaultProvider = process.env.DEFAULT_AI_PROVIDER || "openai";
   const provider = config.provider || defaultProvider;
   if (!PROVIDER_DEFAULTS[provider]) {
-    throw new Error(`Unsupported AI provider: ${provider}`);
+    throw new AiConfigError(`Unsupported AI provider: ${provider}`);
   }
 
   // The shared default key/model only make sense for the provider they were issued for.
@@ -35,7 +49,7 @@ export function resolveAiClient(config: AiConfig): ResolvedConfig {
     PROVIDER_DEFAULTS[provider];
 
   if (!apiKey) {
-    throw new Error(
+    throw new AiConfigError(
       config.provider && !envApplies
         ? `No API key saved for ${provider}. Add one in Settings (the shared trial key only works with ${defaultProvider}).`
         : `No API key configured for provider "${provider}". Set one in Settings or configure DEFAULT_AI_API_KEY.`

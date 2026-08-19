@@ -3,7 +3,7 @@
 import { createItem, updateItem, deleteItem } from "@/lib/services/item";
 import { requireUser } from "@/lib/auth";
 import { createCategory, listCategories, updateCategory, deleteCategory, reorderCategories, maxSortOrder } from "@/lib/services/category";
-import { updateEvent, deleteEvent } from "@/lib/services/calendar";
+import { updateEvent, deleteEvent, getEvents } from "@/lib/services/calendar";
 import { searchItems } from "@/lib/services/search";
 import { prisma } from "@/lib/prisma";
 import { chatWithAi } from "@/lib/services/ai";
@@ -11,7 +11,23 @@ import { decryptUserApiKey } from "@/lib/services/user";
 import { executeToolCall } from "@/lib/services/execute-tool";
 import { checkAndConsumeTrialQuota, trialLimitMessage } from "@/lib/services/trial";
 import { parseInTz } from "@/lib/tz";
+import { dueWindowToGcal } from "@/lib/services/gcal-window";
+import { CalendarAuthError } from "@/lib/services/calendar";
+import { markCalendarDisconnected } from "@/lib/services/calendar-link";
 import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
+
+/**
+ * Calendar sync is best-effort from the dashboard — the item change already succeeded, so a
+ * failure must not surface as a broken action. A revoked grant is different: clear the link
+ * so Settings stops claiming "Connected" and the user is prompted to reconnect.
+ */
+async function reportCalendarFailure(userId: string, where: string, error: unknown): Promise<void> {
+  if (error instanceof CalendarAuthError) {
+    await markCalendarDisconnected(userId);
+    return;
+  }
+  console.error(`[actions:${where}] calendar sync failed:`, error instanceof Error ? error.message : error);
+}
 
 export async function toggleItemStatus(itemId: string, newStatus: ItemStatus) {
   const user = await requireUser();
@@ -52,8 +68,8 @@ export async function removeItem(itemId: string) {
   if (item?.googleEventId && user.googleRefreshToken) {
     try {
       await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId);
-    } catch {
-      // gcal sync failure is non-fatal
+    } catch (error) {
+      await reportCalendarFailure(user.id, "deleteEvent", error);
     }
   }
 
@@ -80,20 +96,13 @@ export async function editItem(
       if (data.title) gcalFields.title = data.title;
       if (data.description !== undefined) gcalFields.description = data.description ?? "";
       if (data.dueDate && data.dueTime) {
-        gcalFields.startTime = `${data.dueDate}T${data.dueTime}:00`;
-        const [h, m] = data.dueTime.split(":").map(Number);
-        if (h < 23) {
-          gcalFields.endTime = `${data.dueDate}T${String(h + 1).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
-        } else {
-          const nextDay = new Date(new Date(`${data.dueDate}T00:00:00`).getTime() + 86400000).toISOString().split("T")[0];
-          gcalFields.endTime = `${nextDay}T00:${String(m).padStart(2, "0")}:00`;
-        }
+        Object.assign(gcalFields, dueWindowToGcal(data.dueDate, data.dueTime));
       }
       if (Object.keys(gcalFields).length > 0) {
         await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, gcalFields, user.timezone);
       }
-    } catch {
-      // gcal sync failure is non-fatal
+    } catch (error) {
+      await reportCalendarFailure(user.id, "editItem", error);
     }
   }
 
@@ -108,8 +117,8 @@ export async function removeItemWithGcalSync(itemId: string) {
   if (item?.googleEventId && user.googleRefreshToken) {
     try {
       await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId);
-    } catch {
-      // gcal sync failure is non-fatal
+    } catch (error) {
+      await reportCalendarFailure(user.id, "deleteEvent", error);
     }
   }
 
@@ -252,6 +261,45 @@ function stripHtml(html: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
+}
+
+/**
+ * Google events for one calendar month.
+ *
+ * The page prefetches only the current and next month, so navigating the grid past that
+ * showed an empty calendar — every month the user scrolls to is fetched on demand.
+ */
+export async function getCalendarMonth(year: number, month: number) {
+  const user = await requireUser();
+  if (!Number.isInteger(year) || year < 1970 || year > 2100) throw new Error("Invalid year");
+  if (!Number.isInteger(month) || month < 0 || month > 11) throw new Error("Invalid month");
+  if (!user.googleRefreshToken) return { events: [], connected: false };
+
+  // A day of slack on each side: the grid lays months out in the user's zone, so an event
+  // just past a UTC month boundary still belongs to a cell this month renders.
+  const start = new Date(Date.UTC(year, month, 1) - 86400000);
+  const end = new Date(Date.UTC(year, month + 1, 1) + 86400000);
+
+  try {
+    const events = await getEvents(
+      user.googleRefreshToken,
+      user.googleCalendarId ?? "primary",
+      start,
+      end,
+      user.timezone
+    );
+    return {
+      events: events.map((e) => ({ id: e.id, title: e.title, startTime: e.startTime, endTime: e.endTime })),
+      connected: true,
+    };
+  } catch (error) {
+    if (error instanceof CalendarAuthError) {
+      await markCalendarDisconnected(user.id);
+      return { events: [], connected: false };
+    }
+    console.error("[actions:getCalendarMonth] fetch failed:", error instanceof Error ? error.message : error);
+    return { events: [], connected: true };
+  }
 }
 
 export async function searchAction(query: string) {

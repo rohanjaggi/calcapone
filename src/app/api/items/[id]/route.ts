@@ -4,6 +4,9 @@ import { updateEvent, deleteEvent } from "@/lib/services/calendar";
 import { getRequestUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { parseInTz } from "@/lib/tz";
+import { dueWindowToGcal } from "@/lib/services/gcal-window";
+import { CalendarAuthError } from "@/lib/services/calendar";
+import { markCalendarDisconnected } from "@/lib/services/calendar-link";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getRequestUser(request);
@@ -30,20 +33,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (body.title) gcalFields.title = body.title;
       if (body.description !== undefined) gcalFields.description = body.description ?? "";
       if (body.dueDate && body.dueTime) {
-        gcalFields.startTime = `${body.dueDate}T${body.dueTime}:00`;
-        const [h, m] = body.dueTime.split(":").map(Number);
-        if (h < 23) {
-          gcalFields.endTime = `${body.dueDate}T${String(h + 1).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
-        } else {
-          const nextDay = new Date(new Date(`${body.dueDate}T00:00:00`).getTime() + 86400000).toISOString().split("T")[0];
-          gcalFields.endTime = `${nextDay}T00:${String(m).padStart(2, "0")}:00`;
-        }
+        Object.assign(gcalFields, dueWindowToGcal(body.dueDate, body.dueTime));
       }
       if (Object.keys(gcalFields).length > 0) {
         await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, gcalFields, user.timezone);
       }
-    } catch {
-      // gcal sync failure is non-fatal
+    } catch (error) {
+      // Best-effort sync: the item update already succeeded. A revoked grant clears the link.
+      if (error instanceof CalendarAuthError) await markCalendarDisconnected(user.id);
+      else console.error("[api:items] calendar sync failed:", error instanceof Error ? error.message : error);
     }
   }
 
@@ -62,8 +60,9 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   if (item?.googleEventId && user.googleRefreshToken) {
     try {
       await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId);
-    } catch {
-      // gcal sync failure is non-fatal
+    } catch (error) {
+      if (error instanceof CalendarAuthError) await markCalendarDisconnected(user.id);
+      else console.error("[api:items] calendar delete failed:", error instanceof Error ? error.message : error);
     }
   }
 

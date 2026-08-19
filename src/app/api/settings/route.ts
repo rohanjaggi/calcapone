@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserById, updateUserSettings } from "@/lib/services/user";
 import { getRequestUser } from "@/lib/auth";
+import { parseSettingsPatch } from "@/lib/settings-input";
 
 export async function GET(request: NextRequest) {
   const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const userId = user.id;
 
-  const userRecord = await getUserById(userId);
+  const userRecord = await getUserById(user.id);
   if (!userRecord) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   return NextResponse.json({
@@ -25,20 +25,18 @@ export async function GET(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const userId = user.id;
 
-  const body = await request.json();
-  const allowedFields = [
-    "timezone", "briefingEnabled", "briefingTime",
-    "aiProvider", "aiApiKey", "aiModel",
-  ];
-
-  const data: Record<string, unknown> = {};
-  for (const key of allowedFields) {
-    if (key in body) data[key] = body[key];
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const updated = await updateUserSettings(userId, data as Parameters<typeof updateUserSettings>[1]);
+  const parsed = parseSettingsPatch(body);
+  if ("error" in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+
+  const updated = await updateUserSettings(user.id, parsed.data);
   return NextResponse.json({
     timezone: updated.timezone,
     briefingEnabled: updated.briefingEnabled,

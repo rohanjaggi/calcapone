@@ -2,17 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getDueItems,
   claimDueReminder,
+  restoreDueReminder,
   createNextOccurrence,
   createItem,
   getEscalationCandidates,
   updateNotificationStage,
 } from "@/lib/services/item";
-import { sendMessage, b } from "@/lib/services/telegram";
-import { shouldNotify, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
+import { sendMessage, b, TelegramBlockedError } from "@/lib/services/telegram";
+import { reminderKeyboard, doneOnlyKeyboard } from "@/lib/services/callbacks";
+import { shouldNotify, isQuietHours, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
 import { pruneOldMessages } from "@/lib/services/conversation";
+import { notifyOwner } from "@/lib/services/alert";
 import { formatDateInTz, formatHHmmInTz, isValidTz } from "@/lib/tz";
 
 export const maxDuration = 60;
+
+/**
+ * Housekeeping is hourly work, but this endpoint now ticks roughly once a minute — pruning
+ * on every tick would run ~60x the delete queries it needs to. Ticks land at arbitrary
+ * minutes, so a narrow window is the cheapest way to thin it out without extra state.
+ */
+function shouldPrune(now: Date): boolean {
+  return now.getUTCMinutes() < 5;
+}
 
 export async function POST(request: NextRequest) {
   if (!isAuthorizedCronRequest(request)) {
@@ -23,12 +35,19 @@ export async function POST(request: NextRequest) {
   const dueItems = await getDueItems(now);
   let sent = 0;
   let skipped = 0;
+  let deferred = 0;
   let errors = 0;
+  let restored = 0;
+  let blocked = 0;
 
   for (const item of dueItems) {
     try {
-      if (!shouldNotify(item.user, item.priority, now)) {
-        skipped++;
+      // Quiet hours only *defer*: leave remindAt set so the reminder goes out afterwards.
+      // The priority floor is deliberately not applied here — the user explicitly asked to
+      // be reminded at this time, and skipping without clearing remindAt would leave the
+      // item due forever (and stall its recurring series).
+      if (isQuietHours(item.user, now)) {
+        deferred++;
         continue;
       }
 
@@ -43,7 +62,28 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      await sendMessage(Number(item.user.telegramId), `🔔 ${b("Reminder:")} ${b(item.title)}`);
+      const originalRemindAt = item.remindAt;
+
+      try {
+        await sendMessage(Number(item.user.telegramId), `🔔 ${b("Reminder:")} ${b(item.title)}`, {
+          keyboard: reminderKeyboard(item.id),
+        });
+      } catch (error) {
+        // The claim already cleared remindAt. Without putting it back, a rate limit or a
+        // transient 5xx would lose this reminder permanently — the one failure mode a
+        // reminder app cannot afford. A blocked chat is the exception: it can never succeed.
+        if (error instanceof TelegramBlockedError) {
+          blocked++;
+          console.error(`[cron:reminders] chat blocked for item ${item.id}, dropping`);
+          continue;
+        }
+        if (originalRemindAt) {
+          await restoreDueReminder(item.id, originalRemindAt, item.status);
+          restored++;
+        }
+        throw error;
+      }
+
       sent++;
 
       if (isRecurring && item.remindAt) {
@@ -88,6 +128,13 @@ export async function POST(request: NextRequest) {
 
       const dueMinutes = toMinutes(item.dueDate, dueTime);
       const nowMinutes = toMinutes(userNowStr, userTimeStr);
+      // A malformed dueDate/dueTime yields NaN, and every comparison below would silently
+      // be false — the item would never escalate. Surface it instead of losing it.
+      if (!Number.isFinite(dueMinutes) || !Number.isFinite(nowMinutes)) {
+        console.error(`[cron:escalation] item ${item.id} has unparseable due date/time:`, item.dueDate, item.dueTime);
+        errors++;
+        continue;
+      }
       const minutesUntilDue = dueMinutes - nowMinutes;
       const hoursUntilDue = minutesUntilDue / 60;
 
@@ -107,7 +154,17 @@ export async function POST(request: NextRequest) {
       }
 
       if (newStage > item.notificationStage) {
-        await sendMessage(Number(item.user.telegramId), message);
+        try {
+          await sendMessage(Number(item.user.telegramId), message, { keyboard: doneOnlyKeyboard(item.id) });
+        } catch (error) {
+          // The stage is only advanced after a successful send, so a failure here retries
+          // on the next tick by itself — except for a blocked chat, which never will.
+          if (error instanceof TelegramBlockedError) {
+            blocked++;
+            continue;
+          }
+          throw error;
+        }
         await updateNotificationStage(item.id, newStage);
         escalated++;
       }
@@ -117,9 +174,23 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const pruned = await pruneOldMessages();
+  const pruned = shouldPrune(now) ? await pruneOldMessages() : 0;
 
-  return NextResponse.json({ processed: dueItems.length, sent, skipped, errors, escalated, pruned });
+  if (errors > 0) {
+    await notifyOwner("cron:reminders", `${errors} item(s) failed this tick — see Vercel logs`);
+  }
+
+  return NextResponse.json({
+    processed: dueItems.length,
+    sent,
+    skipped,
+    deferred,
+    errors,
+    restored,
+    blocked,
+    escalated,
+    pruned,
+  });
 }
 
 function toMinutes(dateStr: string, timeStr: string): number {

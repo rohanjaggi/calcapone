@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseInTz, formatDateInTz, formatHHmmInTz, offsetInTz, todayInTz, combineDateTimeInTz, endOfDayInTz, weekdayInTz } from "@/lib/tz";
+import { parseInTz, formatDateInTz, formatHHmmInTz, offsetInTz, todayInTz, combineDateTimeInTz, endOfDayInTz, weekdayInTz, isValidTz, isSelectableTz } from "@/lib/tz";
 
 const SG = "Asia/Singapore";
 const LON = "Europe/London";
@@ -47,5 +47,28 @@ describe("tz helpers", () => {
   it("combines date+time and computes exclusive day end", () => {
     expect(combineDateTimeInTz("2026-08-20", "09:00", SG).toISOString()).toBe("2026-08-20T01:00:00.000Z");
     expect(endOfDayInTz("2026-08-31", SG).toISOString()).toBe("2026-08-31T16:00:00.000Z");
+  });
+});
+
+describe("isSelectableTz", () => {
+  it("accepts real Region/City zones", () => {
+    expect(isSelectableTz("Asia/Singapore")).toBe(true);
+    expect(isSelectableTz("America/New_York")).toBe(true);
+    expect(isSelectableTz("America/Argentina/Buenos_Aires")).toBe(true);
+    expect(isSelectableTz("UTC")).toBe(true);
+  });
+
+  it("rejects ambiguous legacy aliases that Intl still accepts", () => {
+    // These parse but don't track daylight saving — reminders would drift an hour.
+    expect(isValidTz("PST")).toBe(true);
+    expect(isSelectableTz("PST")).toBe(false);
+    expect(isSelectableTz("EST")).toBe(false);
+    expect(isSelectableTz("GMT")).toBe(false);
+  });
+
+  it("rejects nonsense", () => {
+    expect(isSelectableTz("Mars/Olympus")).toBe(false);
+    expect(isSelectableTz("")).toBe(false);
+    expect(isSelectableTz("/")).toBe(false);
   });
 });

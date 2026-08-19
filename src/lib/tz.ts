@@ -76,7 +76,7 @@ export function hhmmToMinutes(time: string): number {
   return h * 60 + m;
 }
 
-/** Is `tz` a valid IANA zone? */
+/** Does `tz` work with Intl? Lenient — use it to sanity-check values already in the database. */
 export function isValidTz(tz: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
@@ -84,4 +84,17 @@ export function isValidTz(tz: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Is `tz` acceptable as *new* user input?
+ *
+ * Stricter than `isValidTz` because Intl also accepts ambiguous legacy aliases — "PST" is
+ * accepted but doesn't track US daylight saving, so a user setting it would silently get
+ * reminders an hour off for half the year. Require a real Region/City zone, or plain UTC.
+ */
+export function isSelectableTz(tz: string): boolean {
+  if (tz === "UTC") return true;
+  if (!/^[A-Za-z][A-Za-z_+-]*\/[A-Za-z0-9_+\-\/]+$/.test(tz)) return false;
+  return isValidTz(tz);
 }

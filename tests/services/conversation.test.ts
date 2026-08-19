@@ -15,6 +15,9 @@ vi.mock("@/lib/prisma", () => ({
     telegramUpdate: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    oAuthState: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
   },
 }));
 
@@ -40,9 +43,15 @@ describe("conversation service", () => {
     });
   });
 
-  it("pruneOldMessages deletes old records", async () => {
+  it("pruneOldMessages deletes old messages, webhook dedupe keys and expired OAuth states", async () => {
     const { pruneOldMessages } = await import("@/lib/services/conversation");
-    const count = await pruneOldMessages();
+    const { prisma } = await import("@/lib/prisma");
+    const now = new Date("2026-06-15T12:00:00Z");
+    const count = await pruneOldMessages(now);
     expect(count).toBe(5);
+    const dayAgo = new Date("2026-06-14T12:00:00Z");
+    expect(prisma.message.deleteMany).toHaveBeenCalledWith({ where: { createdAt: { lt: dayAgo } } });
+    expect(prisma.telegramUpdate.deleteMany).toHaveBeenCalledWith({ where: { createdAt: { lt: dayAgo } } });
+    expect(prisma.oAuthState.deleteMany).toHaveBeenCalledWith({ where: { expiresAt: { lt: now } } });
   });
 });

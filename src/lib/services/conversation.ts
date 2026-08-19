@@ -58,11 +58,13 @@ export async function saveMessage(
   });
 }
 
-export async function pruneOldMessages(): Promise<number> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+/** Housekeeping for short-lived rows: chat history, webhook dedupe keys, abandoned OAuth flows. */
+export async function pruneOldMessages(now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const [messages] = await Promise.all([
     prisma.message.deleteMany({ where: { createdAt: { lt: cutoff } } }),
     prisma.telegramUpdate.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    prisma.oAuthState.deleteMany({ where: { expiresAt: { lt: now } } }),
   ]);
   return messages.count;
 }

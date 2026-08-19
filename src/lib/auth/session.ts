@@ -31,11 +31,19 @@ export async function verifySessionToken(token: string | undefined | null): Prom
   }
 }
 
+/**
+ * Telegram Web and Telegram Desktop render a Mini App inside a cross-site iframe, where a
+ * `SameSite=Lax` cookie is never sent back — the session would be set on login and then
+ * ignored on every subsequent request, looping the user back to /login. `SameSite=None`
+ * requires `Secure`, which browsers only honour over HTTPS, so plain-HTTP local development
+ * keeps `Lax` (first-party there anyway).
+ */
 export function sessionCookieOptions() {
+  const secure = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
+    secure,
+    sameSite: secure ? ("none" as const) : ("lax" as const),
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   };
