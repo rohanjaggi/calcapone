@@ -14,6 +14,7 @@ const navItems = [
 
 export function NavBar() {
   const pathname = usePathname();
+  if (pathname === "/login") return null;
 
   return (
     <motion.nav

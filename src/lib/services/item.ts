@@ -47,7 +47,7 @@ export async function createItem(data: CreateItemInput) {
   });
 
   const text = buildEmbeddingText({ title: item.title, description: item.description, category: item.category.name });
-  upsertItemEmbedding(item.id, text);
+  void upsertItemEmbedding(item.id, text).catch(() => {});
 
   return item;
 }
@@ -75,9 +75,9 @@ export async function updateItem(id: string, userId: string, data: UpdateItemInp
     include: { category: true },
   });
 
-  if (data.title !== undefined || data.description !== undefined) {
+  if (data.title !== undefined || data.description !== undefined || data.categoryId !== undefined) {
     const text = buildEmbeddingText({ title: item.title, description: item.description, category: item.category.name });
-    upsertItemEmbedding(item.id, text);
+    void upsertItemEmbedding(item.id, text).catch(() => {});
   }
 
   return item;
@@ -94,30 +94,40 @@ export async function getDueItems(now: Date) {
   });
 }
 
-export async function markItemSent(id: string) {
-  return prisma.item.update({
-    where: { id },
-    data: { status: "done" },
+/**
+ * Atomically claim a due reminder so overlapping cron runs can't both send it.
+ * Returns false if another run already claimed it. Pure reminders (no due date) and
+ * recurring occurrences are marked done; a dated task keeps its status so deadline
+ * escalation can still follow up on it.
+ */
+export async function claimDueReminder(id: string, markDone: boolean): Promise<boolean> {
+  const result = await prisma.item.updateMany({
+    where: { id, remindAt: { not: null } },
+    data: { remindAt: null, ...(markDone ? { status: "done" as ItemStatus } : {}) },
   });
+  return result.count === 1;
 }
 
-export function createNextOccurrence(current: Date, recurring: RecurringType, recurrenceRule?: string | null): Date | null {
-  if (recurrenceRule) {
-    return getNextOccurrence(recurrenceRule, current);
-  }
-  const next = new Date(current);
-  switch (recurring) {
-    case "daily":
-      next.setUTCDate(next.getUTCDate() + 1);
-      break;
-    case "weekly":
-      next.setUTCDate(next.getUTCDate() + 7);
-      break;
-    case "monthly":
-      next.setUTCMonth(next.getUTCMonth() + 1);
-      break;
-  }
-  return next;
+const LEGACY_RULES: Record<string, string> = {
+  daily: "FREQ=DAILY",
+  weekly: "FREQ=WEEKLY",
+  monthly: "FREQ=MONTHLY",
+};
+
+/**
+ * Next occurrence after `current` (and after `now`, if given, so a backlog of missed
+ * occurrences collapses to the next future one). Legacy daily/weekly/monthly items are
+ * routed through rrule too, which handles month-end correctly.
+ */
+export function createNextOccurrence(
+  current: Date,
+  recurring: RecurringType,
+  recurrenceRule?: string | null,
+  now?: Date
+): Date | null {
+  const rule = recurrenceRule || LEGACY_RULES[recurring];
+  if (!rule) return null;
+  return getNextOccurrence(rule, current, now);
 }
 
 export async function getEscalationCandidates() {

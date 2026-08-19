@@ -6,21 +6,87 @@ function getToken(): string {
   return token;
 }
 
-export async function sendMessage(chatId: number | bigint, text: string) {
+const MAX_MESSAGE_LENGTH = 4096;
+
+/** HTML-escape text that will be interpolated into a Telegram HTML-mode message. */
+export function esc(text: unknown): string {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Bold helper: escapes the content and wraps it in <b>. */
+export function b(text: unknown): string {
+  return `<b>${esc(text)}</b>`;
+}
+
+/** Split a long message on newline boundaries so each chunk fits Telegram's 4096-char limit. */
+export function chunkMessage(text: string, limit = MAX_MESSAGE_LENGTH): string[] {
+  if (text.length <= limit) return [text];
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf("\n", limit);
+    if (cut <= 0) cut = limit;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n/, "");
+  }
+  if (rest.length > 0) chunks.push(rest);
+  return chunks;
+}
+
+type SendOptions = { parseMode?: "HTML" | null };
+
+async function postSendMessage(chatId: number | bigint, text: string, parseMode: "HTML" | null) {
   const res = await fetch(`${TELEGRAM_API}${getToken()}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId.toString(),
       text,
-      parse_mode: "Markdown",
+      ...(parseMode ? { parse_mode: parseMode } : {}),
+      link_preview_options: { is_disabled: true },
     }),
   });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Telegram sendMessage failed: ${res.status} ${body}`);
+  return res;
+}
+
+/**
+ * Send a message (HTML parse mode by default). Long messages are chunked.
+ * If Telegram rejects the HTML entities, the chunk is retried once as plain text
+ * so the user still gets the content instead of nothing.
+ */
+export async function sendMessage(chatId: number | bigint, text: string, options: SendOptions = {}) {
+  const parseMode = options.parseMode === undefined ? "HTML" : options.parseMode;
+  let last: unknown = null;
+  for (const chunk of chunkMessage(text)) {
+    let res = await postSendMessage(chatId, chunk, parseMode);
+    if (!res.ok && res.status === 400 && parseMode) {
+      const body = await res.text();
+      if (/parse entities|can't find end|unsupported start tag|can't parse/i.test(body)) {
+        res = await postSendMessage(chatId, chunk, null);
+      } else {
+        throw new Error(`Telegram sendMessage failed: ${res.status} ${body}`);
+      }
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Telegram sendMessage failed: ${res.status} ${body}`);
+    }
+    last = await res.json();
   }
-  return res.json();
+  return last;
+}
+
+/** Best-effort send that never throws (for error replies inside catch blocks). */
+export async function sendMessageSafe(chatId: number | bigint, text: string, options: SendOptions = {}) {
+  try {
+    return await sendMessage(chatId, text, options);
+  } catch (error) {
+    console.error("[telegram] sendMessage failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 export async function setWebhook(url: string, secret: string) {

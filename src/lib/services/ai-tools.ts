@@ -1,4 +1,4 @@
-// src/lib/services/ai-tools.ts
+import { offsetInTz } from "@/lib/tz";
 export const AI_TOOLS = [
   {
     name: "create_item",
@@ -12,7 +12,7 @@ export const AI_TOOLS = [
         category: { type: "string", description: "Category name (e.g. Work, Personal). Required." },
         due_date: { type: "string", description: "Due date in YYYY-MM-DD format" },
         due_time: { type: "string", description: "Due time in HH:mm format (24h)" },
-        remind_at: { type: "string", description: "ISO 8601 datetime to send a Telegram reminder notification" },
+        remind_at: { type: "string", description: "When to send the Telegram reminder: ISO 8601 datetime WITH the user's UTC offset, e.g. 2026-08-20T15:00:00+08:00" },
         recurring: { type: "string", enum: ["none", "daily", "weekly", "monthly"], description: "Legacy simple recurrence. Prefer 'recurrence' object for complex patterns." },
         recurrence: {
           type: "object",
@@ -75,7 +75,7 @@ export const AI_TOOLS = [
         title: { type: "string", description: "New title" },
         due_date: { type: ["string", "null"] as unknown as "string", description: "New due date YYYY-MM-DD, or null to clear" },
         due_time: { type: ["string", "null"] as unknown as "string", description: "New due time HH:mm, or null to clear" },
-        remind_at: { type: ["string", "null"] as unknown as "string", description: "New reminder ISO 8601 datetime, or null to clear" },
+        remind_at: { type: ["string", "null"] as unknown as "string", description: "New reminder time: ISO 8601 datetime with the user's UTC offset (e.g. 2026-08-20T15:00:00+08:00), or null to clear" },
         priority: { type: "string", enum: ["low", "medium", "high"], description: "New priority" },
         status: { type: "string", enum: ["pending", "in_progress", "done"], description: "New status" },
         recurrence: {
@@ -103,22 +103,23 @@ export const AI_TOOLS = [
     parameters: {
       type: "object" as const,
       properties: {
-        start_date: { type: "string", description: "ISO 8601 start date" },
-        end_date: { type: "string", description: "ISO 8601 end date" },
+        start_date: { type: "string", description: "Range start: YYYY-MM-DD (interpreted in the user's timezone) or ISO 8601 datetime with offset" },
+        end_date: { type: "string", description: "Range end (exclusive): YYYY-MM-DD or ISO 8601 datetime with offset" },
       },
       required: ["start_date", "end_date"],
     },
   },
   {
     name: "create_calendar_event",
-    description: "Create a new event on the user's Google Calendar",
+    description: "Create a new event on the user's Google Calendar. If it overlaps an existing event the tool reports the conflict instead of creating; re-call with confirm_conflict: true once the user confirms.",
     parameters: {
       type: "object" as const,
       properties: {
         title: { type: "string", description: "Event title/summary" },
-        start_time: { type: "string", description: "ISO 8601 datetime for event start" },
-        end_time: { type: "string", description: "ISO 8601 datetime for event end" },
+        start_time: { type: "string", description: "Event start: ISO 8601 datetime WITH the user's UTC offset, e.g. 2026-08-20T12:00:00+08:00" },
+        end_time: { type: "string", description: "Event end: ISO 8601 datetime WITH the user's UTC offset" },
         description: { type: "string", description: "Optional event description" },
+        confirm_conflict: { type: "boolean", description: "Set true ONLY after the user has confirmed they want the event even though it overlaps an existing one (the previous attempt reported a conflict)." },
         recurrence: {
           type: "object",
           description: "Recurrence pattern for the calendar event",
@@ -145,8 +146,8 @@ export const AI_TOOLS = [
       properties: {
         query: { type: "string", description: "The title or partial title to find the event" },
         title: { type: "string", description: "New event title" },
-        start_time: { type: "string", description: "New ISO 8601 start datetime" },
-        end_time: { type: "string", description: "New ISO 8601 end datetime" },
+        start_time: { type: "string", description: "New start: ISO 8601 datetime with the user's UTC offset" },
+        end_time: { type: "string", description: "New end: ISO 8601 datetime with the user's UTC offset" },
         description: { type: "string", description: "New event description" },
         recurrence: {
           type: "object",
@@ -246,19 +247,23 @@ export function buildSystemPrompt(user: { telegramUsername: string; timezone: st
     ? `Available categories: ${user.categories.join(", ")}`
     : "No categories exist yet.";
 
-  const now = new Date().toLocaleString("en-US", { timeZone: user.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const nowDate = new Date();
+  const now = nowDate.toLocaleString("en-US", { timeZone: user.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const offset = offsetInTz(nowDate, user.timezone);
 
   return `You are Calcapone, a smart personal assistant that helps manage calendar, todos, and reminders.
 
 User: ${user.telegramUsername}
-Timezone: ${user.timezone}
+Timezone: ${user.timezone} (UTC offset ${offset})
 Current time in user's timezone: ${now}
 
 ${categoryList}
 
 Rules:
+- All datetimes you pass to tools (remind_at, start_time, end_time, start_date, end_date) MUST be ISO 8601 with the user's UTC offset ${offset}, e.g. 2026-08-20T15:00:00${offset}. Never send a naive or UTC-shifted time.
 - When the user mentions a time without a date, assume today.
 - When the user says "tomorrow", use the next calendar day in their timezone.
+- If create_calendar_event reports a conflict and the user then confirms ("yes", "go ahead", "book it anyway"), call create_calendar_event again with the same details plus confirm_conflict: true.
 - Always confirm what you did after performing an action.
 - Keep responses concise — this is a Telegram chat.
 - If the user references "that", "it", or "the reminder/task" without a name, check conversation history for context.
@@ -269,13 +274,13 @@ Rules:
 
 Examples:
 User: "remind me to call mom tomorrow at 3pm"
-→ Use create_item with title "Call mom", remind_at set to tomorrow 15:00 in user's timezone, category "Reminders"
+→ Use create_item with title "Call mom", remind_at "<tomorrow>T15:00:00${offset}", category "Reminders"
 
 User: "buy groceries by friday"
 → Use create_item with title "Buy groceries", due_date set to next Friday, category "General"
 
 User: "lunch with Sarah tomorrow noon to 1pm"
-→ Use create_calendar_event with title "Lunch with Sarah", start_time tomorrow 12:00, end_time tomorrow 13:00
+→ Use create_calendar_event with title "Lunch with Sarah", start_time "<tomorrow>T12:00:00${offset}", end_time "<tomorrow>T13:00:00${offset}"
 
 User: "actually make that 2pm" (referring to a previously created item)
 → Use update_item with query matching the recently mentioned task

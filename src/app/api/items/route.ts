@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createItem, listItems } from "@/lib/services/item";
-import { authenticateRequest } from "@/lib/telegram-auth";
+import { getRequestUser } from "@/lib/auth";
+import { parseInTz } from "@/lib/tz";
 
 export async function GET(request: NextRequest) {
-  const user = await authenticateRequest(request);
+  const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(request.url);
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const user = await authenticateRequest(request);
+  const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
     priority: body.priority ?? "medium",
     dueDate: body.dueDate ?? null,
     dueTime: body.dueTime ?? null,
-    remindAt: body.remindAt ? new Date(body.remindAt) : null,
+    remindAt: body.remindAt ? parseInTz(String(body.remindAt), user.timezone) : null,
     recurring: body.recurring ?? "none",
     googleEventId: body.googleEventId ?? null,
   });

@@ -44,9 +44,9 @@ export function getAiHint(command: string): string {
   return AI_HINTS[command] ?? "";
 }
 
-export const HELP_TEXT = `*Calcapone* — your task & calendar assistant
+export const HELP_TEXT = `<b>Calcapone</b> — your task &amp; calendar assistant
 
-*Quick commands*
+<b>Quick commands</b>
 /todo buy groceries by Friday
 /remind take meds daily at 9am
 /event lunch with Sarah tomorrow noon

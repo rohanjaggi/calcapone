@@ -12,6 +12,9 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn().mockResolvedValue({}),
       deleteMany: vi.fn().mockResolvedValue({ count: 5 }),
     },
+    telegramUpdate: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
   },
 }));
 

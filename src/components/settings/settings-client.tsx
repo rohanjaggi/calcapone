@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { HelpCircle, ChevronRight } from "lucide-react";
+import { HelpCircle, ChevronRight, LogOut } from "lucide-react";
 import { AiProviderForm } from "@/components/settings/ai-provider-form";
 import { TimezoneSelect } from "@/components/settings/timezone-select";
 import { NotificationsConfig } from "@/components/settings/notifications-config";
@@ -164,6 +164,21 @@ export function SettingsClient({ userId, settings }: Props) {
             <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0" />
           </Link>
         </motion.div>
+
+        <form action="/api/auth/logout" method="post" className="px-0">
+          <button
+            type="submit"
+            className="w-full flex items-center gap-3 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3.5 text-left transition-colors hover:bg-secondary/30"
+          >
+            <div className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
+              <LogOut className="w-4.5 h-4.5 text-destructive" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">Log out</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Sign out of this device</p>
+            </div>
+          </button>
+        </form>
       </div>
     </main>
   );

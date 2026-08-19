@@ -1,9 +1,11 @@
 // src/lib/services/execute-tool.ts
-import { createItem, listItems, updateItem, deleteItem, listSubtasks } from "@/lib/services/item";
+import { createItem, listItems, updateItem, deleteItem } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
 import { getEvents, createEvent, updateEvent, deleteEvent } from "@/lib/services/calendar";
 import { searchItems } from "@/lib/services/search";
 import { paramsToRRule, type RecurrenceParams } from "@/lib/services/recurrence";
+import { esc, b } from "@/lib/services/telegram";
+import { parseInTz, todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
 import type { Priority, RecurringType, ItemStatus } from "@/generated/prisma/enums";
 
 function fuzzyMatch(title: string, query: string): boolean {
@@ -20,7 +22,8 @@ export async function executeToolCall(
 ): Promise<string | null> {
   switch (name) {
     case "create_item": {
-      const categoryName = args.category as string;
+      if (!args.title) return "I need a title to create that.";
+      const categoryName = typeof args.category === "string" ? args.category : "";
       const cats = await listCategories(userId);
       let cat = cats.find((c) => c.name.toLowerCase() === categoryName.toLowerCase());
       if (!cat) {
@@ -28,12 +31,13 @@ export async function executeToolCall(
       }
       if (!cat) return "No categories exist yet. Create one in the app first.";
 
+      const remindAt = args.remind_at ? parseInTz(args.remind_at as string, user.timezone) : null;
       let recurrenceRule: string | null = null;
       let recurrenceEnd: Date | null = null;
       if (args.recurrence) {
         const params = args.recurrence as RecurrenceParams;
-        recurrenceRule = paramsToRRule(params);
-        if (params.until) recurrenceEnd = new Date(params.until);
+        recurrenceRule = paramsToRRule(params, remindAt ?? undefined);
+        if (params.until) recurrenceEnd = parseInTz(params.until, user.timezone);
       }
 
       const item = await createItem({
@@ -44,13 +48,14 @@ export async function executeToolCall(
         priority: (args.priority as Priority) ?? "medium",
         dueDate: (args.due_date as string) ?? null,
         dueTime: (args.due_time as string) ?? null,
-        remindAt: args.remind_at ? new Date(args.remind_at as string) : null,
+        remindAt,
         recurring: (args.recurring as RecurringType) ?? "none",
         recurrenceRule,
         recurrenceEnd,
       });
       const label = item.remindAt ? "Reminder" : "Task";
-      return `Created ${label}: **${item.title}** in ${cat.name}`;
+      const when = item.remindAt ? ` — ${formatDateInTz(item.remindAt, user.timezone)} ${formatHHmmInTz(item.remindAt, user.timezone)}` : "";
+      return `Created ${label}: ${b(item.title)} in ${esc(cat.name)}${when}`;
     }
 
     case "list_items": {
@@ -67,7 +72,7 @@ export async function executeToolCall(
       if (items.length === 0) return "No items found.";
       return items.map((item, i) => {
         const icon = item.remindAt ? "🔔" : "📋";
-        return `${i + 1}. ${icon} [${item.status}] ${item.title}`;
+        return `${i + 1}. ${icon} [${item.status}] ${esc(item.title)}`;
       }).join("\n");
     }
 
@@ -76,9 +81,9 @@ export async function executeToolCall(
       const match = items.find((item) =>
         item.status !== "done" && item.title.toLowerCase().includes((args.title as string).toLowerCase())
       );
-      if (!match) return `Couldn't find an item matching "${args.title}"`;
+      if (!match) return `Couldn't find an item matching "${esc(args.title)}"`;
       await updateItem(match.id, userId, { status: "done" as ItemStatus });
-      return `Completed: **${match.title}**`;
+      return `Completed: ${b(match.title)}`;
     }
 
     case "delete_item": {
@@ -86,7 +91,7 @@ export async function executeToolCall(
       const match = items.find((item) =>
         item.title.toLowerCase().includes((args.title as string).toLowerCase())
       );
-      if (!match) return `Couldn't find an item matching "${args.title}"`;
+      if (!match) return `Couldn't find an item matching "${esc(args.title)}"`;
 
       if (match.googleEventId && user.googleRefreshToken) {
         try {
@@ -97,7 +102,7 @@ export async function executeToolCall(
       }
 
       await deleteItem(match.id, userId);
-      return `Deleted: **${match.title}**`;
+      return `Deleted: ${b(match.title)}`;
     }
 
     case "update_item": {
@@ -106,7 +111,7 @@ export async function executeToolCall(
       const match = items.find((item) =>
         item.status !== "done" && item.title.toLowerCase().includes(query)
       );
-      if (!match) return `Couldn't find an item matching "${args.query}". Try a different title.`;
+      if (!match) return `Couldn't find an item matching "${esc(args.query)}". Try a different title.`;
 
       const updates: {
         title?: string;
@@ -122,13 +127,14 @@ export async function executeToolCall(
       if (args.title !== undefined) updates.title = args.title as string;
       if (args.due_date !== undefined) updates.dueDate = args.due_date as string | null;
       if (args.due_time !== undefined) updates.dueTime = args.due_time as string | null;
-      if (args.remind_at !== undefined) updates.remindAt = args.remind_at ? new Date(args.remind_at as string) : null;
+      if (args.remind_at !== undefined) updates.remindAt = args.remind_at ? parseInTz(args.remind_at as string, user.timezone) : null;
       if (args.priority !== undefined) updates.priority = args.priority as Priority;
       if (args.status !== undefined) updates.status = args.status as ItemStatus;
       if (args.recurrence) {
         const params = args.recurrence as RecurrenceParams;
-        updates.recurrenceRule = paramsToRRule(params);
-        updates.recurrenceEnd = params.until ? new Date(params.until) : null;
+        const anchor = updates.remindAt ?? match.remindAt ?? undefined;
+        updates.recurrenceRule = paramsToRRule(params, anchor ?? undefined);
+        updates.recurrenceEnd = params.until ? parseInTz(params.until, user.timezone) : null;
         updates.recurring = params.frequency === "daily" ? "daily"
           : params.frequency === "weekly" ? "weekly"
           : params.frequency === "monthly" ? "monthly"
@@ -161,19 +167,25 @@ export async function executeToolCall(
         }
       }
 
-      return `Updated: **${updated.title}**`;
+      return `Updated: ${b(updated.title)}`;
     }
 
     case "get_calendar": {
       if (!user.googleRefreshToken) return "Google Calendar not connected. Connect it in Settings.";
+      const rangeStart = parseInTz(args.start_date as string, user.timezone);
+      const rangeEnd = parseInTz(args.end_date as string, user.timezone);
+      if (!rangeStart || !rangeEnd) return "I couldn't understand that date range.";
       const events = await getEvents(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        new Date(args.start_date as string),
-        new Date(args.end_date as string)
+        rangeStart,
+        rangeEnd,
+        user.timezone
       );
       if (events.length === 0) return "No events in that time range.";
-      return events.map((e) => `- ${e.title} (${e.startTime})`).join("\n");
+      return events
+        .map((e) => `- ${esc(e.title)} (${e.allDay ? `${e.startTime}, all day` : esc(e.startTime.replace("T", " ").slice(0, 16))})`)
+        .join("\n");
     }
 
     case "create_calendar_event": {
@@ -183,17 +195,30 @@ export async function executeToolCall(
       const startTime = args.start_time as string;
       const endTime = args.end_time as string;
       const description = (args.description as string) ?? undefined;
+      const confirmConflict = args.confirm_conflict === true;
 
-      const existing = await getEvents(
-        user.googleRefreshToken,
-        user.googleCalendarId ?? "primary",
-        new Date(startTime),
-        new Date(endTime)
-      );
+      const startInstant = parseInTz(startTime, user.timezone);
+      const endInstant = parseInTz(endTime, user.timezone);
+      if (!startInstant || !endInstant) return "I couldn't understand the event time.";
+      if (endInstant <= startInstant) return "The event's end time must be after its start time.";
 
-      if (existing.length > 0) {
-        const conflicts = existing.map((e) => `• ${e.title} (${e.startTime.slice(11, 16)}–${e.endTime.slice(11, 16)})`).join("\n");
-        return `Conflict detected — you already have:\n${conflicts}\n\nStill want me to create "${title}" at that time? Reply yes to confirm.`;
+      if (!confirmConflict) {
+        const existing = await getEvents(
+          user.googleRefreshToken,
+          user.googleCalendarId ?? "primary",
+          startInstant,
+          endInstant,
+          user.timezone
+        );
+        // All-day and "free" (transparent) entries don't block a timed booking.
+        const conflicts = existing.filter((e) => !e.allDay && e.transparency !== "transparent");
+
+        if (conflicts.length > 0) {
+          const conflictLines = conflicts
+            .map((e) => `• ${esc(e.title)} (${e.startTime.slice(11, 16)}–${e.endTime.slice(11, 16)})`)
+            .join("\n");
+          return `Conflict detected — you already have:\n${conflictLines}\n\nStill want me to create ${b(title)} at that time? Reply "yes" and I'll add it anyway.`;
+        }
       }
 
       let recurrence: string[] | undefined;
@@ -211,15 +236,16 @@ export async function executeToolCall(
 
       const warnings: string[] = [];
 
-      const eventDate = startTime.split("T")[0];
+      const eventDate = formatDateInTz(startInstant, user.timezone);
       const items = await listItems(userId, { status: "pending" as ItemStatus });
       const sameDayTasks = items.filter((item) => item.dueDate === eventDate && !item.googleEventId);
       if (sameDayTasks.length > 0) {
-        const taskList = sameDayTasks.slice(0, 3).map((t) => `• ${t.title}${t.dueTime ? ` (due ${t.dueTime})` : ""}`).join("\n");
+        const taskList = sameDayTasks.slice(0, 3).map((t) => `• ${esc(t.title)}${t.dueTime ? ` (due ${t.dueTime})` : ""}`).join("\n");
         warnings.push(`Heads up — you have ${sameDayTasks.length} task${sameDayTasks.length > 1 ? "s" : ""} due that day:\n${taskList}`);
       }
 
-      let result = `Created calendar event: **${event.title}** (${new Date(event.startTime).toLocaleString("en-US", { timeZone: user.timezone })})`;
+      const whenLabel = `${formatDateInTz(startInstant, user.timezone)} ${formatHHmmInTz(startInstant, user.timezone)}–${formatHHmmInTz(endInstant, user.timezone)}`;
+      let result = `Created calendar event: ${b(event.title)} (${whenLabel})${confirmConflict ? " — added despite the overlap" : ""}`;
       if (warnings.length > 0) {
         result += `\n\n⚠️ ${warnings.join("\n\n")}`;
       }
@@ -232,13 +258,13 @@ export async function executeToolCall(
         name: args.name as string,
         color: (args.color as string) ?? null,
       });
-      return `Created category: **${cat.name}**`;
+      return `Created category: ${b(cat.name)}`;
     }
 
     case "list_categories": {
       const cats = await listCategories(userId);
       if (cats.length === 0) return "No categories yet.";
-      return cats.map((c) => `- ${c.name}`).join("\n");
+      return cats.map((c) => `- ${esc(c.name)}`).join("\n");
     }
 
     case "update_calendar_event": {
@@ -271,32 +297,34 @@ export async function executeToolCall(
         if (args.title !== undefined) updates.title = args.title as string;
         if (args.description !== undefined) updates.description = args.description as string;
         if (args.start_time !== undefined) {
-          const startDate = new Date(args.start_time as string);
-          updates.dueDate = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(startDate);
-          updates.dueTime = new Intl.DateTimeFormat("en-GB", { timeZone: user.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(startDate);
+          const startDate = parseInTz(args.start_time as string, user.timezone);
+          if (startDate) {
+            updates.dueDate = formatDateInTz(startDate, user.timezone);
+            updates.dueTime = formatHHmmInTz(startDate, user.timezone);
+          }
         }
         await updateItem(match.id, userId, updates);
         try {
           await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", match.googleEventId!, gcalFields, user.timezone);
         } catch {
-          return `Updated in-app event: **${args.title ?? match.title}** (Google Calendar sync failed)`;
+          return `Updated in-app event: ${b(args.title ?? match.title)} (Google Calendar sync failed)`;
         }
-        return `Updated calendar event: **${args.title ?? match.title}**`;
+        return `Updated calendar event: ${b(args.title ?? match.title)}`;
       }
 
       // Fallback: search Google Calendar directly
       const now = new Date();
       const searchEnd = new Date(now.getTime() + 90 * 86400000);
-      const events = await getEvents(user.googleRefreshToken, user.googleCalendarId ?? "primary", now, searchEnd);
+      const events = await getEvents(user.googleRefreshToken, user.googleCalendarId ?? "primary", now, searchEnd, user.timezone);
       const gcalMatch = events.find((e) => fuzzyMatch(e.title, query));
-      if (!gcalMatch) return `Couldn't find a calendar event matching "${args.query}"`;
+      if (!gcalMatch) return `Couldn't find a calendar event matching "${esc(args.query)}"`;
 
       try {
         await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", gcalMatch.id, gcalFields, user.timezone);
       } catch {
-        return `Found "${gcalMatch.title}" but failed to update it in Google Calendar.`;
+        return `Found "${esc(gcalMatch.title)}" but failed to update it in Google Calendar.`;
       }
-      return `Updated calendar event: **${args.title ?? gcalMatch.title}**`;
+      return `Updated calendar event: ${b(args.title ?? gcalMatch.title)}`;
     }
 
     case "delete_calendar_event": {
@@ -317,22 +345,22 @@ export async function executeToolCall(
           // gcal sync failure is non-fatal
         }
         await deleteItem(match.id, userId);
-        return `Deleted calendar event: **${match.title}**`;
+        return `Deleted calendar event: ${b(match.title)}`;
       }
 
       // Fallback: search Google Calendar directly
       const now = new Date();
       const searchEnd = new Date(now.getTime() + 90 * 86400000);
-      const events = await getEvents(user.googleRefreshToken, user.googleCalendarId ?? "primary", now, searchEnd);
+      const events = await getEvents(user.googleRefreshToken, user.googleCalendarId ?? "primary", now, searchEnd, user.timezone);
       const gcalMatch = events.find((e) => fuzzyMatch(e.title, query));
-      if (!gcalMatch) return `Couldn't find a calendar event matching "${args.query}"`;
+      if (!gcalMatch) return `Couldn't find a calendar event matching "${esc(args.query)}"`;
 
       try {
         await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", gcalMatch.id);
       } catch {
-        return `Found "${gcalMatch.title}" but failed to delete it from Google Calendar.`;
+        return `Found "${esc(gcalMatch.title)}" but failed to delete it from Google Calendar.`;
       }
-      return `Deleted calendar event: **${gcalMatch.title}**`;
+      return `Deleted calendar event: ${b(gcalMatch.title)}`;
     }
 
     case "suggest_schedule": {
@@ -340,14 +368,13 @@ export async function executeToolCall(
       if (pending.length === 0) return "No pending tasks to schedule.";
 
       const now = new Date();
-      const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(now);
-      const today = new Date(`${todayStr}T00:00:00`);
-      const sevenDaysOut = new Date(today);
-      sevenDaysOut.setDate(today.getDate() + 7);
+      const todayStr = todayInTz(user.timezone, now);
+      const today = startOfDayInTz(todayStr, user.timezone);
+      const sevenDaysOut = new Date(today.getTime() + 7 * 86400000);
 
       const taskLines = pending
         .slice(0, 10)
-        .map((item) => `- ${item.title} (priority: ${item.priority}${item.dueDate ? `, due: ${item.dueDate}` : ""})`)
+        .map((item) => `- ${esc(item.title)} (priority: ${item.priority}${item.dueDate ? `, due: ${item.dueDate}` : ""})`)
         .join("\n");
 
       if (!user.googleRefreshToken) {
@@ -358,38 +385,43 @@ export async function executeToolCall(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
         now,
-        sevenDaysOut
+        sevenDaysOut,
+        user.timezone
       );
 
-      const workStart = 9;
-      const workEnd = 18;
+      const workStart = 9 * 60;
+      const workEnd = 18 * 60;
       const freeBlocks: string[] = [];
+      const fmt = (mins: number) => `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 
       for (let d = 0; d < 7; d++) {
-        const day = new Date(today);
-        day.setDate(today.getDate() + d);
-        const dateStr = new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(day);
+        const day = new Date(today.getTime() + d * 86400000);
+        const dateStr = formatDateInTz(day, user.timezone);
         const dayEvents = events
-          .filter((e) => e.startTime.startsWith(dateStr))
-          .sort((a, b) => a.startTime.localeCompare(b.startTime));
+          .filter((e) => !e.allDay && e.transparency !== "transparent")
+          .map((e) => {
+            const start = new Date(e.startTime);
+            const end = new Date(e.endTime);
+            return { start, end, startMin: toMinutesOfDay(start, user.timezone), endMin: toMinutesOfDay(end, user.timezone) };
+          })
+          .filter((e) => formatDateInTz(e.start, user.timezone) === dateStr)
+          .sort((a, b2) => a.startMin - b2.startMin);
 
         let cursor = workStart;
         for (const ev of dayEvents) {
-          const evStart = parseInt(ev.startTime.slice(11, 13), 10);
-          const evEnd = parseInt(ev.endTime.slice(11, 13), 10);
-          if (cursor < evStart) {
-            freeBlocks.push(`${dateStr} ${cursor}:00–${evStart}:00`);
+          if (cursor < ev.startMin) {
+            freeBlocks.push(`${dateStr} ${fmt(cursor)}–${fmt(ev.startMin)}`);
           }
-          cursor = Math.max(cursor, evEnd);
+          cursor = Math.max(cursor, ev.endMin);
         }
         if (cursor < workEnd) {
-          freeBlocks.push(`${dateStr} ${cursor}:00–${workEnd}:00`);
+          freeBlocks.push(`${dateStr} ${fmt(cursor)}–${fmt(workEnd)}`);
         }
       }
 
       const freeLines = freeBlocks.slice(0, 6).join(", ") || "No free blocks found in working hours (9am–6pm)";
 
-      return `*Pending tasks:*\n${taskLines}\n\n*Free blocks this week:*\n${freeLines}\n\n*Suggested:* Work on your highest-priority tasks during morning free blocks. Consider blocking calendar time for deep work items.`;
+      return `${b("Pending tasks:")}\n${taskLines}\n\n${b("Free blocks this week:")}\n${freeLines}\n\n${b("Suggested:")} Work on your highest-priority tasks during morning free blocks. Consider blocking calendar time for deep work items.`;
     }
 
     case "decompose_task": {
@@ -398,9 +430,10 @@ export async function executeToolCall(
       const match = items.find((item) =>
         item.status !== "done" && item.title.toLowerCase().includes(query)
       );
-      if (!match) return `Couldn't find a task matching "${args.parent_title}"`;
+      if (!match) return `Couldn't find a task matching "${esc(args.parent_title)}"`;
 
-      const subtasks = args.subtasks as Array<{ title: string; priority?: string }>;
+      const subtasks = Array.isArray(args.subtasks) ? (args.subtasks as Array<{ title: string; priority?: string }>) : [];
+      if (subtasks.length === 0) return "I need a list of subtasks to break that down.";
       const created: string[] = [];
       for (const sub of subtasks) {
         await createItem({
@@ -412,17 +445,17 @@ export async function executeToolCall(
         });
         created.push(sub.title);
       }
-      return `Decomposed **${match.title}** into ${created.length} subtasks:\n${created.map((t) => `• ${t}`).join("\n")}`;
+      return `Decomposed ${b(match.title)} into ${created.length} subtasks:\n${created.map((t) => `• ${esc(t)}`).join("\n")}`;
     }
 
     case "search_items": {
       const results = await searchItems(userId, args.query as string);
-      if (results.length === 0) return `No items matching "${args.query}"`;
+      if (results.length === 0) return `No items matching "${esc(args.query)}"`;
       return results
         .map((r, i) => {
           const icon = r.type === "reminder" ? "🔔" : "📋";
           const status = r.status === "done" ? "✓" : r.status === "in_progress" ? "⟳" : "○";
-          return `${i + 1}. ${icon} ${status} ${r.title}${r.dueDate ? ` (${r.dueDate})` : ""} — ${r.category.name}`;
+          return `${i + 1}. ${icon} ${status} ${esc(r.title)}${r.dueDate ? ` (${r.dueDate})` : ""} — ${esc(r.category.name)}`;
         })
         .join("\n");
     }
@@ -430,4 +463,9 @@ export async function executeToolCall(
     default:
       return null;
   }
+}
+
+function toMinutesOfDay(date: Date, tz: string): number {
+  const [h, m] = formatHHmmInTz(date, tz).split(":").map(Number);
+  return h * 60 + m;
 }

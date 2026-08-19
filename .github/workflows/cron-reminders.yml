@@ -1,17 +1,23 @@
-name: Send Due Reminders
+name: Cron tick (reminders, briefing, weekly digest)
 
 on:
   schedule:
+    # GitHub runs scheduled workflows at best every ~5 minutes; the endpoints are idempotent
+    # and window-tolerant so late/missed ticks are fine.
     - cron: '* * * * *'
   workflow_dispatch:
 
 jobs:
-  send-reminders:
+  tick:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        endpoint: [reminders, briefing, weekly-digest]
     steps:
-      - name: Trigger reminder cron endpoint
+      - name: Trigger /api/cron/${{ matrix.endpoint }}
         run: |
-          response=$(curl -s -L -w "\n%{http_code}" -X POST "${{ secrets.APP_URL }}/api/cron/reminders" \
+          response=$(curl -s -L -w "\n%{http_code}" -X POST "${{ secrets.APP_URL }}/api/cron/${{ matrix.endpoint }}" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json")
           http_code=$(echo "$response" | tail -1)
@@ -19,6 +25,6 @@ jobs:
           echo "Status: $http_code"
           echo "Response: $body"
           if [ "$http_code" -ne 200 ]; then
-            echo "::error::Cron endpoint returned $http_code"
+            echo "::error::Cron endpoint ${{ matrix.endpoint }} returned $http_code"
             exit 1
           fi

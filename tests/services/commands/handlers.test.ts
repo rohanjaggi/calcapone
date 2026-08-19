@@ -72,7 +72,7 @@ describe("handleDone", () => {
     const result = await handleDone("dentist", ctx);
 
     expect(result).toContain("dentist");
-    expect(result).toContain("No pending task");
+    expect(result).toContain("No open task");
     expect(mockUpdateItem).not.toHaveBeenCalled();
   });
 });
@@ -138,7 +138,8 @@ describe("handleToday", () => {
     };
     mockListItems.mockResolvedValue([]);
     mockGetEvents.mockResolvedValue([
-      { id: "e1", title: "Team sync", startTime: "10:00 AM", endTime: "10:30 AM", description: null },
+      { id: "e1", title: "Team sync <Q3>", startTime: "2026-06-11T10:00:00+08:00", endTime: "2026-06-11T10:30:00+08:00", description: null, allDay: false, transparency: "opaque" },
+      { id: "e2", title: "Public holiday", startTime: "2026-06-12", endTime: "2026-06-13", description: null, allDay: true, transparency: "transparent" },
     ]);
 
     const result = await handleToday(ctxWithGcal);
@@ -147,10 +148,12 @@ describe("handleToday", () => {
       "enc-token",
       "primary",
       expect.any(Date),
-      expect.any(Date)
+      expect.any(Date),
+      "Asia/Singapore"
     );
-    expect(result).toContain("Team sync");
-    expect(result).toContain("Next up");
+    expect(result).toContain("10:00 — Team sync &lt;Q3&gt;");
+    expect(result).toContain("2026-06-12 (all day) — Public holiday");
+    expect(result).toContain("<b>Next up</b>");
   });
 
   it("shows overdue section for items with dueDate before today", async () => {

@@ -10,6 +10,10 @@ const mockPrisma = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+vi.mock("@/lib/services/embeddings", () => ({
+  buildEmbeddingText: vi.fn(() => "text"),
+  upsertItemEmbedding: vi.fn(async () => {}),
+}));
 
 import { createItem, listItems, updateItem, deleteItem, getDueItems, createNextOccurrence } from "@/lib/services/item";
 
@@ -18,7 +22,7 @@ describe("ItemService", () => {
 
   it("creates an item", async () => {
     const input = { userId: "u1", categoryId: "c1", title: "Buy milk" };
-    mockPrisma.item.create.mockResolvedValue({ id: "i1", status: "pending", priority: "medium", ...input });
+    mockPrisma.item.create.mockResolvedValue({ id: "i1", status: "pending", priority: "medium", category: { name: "General" }, ...input });
     const result = await createItem(input);
     expect(result.title).toBe("Buy milk");
     expect(mockPrisma.item.create).toHaveBeenCalledWith({

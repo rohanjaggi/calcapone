@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildEmbeddingText, upsertItemEmbedding } from "@/lib/services/embeddings";
+import { isAuthorizedCronRequest } from "@/lib/services/cron-utils";
 
-export async function POST(req: Request) {
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+export async function POST(req: NextRequest) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

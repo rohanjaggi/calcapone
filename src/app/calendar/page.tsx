@@ -1,4 +1,4 @@
-import { getOrCreateDevUser } from "@/lib/dev-user";
+import { requireUser } from "@/lib/auth";
 import { listItems } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
 import { listCategories } from "@/lib/services/category";
@@ -7,7 +7,7 @@ import { CalendarClient } from "@/components/calendar/calendar-client";
 export const dynamic = "force-dynamic";
 
 export default async function CalendarPage() {
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
 
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);

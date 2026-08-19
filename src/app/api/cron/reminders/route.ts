@@ -1,12 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDueItems, markItemSent, createNextOccurrence, createItem, getEscalationCandidates, updateNotificationStage } from "@/lib/services/item";
-import { sendMessage } from "@/lib/services/telegram";
-import { shouldNotify } from "@/lib/services/cron-utils";
+import {
+  getDueItems,
+  claimDueReminder,
+  createNextOccurrence,
+  createItem,
+  getEscalationCandidates,
+  updateNotificationStage,
+} from "@/lib/services/item";
+import { sendMessage, b } from "@/lib/services/telegram";
+import { shouldNotify, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
 import { pruneOldMessages } from "@/lib/services/conversation";
+import { formatDateInTz, formatHHmmInTz, isValidTz } from "@/lib/tz";
+
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get("authorization");
-  if (secret !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -23,12 +32,22 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      await sendMessage(Number(item.user.telegramId), `🔔 *Reminder:* ${item.title}`);
-      await markItemSent(item.id);
+      const isRecurring = Boolean(item.recurrenceRule) || item.recurring !== "none";
+      // Pure reminders and recurring occurrences complete on fire; dated tasks stay open
+      // so deadline escalation can follow up.
+      const markDone = !item.dueDate || isRecurring;
+
+      // Claim first so an overlapping run can't double-send or fork the series.
+      if (!(await claimDueReminder(item.id, markDone))) {
+        skipped++;
+        continue;
+      }
+
+      await sendMessage(Number(item.user.telegramId), `🔔 ${b("Reminder:")} ${b(item.title)}`);
       sent++;
 
-      if (item.recurrenceRule || item.recurring !== "none") {
-        const nextRemindAt = createNextOccurrence(item.remindAt!, item.recurring, item.recurrenceRule);
+      if (isRecurring && item.remindAt) {
+        const nextRemindAt = createNextOccurrence(item.remindAt, item.recurring, item.recurrenceRule, now);
 
         if (nextRemindAt && (!item.recurrenceEnd || nextRemindAt <= item.recurrenceEnd)) {
           await createItem({
@@ -37,7 +56,7 @@ export async function POST(request: NextRequest) {
             title: item.title,
             description: item.description,
             priority: item.priority,
-            dueDate: item.dueDate,
+            dueDate: item.dueDate ? formatDateInTz(nextRemindAt, item.user.timezone) : null,
             dueTime: item.dueTime,
             remindAt: nextRemindAt,
             recurring: item.recurring,
@@ -46,7 +65,8 @@ export async function POST(request: NextRequest) {
           });
         }
       }
-    } catch {
+    } catch (error) {
+      console.error(`[cron:reminders] item ${item.id}:`, error instanceof Error ? error.message : error);
       errors++;
     }
   }
@@ -56,46 +76,44 @@ export async function POST(request: NextRequest) {
   const candidates = await getEscalationCandidates();
 
   for (const item of candidates) {
-    if (!item.user.telegramId || !item.dueDate) continue;
-    if (!shouldNotify(item.user, item.priority, now)) continue;
+    try {
+      if (!item.user.telegramId || !item.dueDate) continue;
+      if (!isValidTz(item.user.timezone)) continue;
+      if (!shouldNotify(item.user, item.priority, now)) continue;
 
-    const userNowStr = new Intl.DateTimeFormat("en-CA", { timeZone: item.user.timezone }).format(now);
-    const userTimeStr = new Intl.DateTimeFormat("en-GB", {
-      timeZone: item.user.timezone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(now);
+      const userNowStr = formatDateInTz(now, item.user.timezone);
+      const userTimeStr = formatHHmmInTz(now, item.user.timezone);
 
-    const dueTime = item.dueTime ?? "23:59";
+      const dueTime = item.dueTime ?? "23:59";
 
-    const dueMinutes = toMinutes(item.dueDate, dueTime);
-    const nowMinutes = toMinutes(userNowStr, userTimeStr);
-    const minutesUntilDue = dueMinutes - nowMinutes;
-    const hoursUntilDue = minutesUntilDue / 60;
+      const dueMinutes = toMinutes(item.dueDate, dueTime);
+      const nowMinutes = toMinutes(userNowStr, userTimeStr);
+      const minutesUntilDue = dueMinutes - nowMinutes;
+      const hoursUntilDue = minutesUntilDue / 60;
 
-    let newStage = item.notificationStage;
-    let message = "";
+      let newStage = item.notificationStage;
+      let message = "";
 
-    if (hoursUntilDue < 0 && item.notificationStage < 3) {
-      newStage = 3;
-      message = `🚨 *Overdue:* ${item.title}`;
-    } else if (hoursUntilDue <= 2 && hoursUntilDue > 0 && item.notificationStage < 2) {
-      newStage = 2;
-      message = `⚠️ *Due soon:* ${item.title} (in ${Math.round(minutesUntilDue)} min)`;
-    } else if (hoursUntilDue <= 24 && hoursUntilDue > 2 && item.notificationStage < 1) {
-      newStage = 1;
-      message = `📋 *Due tomorrow:* ${item.title}`;
-    }
+      if (hoursUntilDue < 0 && item.notificationStage < 3) {
+        newStage = 3;
+        message = `🚨 ${b("Overdue:")} ${b(item.title)}`;
+      } else if (hoursUntilDue <= 2 && hoursUntilDue > 0 && item.notificationStage < 2) {
+        newStage = 2;
+        message = `⚠️ ${b("Due soon:")} ${b(item.title)} (in ${Math.round(minutesUntilDue)} min)`;
+      } else if (hoursUntilDue <= 24 && hoursUntilDue > 2 && item.notificationStage < 1) {
+        newStage = 1;
+        const label = item.dueDate === userNowStr ? "Due today:" : "Due tomorrow:";
+        message = `📋 ${b(label)} ${b(item.title)}`;
+      }
 
-    if (newStage > item.notificationStage) {
-      try {
+      if (newStage > item.notificationStage) {
         await sendMessage(Number(item.user.telegramId), message);
         await updateNotificationStage(item.id, newStage);
         escalated++;
-      } catch {
-        errors++;
       }
+    } catch (error) {
+      console.error(`[cron:escalation] item ${item.id}:`, error instanceof Error ? error.message : error);
+      errors++;
     }
   }
 
@@ -107,7 +125,7 @@ export async function POST(request: NextRequest) {
 function toMinutes(dateStr: string, timeStr: string): number {
   const [y, mo, d] = dateStr.split("-").map(Number);
   const [h, m] = timeStr.split(":").map(Number);
-  // Days since epoch * 1440 + hours * 60 + minutes
-  const daysSinceEpoch = Math.floor(new Date(y, mo - 1, d).getTime() / 86400000);
+  // Days since epoch * 1440 + hours * 60 + minutes (UTC arithmetic: both dates are already in user-local terms)
+  const daysSinceEpoch = Math.floor(Date.UTC(y, mo - 1, d) / 86400000);
   return daysSinceEpoch * 1440 + h * 60 + m;
 }

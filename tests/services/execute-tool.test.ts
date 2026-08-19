@@ -54,7 +54,7 @@ describe("executeToolCall", () => {
       expect(mockCreateItem).toHaveBeenCalledWith(
         expect.objectContaining({ userId: "u1", categoryId: "c1", title: "Write report", priority: "high" })
       );
-      expect(result).toBe("Created Task: **Write report** in Work");
+      expect(result).toBe("Created Task: <b>Write report</b> in Work");
     });
 
     it("returns error when no categories exist", async () => {
@@ -73,7 +73,7 @@ describe("executeToolCall", () => {
     it("labels item as Reminder when remindAt is set", async () => {
       const cat = { id: "c1", name: "Work" };
       mockListCategories.mockResolvedValue([cat]);
-      mockCreateItem.mockResolvedValue({ id: "i3", title: "Call dentist", remindAt: new Date() });
+      mockCreateItem.mockResolvedValue({ id: "i3", title: "Call dentist", remindAt: new Date("2026-08-20T07:00:00Z") });
 
       const result = await executeToolCall(
         "create_item",
@@ -82,7 +82,7 @@ describe("executeToolCall", () => {
         baseUser
       );
 
-      expect(result).toBe("Created Reminder: **Call dentist** in Work");
+      expect(result).toBe("Created Reminder: <b>Call dentist</b> in Work — 2026-08-20 07:00");
     });
   });
 
@@ -102,7 +102,7 @@ describe("executeToolCall", () => {
       );
 
       expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { status: "done" });
-      expect(result).toBe("Completed: **Write quarterly report**");
+      expect(result).toBe("Completed: <b>Write quarterly report</b>");
     });
 
     it("returns not-found message when no match", async () => {
@@ -175,7 +175,7 @@ describe("executeToolCall", () => {
       );
 
       expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { dueDate: "2026-05-20" });
-      expect(result).toBe("Updated: **Submit invoice**");
+      expect(result).toBe("Updated: <b>Submit invoice</b>");
     });
 
     it("returns error when no item matches query", async () => {
@@ -208,6 +208,62 @@ describe("executeToolCall", () => {
       );
 
       expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { priority: "high" });
+    });
+  });
+
+  describe("create_calendar_event", () => {
+    const gcalUser = { googleRefreshToken: "enc", googleCalendarId: "primary", timezone: "Asia/Singapore" };
+    const args = { title: "Lunch", start_time: "2026-08-21T12:00:00+08:00", end_time: "2026-08-21T13:00:00+08:00" };
+
+    it("reports a conflict with a timed overlapping event and does not create", async () => {
+      mockGetEvents.mockResolvedValue([
+        { id: "e1", title: "Standup <x>", startTime: "2026-08-21T12:30:00+08:00", endTime: "2026-08-21T13:00:00+08:00", description: null, allDay: false, transparency: "opaque" },
+      ]);
+      const result = await executeToolCall("create_calendar_event", args, "u1", gcalUser);
+      expect(result).toContain("Conflict detected");
+      expect(result).toContain("Standup &lt;x&gt; (12:30–13:00)");
+      expect(result).toContain('Reply "yes"');
+      expect(mockCreateEvent).not.toHaveBeenCalled();
+      // window is passed as real instants in the user's zone
+      const [, , start, end, tz] = mockGetEvents.mock.calls[0];
+      expect(start.toISOString()).toBe("2026-08-21T04:00:00.000Z");
+      expect(end.toISOString()).toBe("2026-08-21T05:00:00.000Z");
+      expect(tz).toBe("Asia/Singapore");
+    });
+
+    it("ignores all-day and transparent events when checking conflicts", async () => {
+      mockGetEvents.mockResolvedValue([
+        { id: "e1", title: "Birthday", startTime: "2026-08-21", endTime: "2026-08-22", description: null, allDay: true, transparency: "transparent" },
+        { id: "e2", title: "OOO marker", startTime: "2026-08-21T09:00:00+08:00", endTime: "2026-08-21T18:00:00+08:00", description: null, allDay: false, transparency: "transparent" },
+      ]);
+      mockListItems.mockResolvedValue([]);
+      mockCreateEvent.mockResolvedValue({ id: "new", title: "Lunch", startTime: args.start_time, endTime: args.end_time });
+      const result = await executeToolCall("create_calendar_event", args, "u1", gcalUser);
+      expect(mockCreateEvent).toHaveBeenCalled();
+      expect(result).toContain("Created calendar event: <b>Lunch</b> (2026-08-21 12:00–13:00)");
+    });
+
+    it("creates despite a conflict when confirm_conflict is true (no pre-check)", async () => {
+      mockListItems.mockResolvedValue([]);
+      mockCreateEvent.mockResolvedValue({ id: "new", title: "Lunch", startTime: args.start_time, endTime: args.end_time });
+      const result = await executeToolCall("create_calendar_event", { ...args, confirm_conflict: true }, "u1", gcalUser);
+      expect(mockGetEvents).not.toHaveBeenCalled();
+      expect(mockCreateEvent).toHaveBeenCalled();
+      expect(result).toContain("added despite the overlap");
+    });
+
+    it("interprets naive datetimes in the user's timezone", async () => {
+      mockGetEvents.mockResolvedValue([]);
+      mockListItems.mockResolvedValue([]);
+      mockCreateEvent.mockResolvedValue({ id: "new", title: "Lunch", startTime: "x", endTime: "y" });
+      await executeToolCall("create_calendar_event", { ...args, start_time: "2026-08-21T12:00:00", end_time: "2026-08-21T13:00:00" }, "u1", gcalUser);
+      const [, , start] = mockGetEvents.mock.calls[0];
+      expect(start.toISOString()).toBe("2026-08-21T04:00:00.000Z");
+    });
+
+    it("rejects an end before start", async () => {
+      const result = await executeToolCall("create_calendar_event", { ...args, end_time: "2026-08-21T11:00:00+08:00" }, "u1", gcalUser);
+      expect(result).toMatch(/end time must be after/);
     });
   });
 });

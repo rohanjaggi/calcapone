@@ -20,15 +20,38 @@ type ResolvedConfig = {
 };
 
 export function resolveAiClient(config: AiConfig): ResolvedConfig {
-  const provider = config.provider || process.env.DEFAULT_AI_PROVIDER || "openai";
-  const apiKey = config.apiKey || process.env.DEFAULT_AI_API_KEY;
-  const model = config.model || process.env.DEFAULT_AI_MODEL || PROVIDER_DEFAULTS[provider];
+  const defaultProvider = process.env.DEFAULT_AI_PROVIDER || "openai";
+  const provider = config.provider || defaultProvider;
+  if (!PROVIDER_DEFAULTS[provider]) {
+    throw new Error(`Unsupported AI provider: ${provider}`);
+  }
+
+  // The shared default key/model only make sense for the provider they were issued for.
+  const envApplies = provider === defaultProvider;
+  const apiKey = config.apiKey || (envApplies ? process.env.DEFAULT_AI_API_KEY : undefined);
+  const model =
+    config.model ||
+    (envApplies && process.env.DEFAULT_AI_MODEL) ||
+    PROVIDER_DEFAULTS[provider];
 
   if (!apiKey) {
-    throw new Error(`No API key configured for provider "${provider}". Set one in Settings or configure DEFAULT_AI_API_KEY.`);
+    throw new Error(
+      config.provider && !envApplies
+        ? `No API key saved for ${provider}. Add one in Settings (the shared trial key only works with ${defaultProvider}).`
+        : `No API key configured for provider "${provider}". Set one in Settings or configure DEFAULT_AI_API_KEY.`
+    );
   }
 
   return { provider, apiKey, model };
+}
+
+function parseToolArgs(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function openaiToolsFormat() {
@@ -38,14 +61,18 @@ function openaiToolsFormat() {
   }));
 }
 
+type ChatOptions = { tools?: boolean };
+
 export async function chatWithAi(
   userMessage: string,
   user: { telegramUsername: string; timezone: string; categories?: string[] },
   config: AiConfig,
-  history?: Array<{ role: "user" | "assistant"; content: string }>
+  history?: Array<{ role: "user" | "assistant"; content: string }>,
+  options: ChatOptions = {}
 ): Promise<{ text: string; toolCalls: Array<{ name: string; args: Record<string, unknown> }> }> {
   const { provider, apiKey, model } = resolveAiClient(config);
   const systemPrompt = buildSystemPrompt(user);
+  const useTools = options.tools !== false;
 
   switch (provider) {
     case "openai":
@@ -62,14 +89,14 @@ export async function chatWithAi(
       const response = await client.chat.completions.create({
         model,
         messages,
-        tools: openaiToolsFormat(),
+        ...(useTools ? { tools: openaiToolsFormat() } : {}),
       });
       const choice = response.choices[0];
       const toolCalls = (choice.message.tool_calls ?? [])
         .filter((tc): tc is OpenAI.ChatCompletionMessageToolCall & { type: "function" } => tc.type === "function")
         .map((tc) => ({
           name: tc.function.name,
-          args: JSON.parse(tc.function.arguments),
+          args: parseToolArgs(tc.function.arguments),
         }));
       return { text: choice.message.content ?? "", toolCalls };
     }
@@ -84,11 +111,15 @@ export async function chatWithAi(
           ...(history ?? []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
           { role: "user", content: userMessage },
         ],
-        tools: AI_TOOLS.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.parameters as Anthropic.Tool.InputSchema,
-        })),
+        ...(useTools
+          ? {
+              tools: AI_TOOLS.map((t) => ({
+                name: t.name,
+                description: t.description,
+                input_schema: t.parameters as Anthropic.Tool.InputSchema,
+              })),
+            }
+          : {}),
       });
       const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
       const toolBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
@@ -114,13 +145,17 @@ export async function chatWithAi(
         ],
         config: {
           systemInstruction: systemPrompt,
-          tools: [{
-            functionDeclarations: AI_TOOLS.map((t) => ({
-              name: t.name,
-              description: t.description,
-              parametersJsonSchema: t.parameters,
-            })),
-          }],
+          ...(useTools
+            ? {
+                tools: [{
+                  functionDeclarations: AI_TOOLS.map((t) => ({
+                    name: t.name,
+                    description: t.description,
+                    parametersJsonSchema: t.parameters,
+                  })),
+                }],
+              }
+            : {}),
         },
       });
       const functionCalls = response.functionCalls ?? [];

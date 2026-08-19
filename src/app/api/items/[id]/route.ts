@@ -1,15 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateItem, deleteItem } from "@/lib/services/item";
 import { updateEvent, deleteEvent } from "@/lib/services/calendar";
-import { authenticateRequest } from "@/lib/telegram-auth";
+import { getRequestUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { parseInTz } from "@/lib/tz";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = await authenticateRequest(request);
+  const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
-  const body = await request.json();
+  const raw = await request.json();
+  // Allow-list: never forward userId/parentId/notificationStage/etc. from the client.
+  const body: Parameters<typeof updateItem>[2] & { dueDate?: string | null; dueTime?: string | null } = {};
+  if (typeof raw.title === "string") body.title = raw.title;
+  if (raw.description !== undefined) body.description = raw.description ?? null;
+  if (raw.status !== undefined) body.status = raw.status;
+  if (raw.priority !== undefined) body.priority = raw.priority;
+  if (typeof raw.categoryId === "string") body.categoryId = raw.categoryId;
+  if (raw.dueDate !== undefined) body.dueDate = raw.dueDate ?? null;
+  if (raw.dueTime !== undefined) body.dueTime = raw.dueTime ?? null;
+  if (raw.remindAt !== undefined) body.remindAt = raw.remindAt ? parseInTz(String(raw.remindAt), user.timezone) : null;
+  if (raw.recurring !== undefined) body.recurring = raw.recurring;
   const item = await updateItem(id, user.id, body);
 
   if (item.googleEventId && user.googleRefreshToken) {
@@ -39,7 +51,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = await authenticateRequest(request);
+  const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;

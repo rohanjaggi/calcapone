@@ -1,8 +1,9 @@
 "use server";
 
 import { updateUserSettings } from "@/lib/services/user";
-import { getOrCreateDevUser } from "@/lib/dev-user";
-import { getAuthUrl } from "@/lib/services/calendar";
+import { requireUser } from "@/lib/auth";
+import { cookies } from "next/headers";
+import { getAuthUrl, createOAuthState, revokeRefreshToken, OAUTH_STATE_COOKIE } from "@/lib/services/calendar";
 import type { AiProvider, Priority } from "@/generated/prisma/enums";
 
 export async function saveAiConfig(data: {
@@ -10,7 +11,7 @@ export async function saveAiConfig(data: {
   aiApiKey?: string;
   aiModel: string;
 }) {
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
   await updateUserSettings(user.id, {
     aiProvider: data.aiProvider as AiProvider,
     ...(data.aiApiKey && { aiApiKey: data.aiApiKey }),
@@ -19,7 +20,7 @@ export async function saveAiConfig(data: {
 }
 
 export async function saveTimezone(timezone: string) {
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
   await updateUserSettings(user.id, { timezone });
 }
 
@@ -34,7 +35,7 @@ export async function saveNotifications(data: {
   digestDay: number;
   digestTime: string;
 }) {
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
   await updateUserSettings(user.id, {
     ...data,
     notifyMinPriority: data.notifyMinPriority as Priority,
@@ -42,12 +43,24 @@ export async function saveNotifications(data: {
 }
 
 export async function getGoogleAuthUrl() {
-  const user = await getOrCreateDevUser();
-  return getAuthUrl(user.id);
+  await requireUser();
+  const { state, nonce } = createOAuthState();
+  const jar = await cookies();
+  jar.set(OAUTH_STATE_COOKIE, nonce, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 10 * 60,
+  });
+  return getAuthUrl(state);
 }
 
 export async function disconnectGoogle() {
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
+  if (user.googleRefreshToken) {
+    await revokeRefreshToken(user.googleRefreshToken);
+  }
   await updateUserSettings(user.id, {
     googleRefreshToken: null,
     googleCalendarId: null,

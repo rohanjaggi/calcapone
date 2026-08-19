@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserById, updateUserSettings } from "@/lib/services/user";
-import { authenticateRequest } from "@/lib/telegram-auth";
+import { getRequestUser } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
-  const user = await authenticateRequest(request);
+  const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const userId = user.id;
 
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const user = await authenticateRequest(request);
+  const user = await getRequestUser(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const userId = user.id;
 

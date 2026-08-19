@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import type { Priority } from "@/generated/prisma/enums";
+
+/** Bearer-token check for cron/admin endpoints. Fails closed when CRON_SECRET is unset. */
+export function isAuthorizedCronRequest(request: NextRequest): boolean {
+  const expected = process.env.CRON_SECRET;
+  if (!expected) return false;
+  const header = request.headers.get("authorization") ?? "";
+  const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 type CronUser = Awaited<ReturnType<typeof prisma.user.findFirst>> & {};
 
@@ -11,8 +23,7 @@ type CronJobOptions = {
 };
 
 export async function runCronJob(request: NextRequest, options: CronJobOptions) {
-  const secret = request.headers.get("authorization");
-  if (secret !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -29,7 +40,8 @@ export async function runCronJob(request: NextRequest, options: CronJobOptions) 
     try {
       await options.handler(user, now);
       sent++;
-    } catch {
+    } catch (error) {
+      console.error(`[cron] handler failed for user ${user.id}:`, error instanceof Error ? error.message : error);
       errors++;
     }
   }

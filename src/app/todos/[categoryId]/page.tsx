@@ -1,4 +1,4 @@
-import { getOrCreateDevUser } from "@/lib/dev-user";
+import { requireUser } from "@/lib/auth";
 import { listItems } from "@/lib/services/item";
 import { prisma } from "@/lib/prisma";
 import { CategoryDetailClient } from "@/components/category-detail/category-detail-client";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function CategoryDetailPage({ params }: { params: Promise<{ categoryId: string }> }) {
   const { categoryId } = await params;
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
 
   const category = await prisma.category.findFirst({
     where: { id: categoryId, userId: user.id },

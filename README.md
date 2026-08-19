@@ -56,22 +56,44 @@ npm run dev
 | `DATABASE_URL` | PostgreSQL connection string |
 | `TELEGRAM_BOT_TOKEN` | From @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | Shared secret for webhook validation |
-| `CRON_SECRET` | Bearer token for cron endpoints |
+| `TELEGRAM_USER_ID` | Your Telegram user id — the owner (exempt from the trial cap; dev-bypass user) |
+| `SESSION_SECRET` | ≥32-char secret for signing web session cookies (`openssl rand -hex 32`) |
+| `AUTH_DEV_BYPASS` | Local dev only: `1` signs you in as `TELEGRAM_USER_ID` without Telegram |
+| `CRON_SECRET` | Bearer token for cron/admin endpoints (required — endpoints fail closed without it) |
 | `DEFAULT_AI_PROVIDER` | `openai`, `anthropic`, `gemini`, or `openrouter` |
-| `DEFAULT_AI_API_KEY` | Fallback API key if user hasn't set their own |
-| `DEFAULT_AI_MODEL` | Model ID (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
+| `DEFAULT_AI_API_KEY` | Shared "trial" key for users who haven't set their own (only used with `DEFAULT_AI_PROVIDER`) |
+| `DEFAULT_AI_MODEL` | Model ID (e.g., `gemini-3.7-flash`, `gpt-5.6-terra`, `claude-sonnet-5`) |
+| `TRIAL_DAILY_LIMIT` | AI messages/day for users on the shared key (default 30; owner + BYOK users exempt) |
+| `GEMINI_API_KEY` | Used for semantic-search embeddings (`gemini-embedding-001`) |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `ENCRYPTION_KEY` | 32-byte hex key for encrypting stored API keys |
+| `GOOGLE_REDIRECT_URI` | `https://your-domain/api/settings/google/callback` |
+| `ENCRYPTION_KEY` | 32-byte hex key for encrypting stored API keys and Google tokens (also signs OAuth state) |
 
 ### Register the bot
 
-After deploying, hit the registration endpoint once to configure the webhook and commands:
+After deploying, hit the registration endpoint once to configure the webhook, commands, and the menu button (which opens the dashboard as a Telegram Mini App):
 
 ```bash
 curl -X POST https://your-domain.com/api/telegram/register \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
+
+### Login (Telegram Mini App only)
+
+The dashboard is a **Telegram Mini App** — it is not meant to be used as a standalone website. The bot's menu button opens `/login` inside Telegram, which validates `window.Telegram.WebApp.initData` server-side (HMAC) and exchanges it for a signed session cookie (`SESSION_SECRET`, 30 days). Opening the URL in a normal browser shows a "open from Telegram" message and cannot sign in — there is no browser login.
+
+- **Local dev** — set `AUTH_DEV_BYPASS=1` and `TELEGRAM_USER_ID` to work on the dashboard without Telegram.
+
+Known limitation: Telegram **Web** (web.telegram.org) runs Mini Apps in a cross-site iframe where the session cookie can't be set — use the mobile or desktop Telegram apps.
+
+### Trial mode
+
+Anyone can message the bot. Users without their own API key use `DEFAULT_AI_API_KEY` and get `TRIAL_DAILY_LIMIT` AI messages per day (slash commands like `/today` and `/list` don't count). The owner (`TELEGRAM_USER_ID`) and users who add their own key in Settings are unlimited.
+
+### Database migrations
+
+`prisma/migrations` starts from a baseline (`20260601000000_init`). For a fresh database run `npx prisma migrate deploy`. For an existing database that predates the baseline, mark it applied once: `npx prisma migrate resolve --applied 20260601000000_init`, then `npx prisma migrate deploy`. Semantic search needs the `vector` extension (the migration creates it).
 
 ## Architecture
 
@@ -89,10 +111,10 @@ Web dashboard
   → Server actions → same service layer
   → Cmd+K search dialog → searchItems service
 
-Cron jobs (external trigger every minute):
-  → /api/cron/briefing       — AI morning summary
+Cron jobs (GitHub Actions hits all three; ticks may be minutes late, endpoints are idempotent):
+  → /api/cron/briefing       — AI morning summary (once/day, within 2h of the chosen time)
   → /api/cron/reminders      — fires due reminders + deadline escalation
-  → /api/cron/weekly-digest  — configurable weekly recap
+  → /api/cron/weekly-digest  — configurable weekly recap (once/day on the chosen weekday)
 ```
 
 ## Telegram Commands
@@ -111,7 +133,7 @@ You can also just type naturally — "move my dentist appointment to 3pm", "brea
 
 ## AI Tools
 
-The AI has access to 15 tools:
+The AI has access to 14 tools:
 
 | Tool | Purpose |
 |------|---------|

@@ -1,25 +1,30 @@
 import { listItems, updateItem } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
+import { esc, b } from "@/lib/services/telegram";
+import { todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
 import type { ItemStatus } from "@/generated/prisma/enums";
 import type { CommandContext } from "./index";
 
 export async function handleDone(body: string, ctx: CommandContext): Promise<string> {
   if (!body) return "Usage: /done task name";
 
-  const items = await listItems(ctx.userId, { status: "pending" as ItemStatus });
-  const match = items.find((item) =>
-    item.title.toLowerCase().includes(body.toLowerCase())
-  );
+  const open = (await listItems(ctx.userId)).filter((item) => item.status !== "done");
+  const needle = body.toLowerCase();
+  // Prefer an exact title match; otherwise fall back to the first substring match.
+  const match =
+    open.find((item) => item.title.toLowerCase() === needle) ??
+    open.find((item) => item.title.toLowerCase().includes(needle));
 
-  if (!match) return `No pending task matching "${body}"`;
+  if (!match) return `No open task matching "${esc(body)}"`;
 
   await updateItem(match.id, ctx.userId, { status: "done" as ItemStatus });
-  return `Completed: **${match.title}**`;
+  return `Completed: ${b(match.title)}`;
 }
 
 export async function handleToday(ctx: CommandContext): Promise<string> {
   const now = new Date();
-  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: ctx.user.timezone }).format(now);
+  const tz = ctx.user.timezone;
+  const todayStr = todayInTz(tz, now);
 
   const allPending = await listItems(ctx.userId, { status: "pending" as ItemStatus });
 
@@ -31,53 +36,56 @@ export async function handleToday(ctx: CommandContext): Promise<string> {
   );
   const todayReminders = allPending.filter((item) => {
     if (!item.remindAt) return false;
-    const remindDate = new Intl.DateTimeFormat("en-CA", { timeZone: ctx.user.timezone }).format(item.remindAt);
-    return remindDate === todayStr;
+    return formatDateInTz(item.remindAt, tz) === todayStr;
   });
 
   const parts: string[] = [];
 
   if (overdue.length > 0) {
-    parts.push(`*Overdue (${overdue.length})*`);
-    overdue.forEach((item) => parts.push(`• ${item.title} — due ${item.dueDate}`));
+    parts.push(b(`Overdue (${overdue.length})`));
+    overdue.forEach((item) => parts.push(`• ${esc(item.title)} — due ${item.dueDate}`));
   }
 
   if (todayItems.length > 0 || todayReminders.length > 0) {
-    parts.push(`\n*Today (${todayItems.length + todayReminders.length})*`);
+    parts.push(`\n${b(`Today (${todayItems.length + todayReminders.length})`)}`);
     todayItems.forEach((item) => {
       const time = item.dueTime ? ` ${item.dueTime}` : "";
-      parts.push(`•${time} ${item.title}`);
+      parts.push(`•${time} ${esc(item.title)}`);
     });
     todayReminders.forEach((item) => {
-      const time = item.remindAt
-        ? ` ${new Intl.DateTimeFormat("en-US", { timeZone: ctx.user.timezone, hour: "2-digit", minute: "2-digit" }).format(item.remindAt)}`
-        : "";
-      parts.push(`• 🔔${time} ${item.title}`);
+      const time = item.remindAt ? ` ${formatHHmmInTz(item.remindAt, tz)}` : "";
+      parts.push(`• 🔔${time} ${esc(item.title)}`);
     });
   }
 
   if (ctx.user.googleRefreshToken) {
     try {
-      const offsetMs = getTimezoneOffsetMs(ctx.user.timezone, now);
-      const startOfDay = new Date(new Date(`${todayStr}T00:00:00Z`).getTime() - offsetMs);
-      const threeDaysOut = new Date(startOfDay);
-      threeDaysOut.setDate(startOfDay.getDate() + 3);
+      const startOfDay = startOfDayInTz(todayStr, tz);
+      const threeDaysOut = new Date(startOfDay.getTime() + 3 * 86400000);
       const events = await getEvents(
         ctx.user.googleRefreshToken,
         ctx.user.googleCalendarId ?? "primary",
-        startOfDay,
-        threeDaysOut
+        now,
+        threeDaysOut,
+        tz
       );
       const upcoming = events.slice(0, 3);
       if (upcoming.length > 0) {
-        parts.push(`\n*Next up*`);
+        parts.push(`\n${b("Next up")}`);
         upcoming.forEach((e) => {
-          const dateLabel = e.startTime.startsWith(todayStr) ? "Today" : e.startTime.slice(0, 10);
-          parts.push(`• ${dateLabel} ${e.startTime.slice(11, 16)} — ${e.title}`);
+          if (e.allDay) {
+            const dateLabel = e.startTime === todayStr ? "Today" : e.startTime;
+            parts.push(`• ${dateLabel} (all day) — ${esc(e.title)}`);
+            return;
+          }
+          const start = new Date(e.startTime);
+          const dateStr = formatDateInTz(start, tz);
+          const dateLabel = dateStr === todayStr ? "Today" : dateStr;
+          parts.push(`• ${dateLabel} ${formatHHmmInTz(start, tz)} — ${esc(e.title)}`);
         });
       }
-    } catch {
-      // calendar fetch failure is non-fatal
+    } catch (error) {
+      console.error("[commands:/today] calendar fetch failed:", error instanceof Error ? error.message : error);
     }
   }
 
@@ -95,13 +103,7 @@ export async function handleList(body: string, ctx: CommandContext): Promise<str
     .map((item, i) => {
       const icon = item.remindAt ? "🔔" : "📋";
       const due = item.dueDate ? ` (${item.dueDate})` : "";
-      return `${i + 1}. ${icon} ${item.title}${due}`;
+      return `${i + 1}. ${icon} ${esc(item.title)}${due}`;
     })
     .join("\n");
-}
-
-function getTimezoneOffsetMs(timezone: string, date: Date): number {
-  const utcStr = date.toLocaleString("en-US", { timeZone: "UTC" });
-  const tzStr = date.toLocaleString("en-US", { timeZone: timezone });
-  return new Date(tzStr).getTime() - new Date(utcStr).getTime();
 }

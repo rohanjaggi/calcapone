@@ -1,4 +1,4 @@
-import { getOrCreateDevUser } from "@/lib/dev-user";
+import { requireUser } from "@/lib/auth";
 import { listItems } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
@@ -7,7 +7,7 @@ import { SearchDialog } from "@/components/search/search-dialog";
 export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
   const items = await listItems(user.id);
 
   let eventCount = 0;
