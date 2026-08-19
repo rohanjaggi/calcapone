@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "motion/react";
 import { RefreshCw } from "lucide-react";
 import { getAiRecommendation } from "@/app/actions";
@@ -25,7 +25,7 @@ export function AiRecommendation({ items }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const fetchRecommendation = async () => {
+  const fetchRecommendation = useCallback(async () => {
     setLoading(true);
     setError(false);
     try {
@@ -52,22 +52,41 @@ export function AiRecommendation({ items }: Props) {
       setError(true);
     }
     setLoading(false);
-  };
+  }, [items]);
+
+  /** Hash of the item set the current suggestions were computed for. */
+  const lastHash = useRef<string | null>(null);
 
   useEffect(() => {
     const currentHash = computeItemsHash(items);
-    const cachedHash = localStorage.getItem(CACHE_HASH_KEY);
-    const cached = localStorage.getItem(CACHE_KEY);
+    if (lastHash.current === currentHash) return;
+    lastHash.current = currentHash;
 
-    if (cached && cachedHash === currentHash) {
-      try {
-        setPriorities(JSON.parse(cached));
-        setLoading(false);
-        return;
-      } catch {}
+    // localStorage is an external system, so it's read inside the effect — but the state it
+    // produces is applied from a callback rather than synchronously in the effect body,
+    // which would commit a throwaway render first.
+    let cached: string | null = null;
+    try {
+      if (localStorage.getItem(CACHE_HASH_KEY) === currentHash) cached = localStorage.getItem(CACHE_KEY);
+    } catch {
+      // private mode / storage disabled — fall through to a fresh fetch
     }
-    fetchRecommendation();
-  }, [items]);
+
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached) as Priority[];
+        queueMicrotask(() => {
+          setPriorities(parsed);
+          setLoading(false);
+        });
+        return;
+      } catch {
+        // corrupt cache entry — fetch instead
+      }
+    }
+
+    void fetchRecommendation();
+  }, [items, fetchRecommendation]);
 
   if (error && !priorities) return null;
 

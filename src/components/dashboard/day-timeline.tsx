@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Calendar, CheckCircle2, Bell, ArrowRight } from "lucide-react";
 import Link from "next/link";
@@ -13,21 +14,20 @@ function formatTime(iso: string) {
   });
 }
 
-function isNowBetween(time: string, nextTime: string | undefined) {
-  const now = Date.now();
-  const t = new Date(time).getTime();
-  const n = nextTime ? new Date(nextTime).getTime() : t + 3600000;
-  return now >= t && now < n;
+/** `now` is null until after hydration — see DayTimeline. */
+function isPast(time: string, now: number | null) {
+  return now !== null && new Date(time).getTime() < now;
 }
 
-function isPast(time: string) {
-  return new Date(time).getTime() < Date.now();
-}
-
-function getTypeIcon(item: TimelineItem) {
-  if (item.type === "event") return Calendar;
-  if (item.isReminder) return Bell;
-  return CheckCircle2;
+/**
+ * Defined at module scope rather than picked into a local `Icon` during render: binding a
+ * component to a variable inside render makes React treat it as a brand-new component type
+ * on every pass, remounting the subtree instead of updating it.
+ */
+function TypeIcon({ item, className, style }: { item: TimelineItem; className?: string; style?: React.CSSProperties }) {
+  if (item.type === "event") return <Calendar className={className} style={style} />;
+  if (item.isReminder) return <Bell className={className} style={style} />;
+  return <CheckCircle2 className={className} style={style} />;
 }
 
 function getTypeLabel(item: TimelineItem) {
@@ -40,13 +40,14 @@ function TimelineCard({
   item,
   index,
   showNow,
+  now,
 }: {
   item: TimelineItem;
   index: number;
   showNow: boolean;
+  now: number | null;
 }) {
-  const Icon = getTypeIcon(item);
-  const past = isPast(item.time);
+  const past = isPast(item.time, now);
 
   return (
     <>
@@ -90,7 +91,8 @@ function TimelineCard({
 
         <div className="flex-1 min-w-0 bg-card border border-border/50 rounded-lg px-3.5 py-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.03)] active:scale-[0.98] transition-transform duration-150">
           <div className="flex items-center gap-1.5 mb-0.5">
-            <Icon
+            <TypeIcon
+              item={item}
               className="w-3 h-3 shrink-0"
               style={{ color: item.color }}
             />
@@ -114,7 +116,21 @@ function TimelineCard({
 }
 
 export function DayTimeline({ items }: { items: TimelineItem[] }) {
-  let nowInserted = false;
+  /**
+   * "Now" is read after mount, never during render: the server renders at a different
+   * instant (and in a different timezone) than the browser, so reading the clock during
+   * render made the first client paint disagree with the server's HTML.
+   */
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    const id = setTimeout(() => setNow(Date.now()), 0);
+    return () => clearTimeout(id);
+  }, []);
+
+  // The marker sits on the last item already past that is followed by one still to come.
+  const nowIndex = items.findIndex(
+    (item, i) => isPast(item.time, now) && items[i + 1] && !isPast(items[i + 1].time, now)
+  );
 
   return (
     <motion.section
@@ -136,30 +152,18 @@ export function DayTimeline({ items }: { items: TimelineItem[] }) {
       <div className="relative space-y-3">
         <div className="timeline-line" />
 
-        {items.map((item, i) => {
-          let showNow = false;
-          if (!nowInserted) {
-            const nextTime = items[i + 1]?.time;
-            if (isNowBetween(item.time, nextTime) || (!isPast(item.time) && i === 0)) {
-              // Don't show now before first item if first item is in the future
-            }
-            if (isPast(item.time) && items[i + 1] && !isPast(items[i + 1].time)) {
-              showNow = true;
-              nowInserted = true;
-            }
-          }
+        {items.map((item, i) => (
+          <TimelineCard
+            key={item.id}
+            item={item}
+            index={i}
+            showNow={i === nowIndex}
+            now={now}
+          />
+        ))}
 
-          return (
-            <TimelineCard
-              key={item.id}
-              item={item}
-              index={i}
-              showNow={showNow}
-            />
-          );
-        })}
-
-        {!nowInserted && items.length > 0 && items.every((i) => isPast(i.time)) && (
+        {/* Everything is behind us: the marker belongs at the end of the list. */}
+        {nowIndex === -1 && items.length > 0 && items.every((i) => isPast(i.time, now)) && (
           <motion.div
             initial={{ opacity: 0, scaleX: 0 }}
             animate={{ opacity: 1, scaleX: 1 }}

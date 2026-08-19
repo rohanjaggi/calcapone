@@ -4,8 +4,9 @@ const mockReorderCategories = vi.fn();
 const mockMaxSortOrder = vi.fn();
 const mockUpdateItem = vi.fn();
 
-vi.mock("@/lib/dev-user", () => ({
-  getOrCreateDevUser: vi.fn(() => Promise.resolve({ id: "user-1" })),
+vi.mock("@/lib/auth", () => ({
+  requireUser: vi.fn(() => Promise.resolve({ id: "user-1", timezone: "Asia/Singapore" })),
+  getCurrentUser: vi.fn(() => Promise.resolve({ id: "user-1", timezone: "Asia/Singapore" })),
 }));
 
 vi.mock("@/lib/services/category", () => ({
@@ -21,6 +22,7 @@ vi.mock("@/lib/services/item", () => ({
   updateItem: (...args: unknown[]) => mockUpdateItem(...args),
   createItem: vi.fn(),
   listItems: vi.fn(),
+  OPEN_STATUSES: ["pending", "in_progress"],
   deleteItem: vi.fn(),
 }));
 

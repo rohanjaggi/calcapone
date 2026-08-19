@@ -1,24 +1,75 @@
-name: Send Due Reminders
+name: Cron tick (reminders, briefing, weekly digest)
+
+# Why this workflow looks the way it does:
+#
+# - GitHub throttles/delays scheduled workflows that fire every minute, especially under
+#   load: a `* * * * *` schedule (previously run as a 3-way matrix here) got delayed by
+#   5-20 minutes or silently dropped. `*/5 * * * *` is roughly GitHub's realistic floor for
+#   reliable scheduled triggers, and using a single job (no matrix) means only one runner
+#   boots per invocation instead of three. To claw back ~1-minute reminder granularity from
+#   that single runner boot, this job runs an INNER tick loop that calls
+#   /api/cron/reminders five times (t=0s, 60s, 120s, 180s, 240s) within the same run.
+#
+# - GitHub automatically DISABLES scheduled workflows in a repository that has gone 60 days
+#   without any commit activity. If reminders silently stop firing, check whether this
+#   workflow shows as disabled under the repo's Actions tab BEFORE debugging anything else.
 
 on:
   schedule:
-    - cron: '* * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
-  send-reminders:
+  tick:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Trigger reminder cron endpoint
+      - name: Fire cron endpoints
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          response=$(curl -s -L -w "\n%{http_code}" -X POST "${{ secrets.APP_URL }}/api/cron/reminders" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json")
-          http_code=$(echo "$response" | tail -1)
-          body=$(echo "$response" | sed '$d')
-          echo "Status: $http_code"
-          echo "Response: $body"
-          if [ "$http_code" -ne 200 ]; then
-            echo "::error::Cron endpoint returned $http_code"
+          set -u
+
+          # Calls one cron endpoint with retries/timeout, prints status + body,
+          # and returns success/failure via exit code.
+          call() {
+            path="$1"
+            response=$(curl -s -L -X POST "${APP_URL}${path}" \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              -H "Content-Type: application/json" \
+              --retry 3 --retry-all-errors --retry-delay 5 --max-time 60 \
+              -w "\n%{http_code}")
+            http_code=$(echo "$response" | tail -1)
+            body=$(echo "$response" | sed '$d')
+            echo "  [$path] status=$http_code body=$body"
+            [ "$http_code" = "200" ]
+          }
+
+          reminders_total=5
+          reminders_failures=0
+
+          echo "== t=0s: briefing, weekly-digest (once per invocation), reminders =="
+          call "/api/cron/briefing" || echo "::warning::briefing tick failed (once/day endpoint; will retry next invocation)"
+          call "/api/cron/weekly-digest" || echo "::warning::weekly-digest tick failed (once/day endpoint; will retry next invocation)"
+          call "/api/cron/reminders" || reminders_failures=$((reminders_failures + 1))
+
+          for i in 1 2 3 4; do
+            sleep 60
+            echo "== t=${i}x60s: reminders =="
+            call "/api/cron/reminders" || reminders_failures=$((reminders_failures + 1))
+          done
+
+          reminders_ok=$((reminders_total - reminders_failures))
+          echo "Reminders ticks: ${reminders_ok}/${reminders_total} succeeded"
+
+          if [ "$reminders_failures" -gt 0 ] && [ "$reminders_failures" -lt "$reminders_total" ]; then
+            echo "::warning::${reminders_failures}/${reminders_total} reminders ticks failed this run (partial failure, not failing the job)"
+          fi
+
+          if [ "$reminders_failures" -eq "$reminders_total" ]; then
+            echo "::error::All ${reminders_total} reminders ticks failed this run - possible outage"
             exit 1
           fi
+
+          exit 0

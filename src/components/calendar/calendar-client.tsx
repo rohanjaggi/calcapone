@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -15,13 +15,19 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { editItem, removeItemWithGcalSync, deleteGoogleCalendarEvent, editGoogleCalendarEvent } from "@/app/actions";
+import { editItem, removeItemWithGcalSync, deleteGoogleCalendarEvent, editGoogleCalendarEvent, getCalendarMonth } from "@/app/actions";
 import { priorityColors, priorityLabels } from "@/lib/task-constants";
+import { useStreamed } from "@/lib/use-streamed";
 import type { Item } from "@/lib/mock-data";
 import type { Category } from "@/lib/mock-data";
 import type { Priority } from "@/generated/prisma/enums";
 
 type GoogleEvent = { id: string; title: string; startTime: string; endTime: string };
+
+/** Normalised "YYYY-M" key; month may overflow past 11 and is carried into the year. */
+function monthKey(year: number, month: number): string {
+  return `${year + Math.floor(month / 12)}-${((month % 12) + 12) % 12}`;
+}
 
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 const MONTH_NAMES = [
@@ -45,18 +51,62 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 }
 
+export type GoogleCalendarFeed = {
+  events: GoogleEvent[];
+  /** False once we've learned the Google grant is dead — the reconnect prompt keys off this. */
+  connected: boolean;
+};
+
 type Props = {
   items: Item[];
-  googleEvents: GoogleEvent[];
+  /** Streams in after the first paint so Google can't hold up the grid. */
+  googleFeedPromise: Promise<GoogleCalendarFeed>;
+  /** What we believe before the feed lands: the user has a stored refresh token. */
   hasGoogleCalendar: boolean;
   categories: Category[];
 };
 
-export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categories }: Props) {
+export function CalendarClient({ items, googleFeedPromise, hasGoogleCalendar, categories }: Props) {
+  const feed = useStreamed(googleFeedPromise, { events: [], connected: hasGoogleCalendar });
+
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState(today);
+
+  /**
+   * The server prefetches this month and the next. Any month the user navigates to beyond
+   * that is fetched on demand and remembered, so the grid isn't simply empty out there.
+   */
+  const [fetchedEvents, setFetchedEvents] = useState<GoogleEvent[]>([]);
+  const requestedMonths = useRef<Set<string>>(
+    new Set([monthKey(today.getFullYear(), today.getMonth()), monthKey(today.getFullYear(), today.getMonth() + 1)])
+  );
+
+  useEffect(() => {
+    if (!feed.connected) return;
+    const key = monthKey(viewYear, viewMonth);
+    if (requestedMonths.current.has(key)) return;
+    requestedMonths.current.add(key);
+
+    let cancelled = false;
+    getCalendarMonth(viewYear, viewMonth)
+      .then((result) => {
+        if (!cancelled) setFetchedEvents((prev) => [...prev, ...result.events]);
+      })
+      .catch(() => {
+        requestedMonths.current.delete(key); // let a later visit retry
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewYear, viewMonth, feed.connected]);
+
+  const googleEvents = useMemo(() => {
+    const byId = new Map<string, GoogleEvent>();
+    for (const event of [...feed.events, ...fetchedEvents]) byId.set(event.id, event);
+    return [...byId.values()];
+  }, [feed.events, fetchedEvents]);
 
   const router = useRouter();
   const [editingItem, setEditingItem] = useState<Item | null>(null);
@@ -428,7 +478,7 @@ export function CalendarClient({ items, googleEvents, hasGoogleCalendar, categor
       </motion.div>
 
       {/* Google Calendar prompt */}
-      {!hasGoogleCalendar && (
+      {!feed.connected && (
         <motion.div
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}

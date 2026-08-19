@@ -54,3 +54,4 @@ docs/
 !docs/superpowers/
 !docs/superpowers/**
 .superpowers/
+.env*

@@ -46,9 +46,29 @@ export function paramsToRRule(params: RecurrenceParams, dtstart?: Date): string 
   return rule.toString();
 }
 
-export function getNextOccurrence(rruleStr: string, after: Date): Date | null {
-  const rule = RRule.fromString(rruleStr);
-  return rule.after(after);
+/**
+ * Next occurrence strictly after `after`, anchored to `after` as DTSTART when the stored
+ * rule has none (rrule would otherwise default DTSTART to *now* and return "now" for
+ * every daily rule). If `notBefore` is given, skips occurrences that are already in the past.
+ */
+export function getNextOccurrence(rruleStr: string, after: Date, notBefore?: Date): Date | null {
+  let options: Partial<ConstructorParameters<typeof RRule>[0]>;
+  try {
+    options = RRule.parseString(rruleStr);
+  } catch {
+    return null;
+  }
+  const rule = new RRule({ ...options, dtstart: options.dtstart ?? after } as ConstructorParameters<typeof RRule>[0]);
+
+  let next = rule.after(after, false);
+  if (notBefore) {
+    let guard = 0;
+    while (next && next <= notBefore && guard < 1000) {
+      next = rule.after(next, false);
+      guard++;
+    }
+  }
+  return next;
 }
 
 export function describeRecurrence(rruleStr: string): string {

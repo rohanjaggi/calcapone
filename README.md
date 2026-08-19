@@ -7,7 +7,7 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 ### Core
 - **Natural language input** — type freely in Telegram, AI parses intent and takes action
 - **Voice notes** — send a voice message in Telegram and it's transcribed + processed automatically
-- **Slash commands** — `/todo`, `/remind`, `/event`, `/done`, `/today`, `/list` for quick entry
+- **Slash commands** — `/todo`, `/remind`, `/event`, `/done`, `/today`, `/list`, `/timezone` for quick entry
 - **Subtasks** — break tasks into smaller pieces manually or via AI decomposition
 - **Global search** — Cmd+K on web, or ask "find my task about X" in Telegram
 
@@ -56,22 +56,62 @@ npm run dev
 | `DATABASE_URL` | PostgreSQL connection string |
 | `TELEGRAM_BOT_TOKEN` | From @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | Shared secret for webhook validation |
-| `CRON_SECRET` | Bearer token for cron endpoints |
+| `TELEGRAM_USER_ID` | Your Telegram user id — the owner (exempt from the trial cap; dev-bypass user) |
+| `SESSION_SECRET` | ≥32-char secret for signing web session cookies (`openssl rand -hex 32`) |
+| `AUTH_DEV_BYPASS` | Local dev only: `1` signs you in as `TELEGRAM_USER_ID` without Telegram |
+| `CRON_SECRET` | Bearer token for cron/admin endpoints (required — endpoints fail closed without it) |
 | `DEFAULT_AI_PROVIDER` | `openai`, `anthropic`, `gemini`, or `openrouter` |
-| `DEFAULT_AI_API_KEY` | Fallback API key if user hasn't set their own |
-| `DEFAULT_AI_MODEL` | Model ID (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
+| `DEFAULT_AI_API_KEY` | Shared "trial" key for users who haven't set their own (only used with `DEFAULT_AI_PROVIDER`) |
+| `DEFAULT_AI_MODEL` | Model ID (e.g., `gemini-3.7-flash`, `gpt-5.6-terra`, `claude-sonnet-5`) |
+| `TRIAL_DAILY_LIMIT` | AI messages/day for users on the shared key (default 30; owner + BYOK users exempt) |
+| `GEMINI_API_KEY` | Semantic-search embeddings (`gemini-embedding-001`, 768d). Optional — without it *and* `OPENAI_API_KEY`, search falls back to keywords only |
+| `OPENAI_API_KEY` | Voice-note transcription (OpenAI-only), and the embedding fallback (`text-embedding-3-small` at 768d) when `GEMINI_API_KEY` is unset |
+| `TRANSCRIBE_API_KEY` | Optional: a separate OpenAI key for transcription, if you don't want to reuse `OPENAI_API_KEY` |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `ENCRYPTION_KEY` | 32-byte hex key for encrypting stored API keys |
+| `GOOGLE_REDIRECT_URI` | `https://your-domain/api/settings/google/callback` |
+| `ENCRYPTION_KEY` | 32-byte hex key for encrypting stored API keys and Google tokens (AES-256-GCM; also signs OAuth state) |
+| `OAUTH_STATE_SECRET` | Optional: separate secret for signing Google OAuth state (falls back to `ENCRYPTION_KEY`) |
+| `NEXT_PUBLIC_APP_URL` | Public origin, e.g. `https://your-domain.com`. Used to build OAuth redirects and register the webhook — not the `Host` header |
+| `DIRECT_DATABASE_URL` | Optional: unpooled connection for `prisma migrate`. A transaction-mode pooler can't run migrations |
+| `DATABASE_POOL_MAX` | Optional: connections per instance (default 5) |
 
 ### Register the bot
 
-After deploying, hit the registration endpoint once to configure the webhook and commands:
+After deploying, hit the registration endpoint once to configure the webhook, commands, and the menu button (which opens the dashboard as a Telegram Mini App):
 
 ```bash
 curl -X POST https://your-domain.com/api/telegram/register \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
+
+### Login (Telegram Mini App only)
+
+The dashboard is a **Telegram Mini App** — it is not meant to be used as a standalone website. The bot's menu button opens `/login` inside Telegram, which validates `window.Telegram.WebApp.initData` server-side (HMAC) and exchanges it for a signed session cookie (`SESSION_SECRET`, 30 days). Opening the URL in a normal browser shows a "open from Telegram" message and cannot sign in — there is no browser login.
+
+- **Local dev** — set `AUTH_DEV_BYPASS=1` and `TELEGRAM_USER_ID` to work on the dashboard without Telegram.
+
+Telegram **Web** and **Desktop** run Mini Apps in a cross-site iframe, so the session cookie is issued `SameSite=None; Secure` — which means the deployment must be served over HTTPS. Local HTTP development falls back to `SameSite=Lax` (first-party there anyway).
+
+### Trial mode
+
+Anyone can message the bot. Users without their own API key use `DEFAULT_AI_API_KEY` and get `TRIAL_DAILY_LIMIT` AI messages per day (slash commands like `/today` and `/list` don't count). The owner (`TELEGRAM_USER_ID`) and users who add their own key in Settings are unlimited.
+
+### Connecting Google Calendar
+
+Google refuses OAuth inside embedded webviews, so **Connect** opens the consent screen in the
+system browser via `Telegram.WebApp.openLink`. That browser carries none of the Mini App's
+cookies, so the callback is authenticated by the `state` parameter alone: it is HMAC-signed,
+carries the user id, expires after 10 minutes, and its nonce is stored in `oauth_states` and
+deleted on use, so a captured callback URL can't be replayed. The callback finishes on the
+public `/google/done` page, which just tells the user to return to Telegram.
+
+Set `GOOGLE_REDIRECT_URI` to `https://your-domain/api/settings/google/callback` and make sure
+`NEXT_PUBLIC_APP_URL` matches your deployment.
+
+### Database migrations
+
+`prisma/migrations` starts from a baseline (`20260601000000_init`). For a fresh database run `npx prisma migrate deploy`. For an existing database that predates the baseline, mark it applied once: `npx prisma migrate resolve --applied 20260601000000_init`, then `npx prisma migrate deploy`. Semantic search needs the `vector` extension (the migration creates it).
 
 ## Architecture
 
@@ -79,7 +119,7 @@ curl -X POST https://your-domain.com/api/telegram/register \
 Telegram message (text or voice)
   → /api/telegram (webhook)
   → Voice? → OpenAI transcription → text
-  → Slash command? → DB-direct handler (/done, /today, /list)
+  → Slash command? → DB-direct handler (/done, /today, /list, /timezone)
   → Otherwise    → AI chat path (parses intent, calls tools)
                     → conversation history loaded (last 10 msgs, 4h)
                     → execute-tool.ts (CRUD items, calendar, search, decompose)
@@ -89,10 +129,10 @@ Web dashboard
   → Server actions → same service layer
   → Cmd+K search dialog → searchItems service
 
-Cron jobs (external trigger every minute):
-  → /api/cron/briefing       — AI morning summary
+Cron jobs (GitHub Actions hits all three; ticks may be minutes late, endpoints are idempotent):
+  → /api/cron/briefing       — AI morning summary (once/day, within 2h of the chosen time)
   → /api/cron/reminders      — fires due reminders + deadline escalation
-  → /api/cron/weekly-digest  — configurable weekly recap
+  → /api/cron/weekly-digest  — configurable weekly recap (once/day on the chosen weekday)
 ```
 
 ## Telegram Commands
@@ -102,16 +142,17 @@ Cron jobs (external trigger every minute):
 | `/todo buy groceries by Friday` | Creates a task with AI-parsed due date |
 | `/remind take meds daily at 9am` | Sets a recurring reminder |
 | `/event lunch tomorrow noon` | Creates a calendar event |
-| `/done buy groceries` | Marks matching task complete |
+| `/done buy groceries` | Marks matching task complete (asks which, if several match) |
 | `/today` | Shows agenda: overdue, today's tasks, upcoming events |
-| `/list` | Lists all pending items |
+| `/list` | Lists all open items |
+| `/timezone` | Shows your timezone; `/timezone Europe/London` changes it |
 | `/help` | Shows available commands |
 
 You can also just type naturally — "move my dentist appointment to 3pm", "break down my presentation prep", or "find that task about the client meeting" — and the AI handles it. Voice messages work too.
 
 ## AI Tools
 
-The AI has access to 15 tools:
+The AI has access to 14 tools:
 
 | Tool | Purpose |
 |------|---------|

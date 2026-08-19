@@ -6,14 +6,12 @@ import { motion, AnimatePresence } from "motion/react";
 import { ArrowLeft, Bell, Trash2, Plus, ChevronDown, ChevronUp, Pencil, X, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { toggleItemStatus, removeItem, editItem, editCategory, removeCategory } from "@/app/actions";
-import { statusIcon, formatTime, priorityColors, priorityLabels } from "@/lib/task-constants";
+import { statusIcon, formatTime, formatDueDate, priorityColors, priorityLabels } from "@/lib/task-constants";
 import { CreateItemSheet } from "@/components/todos/create-item-sheet";
+import { useToast } from "@/components/ui/toast";
+import { confirmAction } from "@/lib/telegram-webapp";
 import type { Item, Category } from "@/lib/mock-data";
 import type { Priority } from "@/generated/prisma/enums";
-
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 
 function ItemCard({
   item,
@@ -93,7 +91,7 @@ function ItemCard({
             {/* Due date */}
             {item.dueDate && (
               <span className="text-[11px] text-muted-foreground">
-                {formatDate(item.dueDate)}
+                {formatDueDate(item.dueDate)}
               </span>
             )}
 
@@ -187,6 +185,7 @@ type Props = {
 
 export function CategoryDetailClient({ category, items: initialItems }: Props) {
   const router = useRouter();
+  const { notify } = useToast();
   const [items, setItems] = useState(initialItems);
   const [showCreate, setShowCreate] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
@@ -207,19 +206,32 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
   const doneItems = items.filter((i) => i.status === "done");
   const sorted = [...activeItems, ...doneItems];
 
+  // Snapshot before the optimistic write so a rejected action can be undone visibly.
   const handleToggle = async (id: string, current: Item["status"]) => {
     const newStatus = current === "done" ? "pending" : "done";
+    const snapshot = items;
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status: newStatus as Item["status"] } : item))
     );
-    await toggleItemStatus(id, newStatus as "pending" | "done");
-    router.refresh();
+    try {
+      await toggleItemStatus(id, newStatus as "pending" | "done");
+      router.refresh();
+    } catch {
+      setItems(snapshot);
+      notify("Couldn't update that task — please try again.");
+    }
   };
 
   const handleDelete = async (id: string) => {
+    const snapshot = items;
     setItems((prev) => prev.filter((item) => item.id !== id));
-    await removeItem(id);
-    router.refresh();
+    try {
+      await removeItem(id);
+      router.refresh();
+    } catch {
+      setItems(snapshot);
+      notify("Couldn't delete that task — please try again.");
+    }
   };
 
   const openEdit = (item: Item) => {
@@ -234,30 +246,48 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
   const handleEditSave = async () => {
     if (!editingItem || !editTitle.trim()) return;
     setEditSaving(true);
-    await editItem(editingItem.id, {
-      title: editTitle.trim(),
-      description: editDescription.trim() || null,
-      dueDate: editDueDate || null,
-      dueTime: editDueTime || null,
-      priority: editPriority,
-    });
-    setEditSaving(false);
-    setEditingItem(null);
-    router.refresh();
+    try {
+      await editItem(editingItem.id, {
+        title: editTitle.trim(),
+        description: editDescription.trim() || null,
+        dueDate: editDueDate || null,
+        dueTime: editDueTime || null,
+        priority: editPriority,
+      });
+      setEditingItem(null);
+      router.refresh();
+    } catch {
+      notify("Couldn't save those changes — please try again.");
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const handleCategoryRename = async () => {
     if (!catName.trim()) return;
     setCatSaving(true);
-    await editCategory(category.id, { name: catName.trim() });
-    setCatSaving(false);
-    setEditingCategory(false);
-    router.refresh();
+    try {
+      await editCategory(category.id, { name: catName.trim() });
+      setEditingCategory(false);
+      router.refresh();
+    } catch {
+      notify("Couldn't rename this list — please try again.");
+    } finally {
+      setCatSaving(false);
+    }
   };
 
   const handleCategoryDelete = async () => {
-    await removeCategory(category.id);
-    router.push("/todos");
+    // Say what else goes with it — deleting a list cascades to every task in it.
+    const count = items.length;
+    const detail = count === 0 ? "" : ` This also deletes ${count} task${count === 1 ? "" : "s"}.`;
+    if (!(await confirmAction(`Delete "${category.name}"?${detail}`))) return;
+    try {
+      await removeCategory(category.id);
+      router.push("/todos");
+    } catch {
+      notify("Couldn't delete this list — please try again.");
+    }
   };
 
   return (
@@ -309,7 +339,7 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
                     Rename
                   </button>
                   <button
-                    onClick={() => { if (confirm("Delete this category and all its tasks?")) handleCategoryDelete(); setShowCategoryMenu(false); }}
+                    onClick={() => { handleCategoryDelete(); setShowCategoryMenu(false); }}
                     className="w-full px-4 py-2.5 text-left text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-2"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

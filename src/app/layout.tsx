@@ -3,6 +3,7 @@ import { DM_Sans, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 import { NavBar } from "@/components/nav-bar";
+import { ToastProvider } from "@/components/ui/toast";
 
 const dmSans = DM_Sans({
   variable: "--font-dm-sans",
@@ -40,8 +41,10 @@ export default function RootLayout({
       className={`${dmSans.variable} ${geistMono.variable}`}
     >
       <body className="noise-overlay min-h-dvh antialiased">
-        {children}
-        <NavBar />
+        <ToastProvider>
+          {children}
+          <NavBar />
+        </ToastProvider>
         <Analytics />
       </body>
     </html>

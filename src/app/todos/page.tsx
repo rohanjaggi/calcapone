@@ -1,4 +1,4 @@
-import { getOrCreateDevUser } from "@/lib/dev-user";
+import { requireUser } from "@/lib/auth";
 import { listItems } from "@/lib/services/item";
 import { listCategories } from "@/lib/services/category";
 import { TodosClient } from "@/components/todos/todos-client";
@@ -6,7 +6,7 @@ import { TodosClient } from "@/components/todos/todos-client";
 export const dynamic = "force-dynamic";
 
 export default async function TodosPage() {
-  const user = await getOrCreateDevUser();
+  const user = await requireUser();
   const [items, categories] = await Promise.all([
     listItems(user.id),
     listCategories(user.id),

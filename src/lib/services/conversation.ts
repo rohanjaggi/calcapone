@@ -35,6 +35,10 @@ export async function getRecentMessages(
       coalesced.push(msg);
     }
   }
+  // Providers (Anthropic in particular) require the first turn to be from the user.
+  while (coalesced.length > 0 && coalesced[0].role !== "user") {
+    coalesced.shift();
+  }
   return coalesced;
 }
 
@@ -54,10 +58,13 @@ export async function saveMessage(
   });
 }
 
-export async function pruneOldMessages(): Promise<number> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const result = await prisma.message.deleteMany({
-    where: { createdAt: { lt: cutoff } },
-  });
-  return result.count;
+/** Housekeeping for short-lived rows: chat history, webhook dedupe keys, abandoned OAuth flows. */
+export async function pruneOldMessages(now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const [messages] = await Promise.all([
+    prisma.message.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    prisma.telegramUpdate.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    prisma.oAuthState.deleteMany({ where: { expiresAt: { lt: now } } }),
+  ]);
+  return messages.count;
 }

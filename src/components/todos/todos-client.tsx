@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "motion/react";
 import { Bell, Plus, ChevronRight, Inbox, Trash2, Pencil, X, MoreHorizontal, GripVertical } from "lucide-react";
@@ -29,6 +29,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { toggleItemStatus, removeItem, editItem, editCategory, removeCategory, reorderCategoriesAction, moveItemToCategory } from "@/app/actions";
 import { statusIcon, formatTime, priorityColors, priorityLabels } from "@/lib/task-constants";
 import { CreateItemSheet } from "@/components/todos/create-item-sheet";
+import { useToast } from "@/components/ui/toast";
+import { confirmAction } from "@/lib/telegram-webapp";
 import type { Item, Category } from "@/lib/mock-data";
 import type { Priority } from "@/generated/prisma/enums";
 
@@ -52,7 +54,6 @@ function ItemRow({
   const Icon = statusIcon[item.status];
   const isDone = item.status === "done";
   const x = useMotionValue(0);
-  const trashOpacity = useTransform(x, [-80, -40, 0], [1, 0.5, 0]);
   const [swiping, setSwiping] = useState(false);
 
   const bgOpacity = useTransform(x, [-120, -60, 0], [1, 0.8, 0]);
@@ -355,7 +356,7 @@ function CategoryCard({
                         Rename
                       </button>
                       <button
-                        onClick={() => { if (confirm("Delete this category and all its tasks?")) onCategoryDelete(category.id); setShowMenu(false); }}
+                        onClick={() => { setShowMenu(false); onCategoryDelete(category.id); }}
                         className="w-full px-4 py-2.5 text-left text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-2"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -499,15 +500,33 @@ type Props = {
 
 export function TodosClient({ items: initialItems, categories }: Props) {
   const router = useRouter();
+  const { notify } = useToast();
   const [editMode, setEditMode] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeType, setActiveType] = useState<"category" | "item" | null>(null);
   const [localCategories, setLocalCategories] = useState(categories);
   const [localItems, setLocalItems] = useState(initialItems);
   const [showCreate, setShowCreate] = useState(false);
+  /**
+   * State as it was when the drag began. handleDragOver moves the item between categories
+   * live, so by the time handleDragEnd runs there is no un-mutated copy left to roll back
+   * to — snapshotting here is what makes the failure path actually restore anything.
+   */
+  const dragSnapshot = useRef<{ items: Item[]; categories: Category[] } | null>(null);
 
-  useEffect(() => { setLocalCategories(categories); }, [categories]);
-  useEffect(() => { setLocalItems(initialItems); }, [initialItems]);
+  // Re-sync with fresh server data. React's documented "adjusting state when a prop changes"
+  // pattern: doing this during render re-renders immediately with the right value, where an
+  // effect would commit a stale frame first and repaint.
+  const [syncedItems, setSyncedItems] = useState(initialItems);
+  const [syncedCategories, setSyncedCategories] = useState(categories);
+  if (initialItems !== syncedItems) {
+    setSyncedItems(initialItems);
+    setLocalItems(initialItems);
+  }
+  if (categories !== syncedCategories) {
+    setSyncedCategories(categories);
+    setLocalCategories(categories);
+  }
   const [editingItem, setEditingItem] = useState<Item | null>(null);
 
   const [editTitle, setEditTitle] = useState("");
@@ -545,19 +564,33 @@ export function TodosClient({ items: initialItems, categories }: Props) {
   const listedCatIds = new Set(localCategories.map((c) => c.id));
   const orphaned = localItems.filter((item) => !listedCatIds.has(item.category.id));
 
+  // Every optimistic update below snapshots first: without a rollback the list kept showing
+  // a state the server rejected, and nothing told the user their change hadn't been saved.
   const handleToggle = async (id: string, current: Item["status"]) => {
     const newStatus = current === "done" ? "pending" : "done";
+    const snapshot = localItems;
     setLocalItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status: newStatus as Item["status"] } : item))
     );
-    await toggleItemStatus(id, newStatus as "pending" | "done");
-    router.refresh();
+    try {
+      await toggleItemStatus(id, newStatus as "pending" | "done");
+      router.refresh();
+    } catch {
+      setLocalItems(snapshot);
+      notify("Couldn't update that task — please try again.");
+    }
   };
 
   const handleDelete = async (id: string) => {
+    const snapshot = localItems;
     setLocalItems((prev) => prev.filter((item) => item.id !== id));
-    await removeItem(id);
-    router.refresh();
+    try {
+      await removeItem(id);
+      router.refresh();
+    } catch {
+      setLocalItems(snapshot);
+      notify("Couldn't delete that task — please try again.");
+    }
   };
 
   const openEdit = (item: Item) => {
@@ -573,30 +606,56 @@ export function TodosClient({ items: initialItems, categories }: Props) {
   const handleEditSave = async () => {
     if (!editingItem || !editTitle.trim()) return;
     setEditSaving(true);
-    await editItem(editingItem.id, {
-      title: editTitle.trim(),
-      description: editDescription.trim() || null,
-      dueDate: editDueDate || null,
-      dueTime: editDueTime || null,
-      priority: editPriority,
-      categoryId: editCategoryId !== editingItem.category.id ? editCategoryId : undefined,
-    });
-    setEditSaving(false);
-    setEditingItem(null);
-    router.refresh();
+    try {
+      await editItem(editingItem.id, {
+        title: editTitle.trim(),
+        description: editDescription.trim() || null,
+        dueDate: editDueDate || null,
+        dueTime: editDueTime || null,
+        priority: editPriority,
+        categoryId: editCategoryId !== editingItem.category.id ? editCategoryId : undefined,
+      });
+      setEditingItem(null);
+      router.refresh();
+    } catch {
+      notify("Couldn't save those changes — please try again.");
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const handleCategoryRename = async (id: string, name: string) => {
-    await editCategory(id, { name });
-    router.refresh();
+    try {
+      await editCategory(id, { name });
+      router.refresh();
+    } catch {
+      notify("Couldn't rename that list — please try again.");
+      router.refresh();
+    }
   };
 
   const handleCategoryDelete = async (id: string) => {
-    await removeCategory(id);
-    router.refresh();
+    // Say what else goes with it — deleting a list cascades to every task in it.
+    const category = localCategories.find((c) => c.id === id);
+    const count = localItems.filter((item) => item.category.id === id).length;
+    const detail = count === 0 ? "" : ` This also deletes ${count} task${count === 1 ? "" : "s"}.`;
+    if (!(await confirmAction(`Delete "${category?.name ?? "this list"}"?${detail}`))) return;
+
+    const snapshot = { items: localItems, categories: localCategories };
+    setLocalCategories((prev) => prev.filter((c) => c.id !== id));
+    setLocalItems((prev) => prev.filter((item) => item.category.id !== id));
+    try {
+      await removeCategory(id);
+      router.refresh();
+    } catch {
+      setLocalCategories(snapshot.categories);
+      setLocalItems(snapshot.items);
+      notify("Couldn't delete that list — please try again.");
+    }
   };
 
   function handleDragStart(event: DragStartEvent) {
+    dragSnapshot.current = { items: localItems, categories: localCategories };
     setActiveId(event.active.id as string);
     setActiveType(event.active.data.current?.type ?? null);
   }
@@ -640,29 +699,33 @@ export function TodosClient({ items: initialItems, categories }: Props) {
         newIndex = localCategories.findIndex((c) => c.id === over.data.current?.categoryId);
       }
       if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-        const prev = localCategories;
+        const snapshot = dragSnapshot.current;
         const reordered = arrayMove(localCategories, oldIndex, newIndex);
         setLocalCategories(reordered);
         try {
           await reorderCategoriesAction(reordered.map((c) => c.id));
           router.refresh();
         } catch {
-          setLocalCategories(prev);
+          if (snapshot) setLocalCategories(snapshot.categories);
+          router.refresh(); // re-sync with the server; the optimistic order never landed
         }
       }
     } else if (active.data.current?.type === "item") {
       const movedItem = localItems.find((i) => i.id === active.id);
       const originalCatId = initialItems.find((i) => i.id === active.id)?.category.id;
       if (movedItem && originalCatId && movedItem.category.id !== originalCatId) {
-        const prev = localItems;
+        const snapshot = dragSnapshot.current;
         try {
           await moveItemToCategory(movedItem.id, movedItem.category.id);
           router.refresh();
         } catch {
-          setLocalItems(prev);
+          if (snapshot) setLocalItems(snapshot.items);
+          router.refresh();
         }
       }
     }
+
+    dragSnapshot.current = null;
   }
 
   return (

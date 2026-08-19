@@ -26,6 +26,10 @@ model User {
   aiProvider          AiProvider? @map("ai_provider")
   aiApiKey           String?     @map("ai_api_key")
   aiModel            String?     @map("ai_model")
+  lastBriefingSentOn  String?     @map("last_briefing_sent_on")
+  lastDigestSentOn    String?     @map("last_digest_sent_on")
+  aiCallsDate         String?     @map("ai_calls_date")
+  aiCallsCount        Int         @default(0) @map("ai_calls_count")
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -69,6 +73,7 @@ model Category {
   color     String?
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   items Item[]
@@ -96,12 +101,17 @@ model Item {
   parent      Item?         @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
   subtasks    Item[]        @relation("Subtasks")
   notificationStage Int    @default(0) @map("notification_stage")
+  embedding   Unsupported("vector(768)")?
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
+  @@index([remindAt, status])
+  @@index([userId, status, dueDate])
+  @@index([parentId])
+  @@index([userId, categoryId])
   @@map("items")
 }
 
@@ -116,5 +126,27 @@ model Message {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, chatId, createdAt])
+  // pruneOldMessages filters on createdAt alone, which the composite index above can't serve.
+  @@index([createdAt])
   @@map("messages")
+}
+
+model TelegramUpdate {
+  updateId  BigInt   @id @map("update_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([createdAt])
+  @@map("telegram_updates")
+}
+
+/// Single-use nonces for in-flight Google OAuth flows. The row is deleted when the callback
+/// consumes it, so a captured callback URL can't be replayed; expired rows are pruned by cron.
+model OAuthState {
+  nonce     String   @id
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([expiresAt])
+  @@map("oauth_states")
 }
