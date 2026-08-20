@@ -1,5 +1,6 @@
 "use client";
 
+import { Children, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -36,6 +37,31 @@ type Props = {
     digestTime: string;
   };
 };
+
+/**
+ * Entry choreography for the settings list. Each row fades and rises on the same curve, offset
+ * by its position, so the page assembles top-down.
+ *
+ * The stagger is derived from child order rather than written onto each row: rows used to carry
+ * their own `delay`, and the cards animated themselves on top of that, so every addition was a
+ * chance to pick a number that didn't match. Anything dropped into the list below is now animated
+ * by virtue of being in it — which is also why the cards themselves are plain, unanimated divs.
+ */
+function StaggeredRows({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-5 mt-5 space-y-4">
+      {Children.map(children, (row, i) => (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.06 + i * 0.06 }}
+        >
+          {row}
+        </motion.div>
+      ))}
+    </div>
+  );
+}
 
 export function SettingsClient({ settings }: Props) {
   const router = useRouter();
@@ -91,96 +117,65 @@ export function SettingsClient({ settings }: Props) {
           </h1>
         </div>
       </motion.header>
-      <div className="px-5 mt-5 space-y-4">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.06 }}
+      <StaggeredRows>
+        <AiProviderForm
+          currentProvider={settings.aiProvider}
+          currentModel={settings.aiModel}
+          hasApiKey={settings.hasAiApiKey}
+          onSave={handleSaveAi}
+        />
+        <TimezoneSelect
+          currentTimezone={settings.timezone}
+          onSave={handleSaveTimezone}
+        />
+        <NotificationsConfig
+          briefingEnabled={settings.briefingEnabled}
+          briefingTime={settings.briefingTime}
+          weeklyDigestEnabled={settings.weeklyDigestEnabled}
+          aiSuggestionEnabled={settings.aiSuggestionEnabled}
+          quietStart={settings.quietStart}
+          quietEnd={settings.quietEnd}
+          notifyMinPriority={settings.notifyMinPriority}
+          digestDay={settings.digestDay}
+          digestTime={settings.digestTime}
+          onSave={handleSaveNotifications}
+        />
+        <GoogleCalendarCard
+          isConnected={settings.hasGoogleCalendar}
+          calendarId={settings.googleCalendarId}
+          onConnect={handleConnectGoogle}
+          onDisconnect={handleDisconnectGoogle}
+        />
+        <Link
+          href="/how-to-use"
+          className="flex items-center gap-2 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3 group transition-colors hover:bg-secondary/30"
         >
-          <AiProviderForm
-            currentProvider={settings.aiProvider}
-            currentModel={settings.aiModel}
-            hasApiKey={settings.hasAiApiKey}
-            onSave={handleSaveAi}
-          />
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.12 }}
-        >
-          <TimezoneSelect
-            currentTimezone={settings.timezone}
-            onSave={handleSaveTimezone}
-          />
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.18 }}
-        >
-          <NotificationsConfig
-            briefingEnabled={settings.briefingEnabled}
-            briefingTime={settings.briefingTime}
-            weeklyDigestEnabled={settings.weeklyDigestEnabled}
-            aiSuggestionEnabled={settings.aiSuggestionEnabled}
-            quietStart={settings.quietStart}
-            quietEnd={settings.quietEnd}
-            notifyMinPriority={settings.notifyMinPriority}
-            digestDay={settings.digestDay}
-            digestTime={settings.digestTime}
-            onSave={handleSaveNotifications}
-          />
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.24 }}
-        >
-          <GoogleCalendarCard
-            isConnected={settings.hasGoogleCalendar}
-            calendarId={settings.googleCalendarId}
-            onConnect={handleConnectGoogle}
-            onDisconnect={handleDisconnectGoogle}
-          />
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.3 }}
-        >
-          <Link
-            href="/how-to-use"
-            className="flex items-center gap-3 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3.5 group transition-colors hover:bg-secondary/30"
-          >
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-              <HelpCircle className="w-4.5 h-4.5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground">How To Use</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Learn how to get the most out of CalCapone
-              </p>
-            </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0" />
-          </Link>
-        </motion.div>
-
-        <form action="/api/auth/logout" method="post" className="px-0">
+          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <HelpCircle className="w-3.5 h-3.5 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground">How To Use</p>
+            <p className="text-[11px] text-muted-foreground">
+              Learn how to get the most out of CalCapone
+            </p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0" />
+        </Link>
+        <form action="/api/auth/logout" method="post">
           <button
             type="submit"
-            className="w-full flex items-center gap-3 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3.5 text-left transition-colors hover:bg-secondary/30"
+            className="w-full flex items-center gap-2 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3 text-left transition-colors hover:bg-secondary/30"
           >
-            <div className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
-              <LogOut className="w-4.5 h-4.5 text-destructive" />
+            <div className="w-7 h-7 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+              <LogOut className="w-3.5 h-3.5 text-destructive" />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground">Log out</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Sign out of this device</p>
+              <p className="text-[11px] text-muted-foreground">Sign out of this device</p>
             </div>
           </button>
         </form>
-      </div>
+      </StaggeredRows>
     </main>
   );
 }

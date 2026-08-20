@@ -25,6 +25,14 @@ export const maxDuration = 60;
  */
 const RESYNC_THRESHOLD_MS = 4 * 60 * 1000;
 
+/**
+ * How much of this invocation the sync loop may spend before the rest of the users wait for
+ * the next tick. One user with a huge calendar would otherwise eat the whole 60s and take
+ * every other user's sync — and the event reminders below, which are time-critical — down
+ * with it. Deferred users are left unclaimed, so the next tick picks them up first.
+ */
+const SYNC_BUDGET_MS = 40 * 1000;
+
 export async function POST(request: NextRequest) {
   if (!isAuthorizedCronRequest(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -36,6 +44,7 @@ export async function POST(request: NextRequest) {
   let reminded = 0;
   let errors = 0;
   let blocked = 0;
+  let deferred = 0;
 
   const users = await prisma.user.findMany({
     where: { googleRefreshToken: { not: null } },
@@ -45,6 +54,29 @@ export async function POST(request: NextRequest) {
     if (user.lastCalendarSyncAt && now.getTime() - user.lastCalendarSyncAt.getTime() < RESYNC_THRESHOLD_MS) {
       continue;
     }
+
+    if (Date.now() - now.getTime() > SYNC_BUDGET_MS) {
+      deferred++;
+      continue;
+    }
+
+    // Claim the user before syncing, not after. syncUserCalendar writes lastCalendarSyncAt at
+    // the very end, so the gate above lets two overlapping invocations both start on the same
+    // user, both read the same stale sync token and both send the same conflict prompt with
+    // its own set of buttons. Same claim-before-send shape as the reminder paths.
+    const claimed = await prisma.user.updateMany({
+      where: {
+        id: user.id,
+        OR: [
+          { lastCalendarSyncAt: null },
+          { lastCalendarSyncAt: { lt: new Date(now.getTime() - RESYNC_THRESHOLD_MS) } },
+        ],
+      },
+      data: { lastCalendarSyncAt: now },
+    });
+    // A failed sync isn't lost work — the sync token only advances on success, so the claim
+    // just holds this user until the next tick rather than needing to be released.
+    if (claimed.count === 0) continue;
 
     try {
       const result = await syncUserCalendar(
@@ -103,7 +135,9 @@ export async function POST(request: NextRequest) {
           quietEnd: null,
           timezone: reminder.timezone,
         };
-        if (isQuietHours(quietUser, now)) continue; // left unclaimed — retried once quiet hours end
+        // Left unclaimed, so a later tick retries it — findDueEventReminders keeps an event due
+        // for a grace period past its start precisely so this deferral can't swallow the ping.
+        if (isQuietHours(quietUser, now)) continue;
 
         if (!(await claimEventReminder(reminder.eventId, now))) continue; // another tick got there first
 
@@ -126,7 +160,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ synced, conflicts, reminded, errors, blocked });
+  return NextResponse.json({ synced, conflicts, reminded, errors, blocked, deferred });
 }
 
 /**

@@ -125,7 +125,7 @@ describe("resolveConflict", () => {
   });
 
   describe("side: mine", () => {
-    it("pushes the item's title and due window to Google, then stamps calendarSyncedAt", async () => {
+    it("pushes the item's title and due window to Google, then records the agreement", async () => {
       mockPrisma.item.findFirst.mockResolvedValue(item());
       mockCalendar.updateEvent.mockResolvedValue({});
       mockPrisma.item.updateMany.mockResolvedValue({ count: 1 });
@@ -139,9 +139,12 @@ describe("resolveConflict", () => {
         { title: "Buy milk", startTime: "2026-08-25T14:30:00", endTime: "2026-08-25T15:30:00" },
         "Asia/Singapore"
       );
+      // Both stamps land on the same instant. Left to @updatedAt the item would come back out
+      // of the database newer than the agreement it just recorded, so the next sync would see
+      // "changed on both sides" again and re-raise the conflict this button just settled.
       expect(mockPrisma.item.updateMany).toHaveBeenCalledWith({
         where: { id: "i1", userId: "u1" },
-        data: { calendarSyncedAt: now },
+        data: { calendarSyncedAt: now, updatedAt: now },
       });
       expect(result).toEqual({
         ok: true,
@@ -211,7 +214,12 @@ describe("resolveConflict", () => {
         title: "Team standup",
         dueDate: "2026-08-20",
         dueTime: "04:30",
-        calendarSyncedAt: now,
+      });
+      // The agreement is recorded after that write, with both stamps on the same instant —
+      // @updatedAt lands after `now`, which would leave the pair looking locally changed.
+      expect(mockPrisma.item.updateMany).toHaveBeenCalledWith({
+        where: { id: "i1", userId: "u1" },
+        data: { calendarSyncedAt: now, updatedAt: now },
       });
       expect(result).toEqual({
         ok: true,
@@ -231,7 +239,6 @@ describe("resolveConflict", () => {
         title: "Team standup",
         dueDate: "2026-08-20",
         dueTime: null,
-        calendarSyncedAt: now,
       });
       expect(result).toEqual({
         ok: true,

@@ -51,6 +51,7 @@ function event(overrides: Partial<SyncedEvent> = {}): SyncedEvent {
     startsAt: new Date("2026-08-20T12:00:00.000Z"),
     endsAt: new Date("2026-08-20T12:30:00.000Z"),
     allDay: false,
+    allDayDate: null,
     transparent: false,
     googleUpdatedAt: new Date("2026-08-20T09:00:00.000Z"),
     cancelled: false,
@@ -205,8 +206,69 @@ describe("syncUserCalendar", () => {
         dueDate: "2026-08-20",
         dueTime: "20:00", // Asia/Singapore is UTC+8
         calendarSyncedAt: NOW,
+        updatedAt: NOW,
       },
     });
+  });
+
+  it("leaves the item and its event in agreement, so the next Google-only edit isn't a conflict", async () => {
+    // The bug this covers: Prisma stamps @updatedAt at write time, so an item whose reconcile
+    // didn't set updatedAt itself comes back out of the database *newer* than the
+    // calendarSyncedAt that same write recorded — the local half of the conflict test is then
+    // permanently true and every later Google-side edit raises a conflict the user never caused.
+    const first = event({ googleUpdatedAt: new Date("2026-08-20T09:00:00.000Z") });
+    mockCalendar.listEventChanges.mockResolvedValue({ events: [first], nextSyncToken: "tok-2", fullResync: false });
+    mockPrisma.item.findFirst.mockResolvedValue({
+      id: "item-1",
+      title: "Standup",
+      updatedAt: new Date("2026-08-18T00:00:00.000Z"),
+      calendarSyncedAt: new Date("2026-08-19T00:00:00.000Z"),
+    });
+
+    await syncUserCalendar(baseUser, NOW);
+
+    // Replay what the database would hold afterwards: the fields the write set, plus @updatedAt
+    // landing a few ms later whenever the write didn't set it explicitly.
+    const written = mockPrisma.item.updateMany.mock.calls[0][0].data;
+    const writeLandedAt = new Date(NOW.getTime() + 3);
+    mockPrisma.item.findFirst.mockResolvedValue({
+      id: "item-1",
+      title: written.title,
+      updatedAt: written.updatedAt ?? writeLandedAt,
+      calendarSyncedAt: written.calendarSyncedAt,
+    });
+
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const googleEdit = event({ googleUpdatedAt: new Date(NOW.getTime() + 30 * 60 * 1000) });
+    mockCalendar.listEventChanges.mockResolvedValue({ events: [googleEdit], nextSyncToken: "tok-3", fullResync: false });
+
+    const result = await syncUserCalendar(baseUser, later);
+
+    expect(result.conflicts).toEqual([]);
+  });
+
+  it("dates an all-day event by the calendar's own day, not the user's timezone", async () => {
+    // All-day 2026-08-21 on a UTC+8 calendar is 2026-08-20T16:00Z, which is still the 20th for
+    // a New York user — re-deriving the date from the instant lands the task a day early.
+    const allDay = event({
+      allDay: true,
+      startsAt: new Date("2026-08-20T16:00:00.000Z"),
+      endsAt: new Date("2026-08-21T16:00:00.000Z"),
+      allDayDate: "2026-08-21",
+    });
+    mockCalendar.listEventChanges.mockResolvedValue({ events: [allDay], nextSyncToken: "tok-2", fullResync: false });
+    mockPrisma.item.findFirst.mockResolvedValue({
+      id: "item-1",
+      title: "Standup",
+      updatedAt: new Date("2026-08-18T00:00:00.000Z"),
+      calendarSyncedAt: new Date("2026-08-19T00:00:00.000Z"),
+    });
+
+    await syncUserCalendar({ ...baseUser, timezone: "America/New_York" }, NOW);
+
+    expect(mockPrisma.item.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ dueDate: "2026-08-21", dueTime: null }) })
+    );
   });
 
   it("treats a never-synced item (calendarSyncedAt null) as having nothing to conflict with", async () => {

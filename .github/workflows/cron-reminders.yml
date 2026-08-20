@@ -23,6 +23,15 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
+# A delayed run (see above) can start while the previous one is still inside its 5-minute inner
+# loop, and two overlapping ticks hitting /api/cron/sync would both read the same sync cursor
+# and send the same calendar-conflict prompt twice. `cancel-in-progress: false` because the run
+# already in flight is the one holding a tick loop mid-way through its reminders — cancelling it
+# would drop pings it is the only chance to send.
+concurrency:
+  group: cron-tick
+  cancel-in-progress: false
+
 jobs:
   tick:
     runs-on: ubuntu-latest

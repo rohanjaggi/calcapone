@@ -83,9 +83,25 @@ describe("findDueEventReminders", () => {
     expect(due).toEqual([]);
   });
 
-  it("excludes events that have already started", async () => {
+  it("keeps an event due just past its start, so a ping held back by quiet hours still lands", async () => {
+    // The ping is deferred (left unclaimed) for every tick inside quiet hours. If "due" ended
+    // at the start time, an event that begins during quiet hours would drop out of the query
+    // before the first tick that is allowed to send it — the reminder lost, not delayed.
     mockPrisma.calendarEvent.findMany.mockResolvedValue([
-      event({ startsAt: new Date(NOW.getTime() - 60_000) }),
+      event({ startsAt: new Date(NOW.getTime() - 5 * 60_000) }),
+    ]);
+    const due = await findDueEventReminders(NOW);
+    expect(due).toHaveLength(1);
+    expect(formatEventReminder(due[0].title, due[0].minutesUntil)).toBe("📅 <b>Standup</b> starts now");
+
+    // The query itself has to reach past `now` too, or the row never comes back to be filtered.
+    const where = mockPrisma.calendarEvent.findMany.mock.calls[0][0].where;
+    expect(where.startsAt.gt.getTime()).toBeLessThan(NOW.getTime());
+  });
+
+  it("excludes an event that started long enough ago for the ping to be stale", async () => {
+    mockPrisma.calendarEvent.findMany.mockResolvedValue([
+      event({ startsAt: new Date(NOW.getTime() - 3 * 60 * 60_000) }),
     ]);
     const due = await findDueEventReminders(NOW);
     expect(due).toEqual([]);

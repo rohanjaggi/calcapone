@@ -68,13 +68,27 @@ export function resolveAiClient(config: AiConfig): ResolvedConfig {
  * network call, instead of three copies tangled into the request builder.
  * ------------------------------------------------------------------------- */
 
-export type ToolCall = { id: string; name: string; args: Record<string, unknown> };
+export type ToolCall = {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  /**
+   * True when `id` above is our own stand-in rather than something the provider gave us.
+   * Anthropic and OpenAI always mint a real one, so this stays unset for them; only Gemini's
+   * adapter ever sets it, and only when the model didn't include an id on the call.
+   */
+  idIsSynthetic?: boolean;
+};
 
 /** An image attached to a user turn — a screenshot of a timetable, a photo of a poster. */
 export type ImageInput = { mimeType: string; base64: string };
 
-/** `name` rides alongside `id` because Gemini matches responses by name, not by id. */
-export type ToolResult = { id: string; name: string; content: string };
+/**
+ * `name` rides alongside `id` because Gemini only sometimes mints an id for a call — when it
+ * did, echoing it back is what disambiguates two parallel calls to the same tool; when it
+ * didn't, `name` is all there is to match on. See `idIsSynthetic`.
+ */
+export type ToolResult = { id: string; name: string; content: string; idIsSynthetic?: boolean };
 
 export type Turn =
   | { role: "user"; content: string; images?: ImageInput[] }
@@ -215,7 +229,9 @@ async function callAnthropic({ apiKey, model, system, turns, tools }: AdapterInp
 
   const response = await client.messages.create({
     model,
-    max_tokens: 1024,
+    // 1024 was tight enough that several parallel tool calls (a syllabus photo's worth of
+    // create_item args, say) could run out mid-JSON — see the truncation check below.
+    max_tokens: 4096,
     system,
     messages,
     ...(tools
@@ -228,6 +244,14 @@ async function callAnthropic({ apiKey, model, system, turns, tools }: AdapterInp
         }
       : {}),
   });
+
+  // A response cut off mid-tool-call leaves its last block with incomplete input — e.g. a
+  // reminder missing remind_at — and executing that as-is silently does the wrong thing.
+  // Refuse rather than guess: fail loudly instead of handing a truncated call to the caller.
+  const lastBlock = response.content[response.content.length - 1];
+  if (response.stop_reason === "max_tokens" && lastBlock?.type === "tool_use") {
+    throw new Error("The model's response was cut off before it finished a tool call.");
+  }
 
   const textBlocks = response.content.filter((block): block is Anthropic.TextBlock => block.type === "text");
   const toolBlocks = response.content.filter((block): block is Anthropic.ToolUseBlock => block.type === "tool_use");
@@ -261,14 +285,20 @@ async function callGemini({ apiKey, model, system, turns, tools }: AdapterInput)
     } else if (turn.role === "assistant") {
       const parts: GeminiPart[] = [
         ...(turn.text ? [{ text: turn.text }] : []),
-        ...turn.toolCalls.map((tc) => ({ functionCall: { name: tc.name, args: tc.args } })),
+        ...turn.toolCalls.map((tc) => ({
+          // Replay the id the model actually gave, so a later round can still tell two
+          // parallel calls to the same tool apart. A synthetic id isn't the model's to echo.
+          functionCall: { name: tc.name, args: tc.args, ...(tc.idIsSynthetic ? {} : { id: tc.id }) },
+        })),
       ];
       if (parts.length > 0) contents.push({ role: "model", parts });
     } else {
       contents.push({
         role: "user",
         parts: turn.results.map((r) => ({
-          functionResponse: { name: r.name, response: { result: r.content } },
+          // Send id back only when it's the provider's own — two parallel calls to the same
+          // tool need it to disambiguate, but a made-up id would just misrepresent one as read.
+          functionResponse: { name: r.name, ...(r.idIsSynthetic ? {} : { id: r.id }), response: { result: r.content } },
         })),
       });
     }
@@ -301,9 +331,12 @@ async function callGemini({ apiKey, model, system, turns, tools }: AdapterInput)
     toolCalls: functionCalls.map((fc, index) => ({
       // Gemini does not always mint a call id, but the thread needs a stable one to pair
       // the result back against — the position in the turn is unique and reproducible.
+      // `idIsSynthetic` remembers which case this was, so the stand-in is never echoed back
+      // to the provider as if it were one Gemini recognizes.
       id: fc.id ?? `${fc.name}-${index}`,
       name: fc.name!,
       args: (fc.args ?? {}) as Record<string, unknown>,
+      ...(fc.id ? {} : { idIsSynthetic: true as const }),
     })),
   };
 }
@@ -366,6 +399,10 @@ export async function chatWithAi(
 /** Three rounds answers "find X and reschedule it" without letting a confused model spin. */
 export const DEFAULT_MAX_STEPS = 3;
 
+/** Shown in place of a genuinely empty reply — e.g. a safety filter blocking the completion —
+ * so the caller always has something non-empty to send instead of silent nothing. */
+const EMPTY_REPLY_FALLBACK = "Sorry, I couldn't come up with a response to that. Could you try rephrasing?";
+
 export type AgentCall = { call: ToolCall; outcome: ToolOutcome };
 
 export type AgentRun = {
@@ -378,6 +415,12 @@ export type AgentRun = {
    * guessing. `steps` means the budget ran out with tools still in flight.
    */
   stop: "answered" | "choose" | "steps";
+  /**
+   * How many times a provider was actually called. One user message is up to `maxSteps` of
+   * them, so a per-message quota undercounts what the key paid for — the caller settles the
+   * difference against the trial budget.
+   */
+  modelCalls: number;
 };
 
 type RunAgentOptions = {
@@ -415,13 +458,19 @@ export async function runAgent(
 
   const turns = toTurns(history, userMessage, options.images);
   const calls: AgentCall[] = [];
+  let modelCalls = 0;
 
   for (let step = 0; step < maxSteps; step++) {
     if (step > 0) options.onStep?.();
 
     const reply = await adapter({ apiKey, model, system, turns, tools: true });
+    modelCalls++;
     if (reply.toolCalls.length === 0) {
-      return { text: reply.text, calls, stop: "answered" };
+      // A provider's safety filter can return neither text nor a tool call. Returning "" here
+      // would pass the caller's `if (text.trim())` guard silently — the user watches the
+      // typing indicator, spends a quota message, and gets nothing back at all.
+      const text = reply.text.trim() ? reply.text : EMPTY_REPLY_FALLBACK;
+      return { text, calls, stop: "answered", modelCalls };
     }
 
     turns.push({ role: "assistant", text: reply.text, toolCalls: reply.toolCalls });
@@ -439,14 +488,19 @@ export async function runAgent(
       }
       calls.push({ call, outcome });
       if (outcome.choose) needsChoice = true;
-      results.push({ id: call.id, name: call.name, content: outcome.text ?? "Done." });
+      results.push({
+        id: call.id,
+        name: call.name,
+        content: outcome.text ?? "Done.",
+        idIsSynthetic: call.idIsSynthetic,
+      });
     }
 
     turns.push({ role: "tool", results });
 
-    if (needsChoice) return { text: reply.text, calls, stop: "choose" };
-    if (step === maxSteps - 1) return { text: reply.text, calls, stop: "steps" };
+    if (needsChoice) return { text: reply.text, calls, stop: "choose", modelCalls };
+    if (step === maxSteps - 1) return { text: reply.text, calls, stop: "steps", modelCalls };
   }
 
-  return { text: "", calls, stop: "steps" };
+  return { text: "", calls, stop: "steps", modelCalls };
 }

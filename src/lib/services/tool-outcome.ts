@@ -34,6 +34,8 @@ export type ItemSnapshot = {
   notificationStage?: number;
   kind?: ItemKind;
   courseId?: string | null;
+  /** Which repeating run the item belongs to — dropping it orphans a restored occurrence. */
+  seriesId?: string | null;
 };
 
 export type EventSnapshot = {

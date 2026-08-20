@@ -309,10 +309,68 @@ describe("action-log", () => {
 
         const result = await undoLast(user, now);
 
-        expect(result).toEqual({ ok: true, summary: "Un-decomposed <b>Plan trip</b>" });
+        // A partial recovery is still a success (the claim stands), but the receipt has to
+        // say so honestly rather than implying all three members came back.
+        expect(result).toEqual({ ok: true, summary: "Un-decomposed <b>Plan trip</b> (restored 2 of 3)" });
         expect(mockPrisma.item.deleteMany).toHaveBeenNthCalledWith(1, { where: { id: "sub1", userId: "u1" } });
         expect(mockPrisma.item.deleteMany).toHaveBeenNthCalledWith(2, { where: { id: "sub2", userId: "u1" } });
         expect(mockPrisma.item.deleteMany).toHaveBeenNthCalledWith(3, { where: { id: "sub3", userId: "u1" } });
+      });
+
+      it("does not mention a restore count when every member succeeds", async () => {
+        mockPrisma.actionLog.findFirst.mockResolvedValue({
+          id: "log1",
+          summary: "Un-decomposed <b>Plan trip</b>",
+          inverse: {
+            op: "sequence",
+            ops: [
+              { op: "delete_item", itemId: "sub1" },
+              { op: "delete_item", itemId: "sub2" },
+            ],
+          },
+        });
+        mockPrisma.actionLog.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.item.deleteMany.mockResolvedValue({ count: 1 });
+
+        const result = await undoLast(user, now);
+
+        expect(result).toEqual({ ok: true, summary: "Un-decomposed <b>Plan trip</b>" });
+      });
+
+      // CRITICAL 05: deleting a 5-item series then its category, then undoing, used to
+      // recreate 2 of 5 items, fail the other 3 on the now-missing category FK, and still
+      // report "Undid: deleted every Take meds" — three items gone with nothing said about it.
+      it("reports an honest partial recovery when a series undo loses members to a foreign-key failure", async () => {
+        mockPrisma.actionLog.findFirst.mockResolvedValue({
+          id: "log1",
+          summary: "deleted every <b>Take meds</b>",
+          inverse: {
+            op: "sequence",
+            ops: [
+              { op: "recreate_item", itemId: "i1", data: { title: "Take meds", categoryId: "c1" } },
+              { op: "recreate_item", itemId: "i2", data: { title: "Take meds", categoryId: "c1" } },
+              { op: "recreate_item", itemId: "i3", data: { title: "Take meds", categoryId: "c1" } },
+              { op: "recreate_item", itemId: "i4", data: { title: "Take meds", categoryId: "c1" } },
+              { op: "recreate_item", itemId: "i5", data: { title: "Take meds", categoryId: "c1" } },
+            ],
+          },
+        });
+        mockPrisma.actionLog.updateMany.mockResolvedValue({ count: 1 });
+        const fkViolation = { code: "P2003" };
+        mockPrisma.item.create
+          .mockResolvedValueOnce({ id: "i1" })
+          .mockRejectedValueOnce(fkViolation)
+          .mockRejectedValueOnce(fkViolation)
+          .mockRejectedValueOnce(fkViolation)
+          .mockResolvedValueOnce({ id: "i5" });
+
+        const result = await undoLast(user, now);
+
+        expect(result).toEqual({
+          ok: true,
+          summary: "deleted every <b>Take meds</b> (restored 2 of 5)",
+        });
+        expect(mockPrisma.item.create).toHaveBeenCalledTimes(5);
       });
 
       it("rethrows (and rolls back the claim) only when every member fails", async () => {

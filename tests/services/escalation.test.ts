@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ladderFor, nextEscalation, MAX_ESCALATION_STAGE } from "@/lib/services/escalation";
+import { ladderFor, nextEscalation, MAX_ESCALATION_STAGE, ESCALATION_KINDS } from "@/lib/services/escalation";
 
 describe("MAX_ESCALATION_STAGE", () => {
   it("equals the longest ladder", () => {
@@ -11,6 +11,23 @@ describe("MAX_ESCALATION_STAGE", () => {
     );
     expect(MAX_ESCALATION_STAGE).toBe(longest);
     expect(MAX_ESCALATION_STAGE).toBe(4);
+  });
+});
+
+// MEDIUM 35: the escalation candidate query used to bound every kind on MAX_ESCALATION_STAGE
+// (4, exam's ladder), so a task or class — whose ladder tops out at 3 — never dropped out of
+// the scan once exhausted. getEscalationCandidates (src/lib/services/item.ts) now bounds each
+// kind on its own ladder length via ESCALATION_KINDS instead.
+describe("ESCALATION_KINDS", () => {
+  it("lists every kind that has a ladder, each shorter than or equal to the shared max", () => {
+    expect([...ESCALATION_KINDS].sort()).toEqual(["assignment", "class", "exam", "task"]);
+    for (const kind of ESCALATION_KINDS) {
+      expect(ladderFor(kind).length).toBeLessThanOrEqual(MAX_ESCALATION_STAGE);
+    }
+  });
+
+  it("a task's ladder is strictly shorter than the shared max — the exact case that used to never retire", () => {
+    expect(ladderFor("task").length).toBeLessThan(MAX_ESCALATION_STAGE);
   });
 });
 

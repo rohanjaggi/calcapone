@@ -61,6 +61,31 @@ export async function checkAndConsumeTrialQuota(user: TrialUser, now: Date = new
   return { allowed: false, limit };
 }
 
+/**
+ * The gate above charges one call up front, because it has to decide before any provider is
+ * hit. A single message is really up to `DEFAULT_MAX_STEPS` calls though, and an image costs
+ * far more per call than text — so the rest is settled once the run is over. Going over the
+ * limit mid-message is allowed; the next message's gate catches it. Guarded on today's date so
+ * a run spanning midnight can't charge the new day for yesterday's work.
+ */
+export async function chargeExtraTrialCalls(
+  user: TrialUser,
+  extra: number,
+  now: Date = new Date()
+): Promise<void> {
+  if (user.aiApiKey || isOwner(user.telegramId)) return;
+  if (!Number.isFinite(extra) || extra <= 0) return;
+
+  const today = todayInTz(user.timezone, now);
+  await prisma.user.updateMany({
+    where: { id: user.id, aiCallsDate: today },
+    data: { aiCallsCount: { increment: Math.floor(extra) } },
+  });
+}
+
+/** An image costs several times a text call on the same budget, so it carries a surcharge. */
+export const IMAGE_CALL_SURCHARGE = 2;
+
 export function trialLimitMessage(limit: number): string {
   return `You've used today's ${limit} free trial messages. Add your own API key in Settings to keep going, or try again tomorrow.`;
 }

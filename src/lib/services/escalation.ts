@@ -41,6 +41,9 @@ const LADDERS: Record<ItemKind, Rung[]> = {
 /** The longest ladder. `notificationStage` counts 0..this, so the candidate query bounds on it. */
 export const MAX_ESCALATION_STAGE = Math.max(...Object.values(LADDERS).map((ladder) => ladder.length));
 
+/** Every kind with a ladder — lets the candidate query bound each kind on its own length. */
+export const ESCALATION_KINDS = Object.keys(LADDERS) as ItemKind[];
+
 export function ladderFor(kind: ItemKind): Rung[] {
   return LADDERS[kind];
 }

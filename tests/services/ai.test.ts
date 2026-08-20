@@ -154,8 +154,20 @@ describe("runAgent", () => {
 
     const result = await runAgent("hello", testUser(), aiConfig(), undefined, execute);
 
-    expect(result).toEqual({ text: "All done.", calls: [], stop: "answered" });
+    expect(result).toEqual({ text: "All done.", calls: [], stop: "answered", modelCalls: 1 });
     expect(mockOpenAiCreate).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("returns a non-empty fallback line when the model replies with neither text nor a tool call", async () => {
+    // A documented outcome when a provider's safety filter blocks the completion outright.
+    mockOpenAiCreate.mockResolvedValueOnce(openAiTextResponse(""));
+    const execute = vi.fn();
+
+    const result = await runAgent("hello", testUser(), aiConfig(), undefined, execute);
+
+    expect(result.stop).toBe("answered");
+    expect(result.text.trim()).not.toBe("");
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -339,10 +351,50 @@ describe("adapter translation", () => {
       expect(assistantMsg.content).toEqual([{ type: "tool_use", id: "toolu_2", name: "list_items", input: {} }]);
       expect(assistantMsg.content.some((b: { type: string }) => b.type === "text")).toBe(false);
     });
+
+    it("requests a 4096 output token cap", async () => {
+      mockAnthropicCreate.mockResolvedValueOnce(anthropicTextResponse("hi"));
+
+      await runAgent("hello", testUser(), aiConfig({ provider: "anthropic" }), undefined, vi.fn());
+
+      expect(mockAnthropicCreate.mock.calls[0][0].max_tokens).toBe(4096);
+    });
+
+    it("refuses to execute a tool call truncated by the token cap instead of running it as-is", async () => {
+      mockAnthropicCreate.mockResolvedValueOnce({
+        stop_reason: "max_tokens",
+        content: [{ type: "tool_use", id: "toolu_trunc", name: "create_item", input: { title: "Dentist" } }],
+      });
+      const execute = vi.fn();
+
+      await expect(
+        runAgent("add three reminders", testUser(), aiConfig({ provider: "anthropic" }), undefined, execute)
+      ).rejects.toThrow(/cut off/);
+
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it("does not refuse a max_tokens stop when the last block is text rather than a tool call", async () => {
+      mockAnthropicCreate.mockResolvedValueOnce({
+        stop_reason: "max_tokens",
+        content: [{ type: "text", text: "Here's a long answer that ran out of room" }],
+      });
+
+      const result = await runAgent(
+        "tell me everything",
+        testUser(),
+        aiConfig({ provider: "anthropic" }),
+        undefined,
+        vi.fn()
+      );
+
+      expect(result.stop).toBe("answered");
+      expect(result.text).toBe("Here's a long answer that ran out of room");
+    });
   });
 
   describe("gemini", () => {
-    it("emits a model functionCall turn, then a user functionResponse turn matched by name", async () => {
+    it("echoes the provider's id back on both the functionCall replay and the functionResponse when one was given", async () => {
       mockGeminiGenerate
         .mockResolvedValueOnce(geminiToolCallResponse("list_items", { status: "pending" }, "gcall_1"))
         .mockResolvedValueOnce(geminiTextResponse("done"));
@@ -353,16 +405,18 @@ describe("adapter translation", () => {
       const secondRequest = mockGeminiGenerate.mock.calls[1][0];
       const contents = secondRequest.contents;
       const modelTurn = contents.find((c: { role: string }) => c.role === "model");
-      expect(modelTurn.parts).toEqual([{ functionCall: { name: "list_items", args: { status: "pending" } } }]);
+      expect(modelTurn.parts).toEqual([
+        { functionCall: { name: "list_items", args: { status: "pending" }, id: "gcall_1" } },
+      ]);
 
       const toolTurn = contents[contents.length - 1];
       expect(toolTurn).toEqual({
         role: "user",
-        parts: [{ functionResponse: { name: "list_items", response: { result: "item1" } } }],
+        parts: [{ functionResponse: { name: "list_items", id: "gcall_1", response: { result: "item1" } } }],
       });
     });
 
-    it("synthesizes a stable id for a call the provider returned with no id", async () => {
+    it("synthesizes a stable id for a call the provider returned with no id, but never echoes the stand-in back", async () => {
       mockGeminiGenerate
         .mockResolvedValueOnce(geminiToolCallResponse("list_items", {}, undefined))
         .mockResolvedValueOnce(geminiTextResponse("done"));
@@ -370,7 +424,20 @@ describe("adapter translation", () => {
 
       await runAgent("list", testUser(), aiConfig({ provider: "gemini" }), undefined, execute);
 
-      expect(execute).toHaveBeenCalledWith({ id: "list_items-0", name: "list_items", args: {} });
+      expect(execute).toHaveBeenCalledWith({
+        id: "list_items-0",
+        name: "list_items",
+        args: {},
+        idIsSynthetic: true,
+      });
+
+      const secondRequest = mockGeminiGenerate.mock.calls[1][0];
+      const contents = secondRequest.contents;
+      const modelTurn = contents.find((c: { role: string }) => c.role === "model");
+      expect(modelTurn.parts).toEqual([{ functionCall: { name: "list_items", args: {} } }]);
+
+      const toolTurn = contents[contents.length - 1];
+      expect(toolTurn.parts).toEqual([{ functionResponse: { name: "list_items", response: { result: "ok" } } }]);
     });
   });
 });

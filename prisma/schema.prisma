@@ -125,6 +125,8 @@ model Item {
   parent      Item?         @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
   subtasks    Item[]        @relation("Subtasks")
   kind        ItemKind      @default(task)
+  /// The FK only guarantees the course exists, not that it belongs to this item's user — that
+  /// invariant is app-only (every write routes through a user-scoped lookup) and unchecked here.
   courseId    String?       @map("course_id") @db.Uuid
   course      Course?       @relation(fields: [courseId], references: [id], onDelete: SetNull)
   /// Every occurrence of a repeating item shares the first occurrence's id, so "stop the daily

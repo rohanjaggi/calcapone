@@ -9,6 +9,7 @@ const mockPrisma = vi.hoisted(() => ({
     delete: vi.fn(),
     deleteMany: vi.fn(),
     findUnique: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
   },
 }));
 
@@ -65,7 +66,14 @@ const baseItem = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("ItemService", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Completing an item is a guarded updateMany + re-read rather than a plain update, so a
+    // double-tapped Done can't roll the series forward twice. Default to the claim winning;
+    // the tests that care about losing it say so explicitly.
+    mockPrisma.item.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.item.findUniqueOrThrow.mockResolvedValue({ id: "i1", status: "done", category: { name: "General" } });
+  });
 
   it("creates an item", async () => {
     const input = { userId: "u1", categoryId: "c1", title: "Buy milk" };
@@ -89,12 +97,10 @@ describe("ItemService", () => {
   });
 
   it("updates an item", async () => {
-    mockPrisma.item.update.mockResolvedValue({ id: "i1", status: "done" });
     await updateItem("i1", "u1", { status: "done" });
-    expect(mockPrisma.item.update).toHaveBeenCalledWith({
-      where: { id: "i1", userId: "u1" },
+    expect(mockPrisma.item.updateMany).toHaveBeenCalledWith({
+      where: { id: "i1", userId: "u1", status: { not: "done" } },
       data: { status: "done" },
-      include: { category: true },
     });
   });
 
@@ -421,7 +427,9 @@ describe("ItemService", () => {
         status: "done",
       });
       mockPrisma.item.findUnique.mockResolvedValue(before);
-      mockPrisma.item.update.mockResolvedValue({ id: "i1", status: "done", category: { name: "General" } });
+      // The row is already done, so the `status: { not: "done" }` guard matches nothing —
+      // which is what stops a second Done tap creating a second occurrence.
+      mockPrisma.item.updateMany.mockResolvedValue({ count: 0 });
 
       await updateItem("i1", "u1", { status: "done" });
 

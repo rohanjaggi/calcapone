@@ -81,11 +81,17 @@ function revive<T extends ItemSnapshot>(
   return out;
 }
 
+/** Tally of a `sequence`'s members: how many of them (leaf or nested) failed. */
+type UndoTally = { failed: number; total: number };
+
 /**
  * Applies one compensating action. Not exported: the claim/rollback dance in `claimAndApply`
  * is what callers actually need, this is just the "how" for each `UndoOp` variant.
+ *
+ * Returns a tally only for `sequence`; every other op is a single unit that either resolves
+ * (one implicit success) or throws, which is all `claimAndApply` needs to know about it.
  */
-async function applyUndo(op: UndoOp, user: UndoUser): Promise<void> {
+async function applyUndo(op: UndoOp, user: UndoUser): Promise<UndoTally | void> {
   switch (op.op) {
     case "noop":
       return;
@@ -150,18 +156,26 @@ async function applyUndo(op: UndoOp, user: UndoUser): Promise<void> {
       // One user-visible action can be several writes (decomposing a task creates N
       // subtasks), and reversing it has to be a single `/undo`. Best-effort in order: a
       // partially-cleaned-up decompose is still better than leaving all of it, so only a
-      // total wipeout is reported back as a failure.
+      // total wipeout is reported back as a failure — anything less is tallied here and
+      // surfaced honestly in the summary by `claimAndApply` instead of being reported as a
+      // blanket success.
       const errors: unknown[] = [];
+      let failed = 0;
+      let total = 0;
       for (const sub of op.ops) {
         try {
-          await applyUndo(sub, user);
+          const tally = await applyUndo(sub, user);
+          failed += tally?.failed ?? 0;
+          total += tally?.total ?? 1;
         } catch (error) {
           console.error("[action-log] sequence member failed:", error instanceof Error ? error.message : error);
           errors.push(error);
+          failed++;
+          total++;
         }
       }
-      if (op.ops.length > 0 && errors.length === op.ops.length) throw errors[0];
-      return;
+      if (total > 0 && failed === total) throw errors[0];
+      return { failed, total };
     }
   }
 }
@@ -182,8 +196,15 @@ async function claimAndApply(row: CandidateRow, user: UndoUser, now: Date): Prom
   if (claim.count !== 1) return { ok: false, reason: "none" };
 
   try {
-    await applyUndo(row.inverse as UndoOp, user);
-    return { ok: true, summary: row.summary };
+    const tally = await applyUndo(row.inverse as UndoOp, user);
+    // A `sequence` that only partly recovered is still a success (the claim stands, and a
+    // partial undo beats none) — but the receipt has to say so instead of implying everything
+    // came back, or the user has no way to know the rest needs manual cleanup.
+    const summary =
+      tally && tally.failed > 0
+        ? `${row.summary} (restored ${tally.total - tally.failed} of ${tally.total})`
+        : row.summary;
+    return { ok: true, summary };
   } catch (error) {
     // The claim succeeded but applying it didn't — put the row back so a retry (e.g. after
     // reconnecting Google) finds it as "not yet undone" rather than silently stuck.

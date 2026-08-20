@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { ItemStatus, Priority, RecurringType, ItemKind } from "@/generated/prisma/enums";
 import { getNextOccurrence } from "@/lib/services/recurrence";
 import { buildEmbeddingText, scheduleItemEmbedding } from "@/lib/services/embeddings";
-import { MAX_ESCALATION_STAGE } from "@/lib/services/escalation";
+import { ladderFor, ESCALATION_KINDS } from "@/lib/services/escalation";
 
 type CreateItemInput = {
   userId: string;
@@ -122,13 +122,28 @@ export async function updateItem(id: string, userId: string, data: UpdateItemInp
     }
   }
 
-  const item = await prisma.item.update({
-    where: { id, userId },
-    data: payload,
-    include: { category: true },
-  });
+  // Completion is a one-way transition that also rolls the series forward, so a double-tapped
+  // Done button (two concurrent calls) must not both win it — same claim-then-act shape as
+  // claimDueReminder/claimNotificationStage: only the call that actually flips the row's
+  // status away from "done" gets to roll forward.
+  let completed = false;
+  let item;
+  if (completing) {
+    const claim = await prisma.item.updateMany({
+      where: { id, userId, status: { not: "done" } },
+      data: payload,
+    });
+    completed = claim.count === 1;
+    item = await prisma.item.findUniqueOrThrow({ where: { id, userId }, include: { category: true } });
+  } else {
+    item = await prisma.item.update({
+      where: { id, userId },
+      data: payload,
+      include: { category: true },
+    });
+  }
 
-  if (completing && before && before.status !== "done") {
+  if (completed && before) {
     await rollForwardDatedSeries(before);
   }
 
@@ -316,8 +331,11 @@ export async function getEscalationCandidates() {
       status: { not: "done" },
       dueDate: { not: null },
       remindAt: null,
-      notificationStage: { lt: MAX_ESCALATION_STAGE },
       parentId: null,
+      // Bounded per kind, not on the shared max stage: a task's ladder tops out at 3 rungs,
+      // so gating everyone on the longest ladder (exam's 4) would leave an overdue task in
+      // the scan forever, re-evaluated every tick for a rung it can never reach.
+      OR: ESCALATION_KINDS.map((kind) => ({ kind, notificationStage: { lt: ladderFor(kind).length } })),
     },
     include: { user: true, category: true },
   });

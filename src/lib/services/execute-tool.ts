@@ -14,13 +14,13 @@ import { createCourse, listCourses, findCourse } from "@/lib/services/course";
 import { getEvents, createEvent, updateEvent, deleteEvent, CalendarAuthError } from "@/lib/services/calendar";
 import { markCalendarDisconnected, CALENDAR_RECONNECT_MESSAGE } from "@/lib/services/calendar-link";
 import { searchItems } from "@/lib/services/search";
-import { paramsToRRule, getNextOccurrence, type RecurrenceParams } from "@/lib/services/recurrence";
+import { paramsToRRule, getNextOccurrence, dueDateAnchor, type RecurrenceParams } from "@/lib/services/recurrence";
 import { matchByTitle } from "@/lib/services/match-items";
 import { dueWindowToGcal } from "@/lib/services/gcal-window";
 import { esc, b } from "@/lib/services/telegram";
 import { parseInTz, todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
 import { normalizeDueDate, normalizeDueTime } from "@/lib/due-format";
-import { readOutcome, echoOutcome, type ToolOutcome, type ItemSnapshot, type UndoOp } from "@/lib/services/tool-outcome";
+import { readOutcome, echoOutcome, type ToolOutcome, type ItemSnapshot, type EventSnapshot, type UndoOp } from "@/lib/services/tool-outcome";
 import type { Priority, RecurringType, ItemStatus, ItemKind } from "@/generated/prisma/enums";
 
 function fuzzyMatch(title: string, query: string): boolean {
@@ -129,7 +129,89 @@ function snapshot(item: ItemRow): ItemSnapshot & { title: string; categoryId: st
     notificationStage: item.notificationStage,
     kind: item.kind,
     courseId: item.courseId,
+    // Without this an undone occurrence comes back detached from its run, and no tool can
+    // re-attach it — "delete the whole series" would then miss the row it just restored.
+    seriesId: item.seriesId,
   };
+}
+
+/**
+ * The legacy `recurring` column for a rich rule.
+ *
+ * Reminders read `recurrenceRule`, but the dashboard badge still reads this enum, so leaving
+ * it at "none" shows a repeating item as one-off. Yearly has no legacy equivalent.
+ */
+function legacyRecurring(frequency: RecurrenceParams["frequency"]): RecurringType {
+  return frequency === "daily" || frequency === "weekly" || frequency === "monthly" ? frequency : "none";
+}
+
+type ItemEditFields = { title?: string; dueDate?: string | null; dueTime?: string | null };
+type GcalFields = { title?: string; startTime?: string; endTime?: string; description?: string };
+
+/**
+ * Push an item edit to the Google event it is linked to, returning what was actually sent.
+ *
+ * The window is rebuilt from the item's own date and time merged with the change, because a
+ * series member carries its own date — and because a time-only edit still has to move the
+ * event. Returns null when nothing was pushed, which is what tells the caller whether the
+ * undo needs a calendar half at all.
+ */
+async function syncLinkedEvent(
+  user: UserContext,
+  item: { googleEventId: string | null; dueDate: string | null; dueTime: string | null },
+  updates: ItemEditFields
+): Promise<GcalFields | null> {
+  if (!item.googleEventId || !user.googleRefreshToken) return null;
+
+  const fields: GcalFields = {};
+  if (updates.title) fields.title = updates.title;
+  if (updates.dueDate !== undefined || updates.dueTime !== undefined) {
+    const dueDate = updates.dueDate !== undefined ? updates.dueDate : item.dueDate;
+    const dueTime = updates.dueTime !== undefined ? updates.dueTime : item.dueTime;
+    if (dueDate && dueTime) Object.assign(fields, dueWindowToGcal(dueDate, dueTime));
+  }
+  if (Object.keys(fields).length === 0) return null;
+
+  try {
+    await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, fields, user.timezone);
+  } catch (error) {
+    if (error instanceof CalendarAuthError) throw error;
+    console.error("[tool:update_item] calendar sync failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
+  return fields;
+}
+
+/**
+ * The calendar half of an undo: put back exactly the fields the forward call pushed.
+ *
+ * Without it, undoing a synced reschedule reverts the row and leaves the Google event at the
+ * new time — for good, since nothing re-syncs until the date changes again.
+ */
+function inverseEventPatch(
+  user: UserContext,
+  before: { googleEventId: string | null; title: string; dueDate: string | null; dueTime: string | null },
+  pushed: GcalFields | null
+): UndoOp | null {
+  if (!pushed || !before.googleEventId) return null;
+  const fields: Partial<EventSnapshot> = {};
+  if (pushed.title !== undefined) fields.title = before.title;
+  if (pushed.startTime !== undefined && before.dueDate && before.dueTime) {
+    Object.assign(fields, dueWindowToGcal(before.dueDate, before.dueTime));
+  }
+  if (Object.keys(fields).length === 0) return null;
+  return { op: "patch_event", calendarId: user.googleCalendarId ?? "primary", eventId: before.googleEventId, fields };
+}
+
+/** Best-effort removal of the Google event behind an item being deleted. */
+async function deleteLinkedEvent(user: UserContext, googleEventId: string | null, tool: string): Promise<void> {
+  if (!googleEventId || !user.googleRefreshToken) return;
+  try {
+    await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", googleEventId);
+  } catch (error) {
+    if (error instanceof CalendarAuthError) throw error;
+    console.error(`[tool:${tool}] calendar delete failed:`, error instanceof Error ? error.message : error);
+  }
 }
 
 const KIND_LABELS: Record<ItemKind, string> = {
@@ -235,9 +317,18 @@ async function runTool(
     case "create_item": {
       const title = requireStr(args, "title");
       if (!title) return echoOutcome("I need a title to create that.");
-      const categoryName = typeof args.category === "string" ? args.category : "";
+      const categoryName = requireStr(args, "category");
       const cats = await listCategories(userId);
-      let cat = cats.find((c) => c.name.toLowerCase() === categoryName.toLowerCase()) ?? cats[0];
+      let cat = categoryName
+        ? cats.find((c) => c.name.toLowerCase() === categoryName.toLowerCase())
+        : cats[0];
+      // A category the user doesn't have is refused rather than swapped for whichever sorts
+      // first: the model never learns the match failed, so it can't correct itself or ask.
+      if (!cat && categoryName && cats.length > 0) {
+        return refuse(
+          `I don't have a category called "${esc(categoryName)}". You have: ${cats.map((c) => esc(c.name)).join(", ")}. Pick one, or create it with create_category.`
+        );
+      }
       if (!cat) {
         cat = await createCategory({ userId, name: "General", color: "#4A6FA5", sortOrder: 0 });
       }
@@ -259,10 +350,14 @@ async function runTool(
       const remindAt = args.remind_at ? parseInTz(args.remind_at as string, user.timezone) : null;
       let recurrenceRule: string | null = null;
       let recurrenceEnd: Date | null = null;
+      let recurring: RecurringType = (args.recurring as RecurringType) ?? "none";
       if (args.recurrence) {
         const params = args.recurrence as RecurrenceParams;
-        recurrenceRule = paramsToRRule(params, remindAt ?? undefined);
+        // Anchored to the reminder, or failing that the due date: a rule with no DTSTART gets
+        // re-anchored to every new occurrence, so a COUNT-bounded run never stops.
+        recurrenceRule = paramsToRRule(params, remindAt ?? (dueDate ? dueDateAnchor(dueDate) : undefined));
         if (params.until) recurrenceEnd = parseInTz(params.until, user.timezone);
+        recurring = legacyRecurring(params.frequency);
       }
 
       const kind = asKind(args.kind) ?? "task";
@@ -278,7 +373,7 @@ async function runTool(
         dueDate,
         dueTime,
         remindAt,
-        recurring: (args.recurring as RecurringType) ?? "none",
+        recurring,
         recurrenceRule,
         recurrenceEnd,
       });
@@ -372,6 +467,11 @@ async function runTool(
       if (asScope(args.scope) === "series" && (item.seriesId || item.recurrenceRule)) {
         const seriesId = item.seriesId ?? item.id;
         const members = await listSeries(seriesId, userId);
+        // Every member's Google event has to go too — dropping only the rows leaves each one
+        // orphaned on the calendar with nothing left pointing at it.
+        for (const member of members) {
+          await deleteLinkedEvent(user, member.googleEventId, "delete_item");
+        }
         const removed = await deleteSeries(seriesId, userId);
         return echoOutcome(`Deleted all ${removed} occurrences of ${b(item.title)}`, {
           kind: "delete_series",
@@ -387,14 +487,7 @@ async function runTool(
         });
       }
 
-      if (item.googleEventId && user.googleRefreshToken) {
-        try {
-          await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId);
-        } catch (error) {
-          if (error instanceof CalendarAuthError) throw error;
-          console.error("[tool:delete_item] calendar delete failed:", error instanceof Error ? error.message : error);
-        }
-      }
+      await deleteLinkedEvent(user, item.googleEventId, "delete_item");
 
       await deleteItem(item.id, userId);
 
@@ -474,17 +567,11 @@ async function runTool(
       if (args.status !== undefined) updates.status = args.status as ItemStatus;
       if (args.recurrence) {
         const params = args.recurrence as RecurrenceParams;
-        const anchor = updates.remindAt ?? item.remindAt ?? undefined;
-        updates.recurrenceRule = paramsToRRule(params, anchor ?? undefined);
+        const due = updates.dueDate !== undefined ? updates.dueDate : item.dueDate;
+        const anchor = updates.remindAt ?? item.remindAt ?? (due ? dueDateAnchor(due) : undefined);
+        updates.recurrenceRule = paramsToRRule(params, anchor);
         updates.recurrenceEnd = params.until ? parseInTz(params.until, user.timezone) : null;
-        updates.recurring =
-          params.frequency === "daily"
-            ? "daily"
-            : params.frequency === "weekly"
-            ? "weekly"
-            : params.frequency === "monthly"
-            ? "monthly"
-            : "none";
+        updates.recurring = legacyRecurring(params.frequency);
       }
       if (args.clear_recurrence) {
         updates.recurrenceRule = null;
@@ -494,49 +581,32 @@ async function runTool(
 
       if (scope === "series" && (item.seriesId || item.recurrenceRule)) {
         const seriesId = item.seriesId ?? item.id;
+        // `members` is the run as it was *before* the change: what the undo restores, and what
+        // each linked Google event has to be moved from.
         const members = await updateSeries(seriesId, userId, updates);
+        const ops: UndoOp[] = [];
+        for (const member of members) {
+          const pushed = await syncLinkedEvent(user, member, updates);
+          ops.push({ op: "restore_item", itemId: member.id, fields: snapshot(member) });
+          const patch = inverseEventPatch(user, member, pushed);
+          if (patch) ops.push(patch);
+        }
         return echoOutcome(`Updated all ${members.length} occurrences of ${b(item.title)}`, {
           kind: "update_series",
           summary: `the change to every ${b(item.title)}`,
-          inverse: {
-            op: "sequence",
-            ops: members.map((member) => ({
-              op: "restore_item" as const,
-              itemId: member.id,
-              fields: snapshot(member),
-            })),
-          },
+          inverse: { op: "sequence", ops },
         });
       }
 
       const updated = await updateItem(item.id, userId, updates);
+      const pushed = await syncLinkedEvent(user, item, updates);
 
-      if (item.googleEventId && user.googleRefreshToken) {
-        try {
-          const gcalFields: { title?: string; startTime?: string; endTime?: string; description?: string } = {};
-          if (updates.title) gcalFields.title = updates.title;
-          if (updates.dueDate && updates.dueTime) {
-            Object.assign(gcalFields, dueWindowToGcal(updates.dueDate, updates.dueTime));
-          }
-          if (Object.keys(gcalFields).length > 0) {
-            await updateEvent(
-              user.googleRefreshToken,
-              user.googleCalendarId ?? "primary",
-              item.googleEventId,
-              gcalFields,
-              user.timezone
-            );
-          }
-        } catch (error) {
-          if (error instanceof CalendarAuthError) throw error;
-          console.error("[tool:update_item] calendar sync failed:", error instanceof Error ? error.message : error);
-        }
-      }
-
+      const restore: UndoOp = { op: "restore_item", itemId: item.id, fields: before };
+      const patch = inverseEventPatch(user, item, pushed);
       return echoOutcome(`Updated: ${b(updated.title)}`, {
         kind: "update_item",
         summary: `the change to ${b(item.title)}`,
-        inverse: { op: "restore_item", itemId: item.id, fields: before },
+        inverse: patch ? { op: "sequence", ops: [restore, patch] } : restore,
       });
     }
 
@@ -717,6 +787,16 @@ async function runTool(
             updates.dueTime = formatHHmmInTz(startDate, user.timezone);
           }
         }
+        // What the event looked like before, read off the item it mirrors — a database-only
+        // inverse would undo the row and leave the event sitting at its new time.
+        const priorEvent: Partial<EventSnapshot> = {};
+        if (gcalFields.title !== undefined) priorEvent.title = linked.title;
+        // "" rather than omitted: undoing a description the call *added* has to clear it.
+        if (gcalFields.description !== undefined) priorEvent.description = linked.description ?? "";
+        if ((gcalFields.startTime !== undefined || gcalFields.endTime !== undefined) && linked.dueDate && linked.dueTime) {
+          Object.assign(priorEvent, dueWindowToGcal(linked.dueDate, linked.dueTime));
+        }
+
         await updateItem(linked.id, userId, updates);
         try {
           await updateEvent(user.googleRefreshToken, calendarId, linked.googleEventId!, gcalFields, user.timezone);
@@ -724,10 +804,17 @@ async function runTool(
           if (error instanceof CalendarAuthError) throw error;
           return echoOutcome(`Updated in-app event: ${b(args.title ?? linked.title)} (Google Calendar sync failed)`);
         }
+        const restore: UndoOp = { op: "restore_item", itemId: linked.id, fields: before };
         return echoOutcome(`Updated calendar event: ${b(args.title ?? linked.title)}`, {
           kind: "update_calendar_event",
           summary: `the change to ${b(linked.title)}`,
-          inverse: { op: "restore_item", itemId: linked.id, fields: before },
+          inverse:
+            Object.keys(priorEvent).length > 0
+              ? {
+                  op: "sequence",
+                  ops: [restore, { op: "patch_event", calendarId, eventId: linked.googleEventId!, fields: priorEvent }],
+                }
+              : restore,
         });
       }
 
@@ -741,7 +828,14 @@ async function runTool(
         op: "patch_event",
         calendarId,
         eventId: gcalMatch.id,
-        fields: { title: gcalMatch.title, startTime: gcalMatch.startTime, endTime: gcalMatch.endTime },
+        fields: {
+          title: gcalMatch.title,
+          startTime: gcalMatch.startTime,
+          endTime: gcalMatch.endTime,
+          // The forward call can rewrite the description, so the inverse has to carry it —
+          // and "" rather than omitted, so undoing one the call *added* clears it.
+          description: gcalMatch.description ?? "",
+        },
       };
 
       try {
@@ -844,9 +938,17 @@ async function runTool(
       if (pending.length === 0) return readOutcome("No pending tasks to schedule.");
 
       const now = new Date();
-      const todayStr = todayInTz(user.timezone, now);
-      const today = startOfDayInTz(todayStr, user.timezone);
+      let startStr = todayInTz(user.timezone, now);
+      if (args.date != null) {
+        const requested = normalizeDueDate(args.date, user.timezone);
+        if (!requested) return refuse("I couldn't understand that date — could you give it as a plain date, like 2026-08-25?");
+        startStr = requested;
+      }
+      const today = startOfDayInTz(startStr, user.timezone);
       const sevenDaysOut = new Date(today.getTime() + 7 * 86400000);
+      // Today's window starts *now* so slots already gone aren't offered; a future week starts
+      // at its own midnight, which is the whole point of asking for one.
+      const windowStart = today > now ? today : now;
 
       const taskLines = pending
         .slice(0, 10)
@@ -863,7 +965,7 @@ async function runTool(
       const events = await getEvents(
         user.googleRefreshToken,
         user.googleCalendarId ?? "primary",
-        now,
+        windowStart,
         sevenDaysOut,
         user.timezone
       );
@@ -900,7 +1002,7 @@ async function runTool(
 
       const freeLines = freeBlocks.slice(0, 8).join(", ") || "No free blocks found in working hours (9am–6pm)";
       return readOutcome(
-        `Pending tasks:\n${taskLines}\n\nFree blocks this week (09:00–18:00):\n${freeLines}`,
+        `Pending tasks:\n${taskLines}\n\nFree blocks in the 7 days from ${startStr} (09:00–18:00):\n${freeLines}`,
         pending.slice(0, 10).map((item) => item.id)
       );
     }
@@ -962,7 +1064,9 @@ async function runTool(
     }
 
     default:
-      return { text: null, echo: false };
+      // Told to the model, not the user: a tool it invented is an internal slip, and a null
+      // text reaches the model as "Done." — it would then build on work that never happened.
+      return { text: `Error: no tool named ${name}`, echo: false, failed: true };
   }
 }
 

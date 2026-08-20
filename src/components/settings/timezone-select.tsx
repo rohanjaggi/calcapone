@@ -17,7 +17,7 @@ export function TimezoneSelect({ currentTimezone, onSave }: Props) {
   const handleSave = async () => { setSaving(true); await onSave(timezone); setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000); };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.2 }} className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+    <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
       <button
         onClick={() => setOpen(!open)}
         className={`w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-muted/30 ${open ? "border-b border-border/40" : ""}`}
@@ -46,6 +46,6 @@ export function TimezoneSelect({ currentTimezone, onSave }: Props) {
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   );
 }

@@ -109,6 +109,12 @@ export async function POST(request: NextRequest) {
             title: item.title,
             description: item.description,
             priority: item.priority,
+            // kind/courseId/seriesId have to ride along too, same as rollForwardDatedSeries's
+            // due-date path — otherwise occurrence two of a weekly exam/class silently
+            // degrades to a plain, course-less task and drops off its own escalation ladder.
+            kind: item.kind,
+            courseId: item.courseId,
+            seriesId: item.seriesId ?? item.id,
             dueDate: item.dueDate ? formatDateInTz(nextRemindAt, item.user.timezone) : null,
             dueTime: item.dueTime,
             remindAt: nextRemindAt,

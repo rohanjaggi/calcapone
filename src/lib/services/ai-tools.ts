@@ -194,7 +194,7 @@ export const AI_TOOLS = [
     parameters: {
       type: "object" as const,
       properties: {
-        date: { type: "string", description: "ISO 8601 date to analyze (defaults to today)" },
+        date: { type: "string", description: "YYYY-MM-DD to start the seven-day window from (defaults to today)" },
       },
     },
   },
