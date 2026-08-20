@@ -244,8 +244,8 @@ export async function aiAddItem(input: string, mode: "task" | "reminder" | "even
   for (const call of toolCalls) {
     if (!allowed.has(call.name)) continue;
     // Same implementation the Telegram bot uses (timezone-aware, recurrence, conflict checks).
-    const result = await executeToolCall(call.name, call.args, user.id, user);
-    if (result) results.push(stripHtml(result));
+    const outcome = await executeToolCall(call.name, call.args, user.id, user);
+    if (outcome.text) results.push(stripHtml(outcome.text));
   }
 
   if (results.length === 0 && text) {

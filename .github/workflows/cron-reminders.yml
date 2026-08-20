@@ -1,4 +1,4 @@
-name: Cron tick (reminders, briefing, weekly digest)
+name: Cron tick (reminders, briefing, weekly digest, calendar sync)
 
 # Why this workflow looks the way it does:
 #
@@ -6,9 +6,13 @@ name: Cron tick (reminders, briefing, weekly digest)
 #   load: a `* * * * *` schedule (previously run as a 3-way matrix here) got delayed by
 #   5-20 minutes or silently dropped. `*/5 * * * *` is roughly GitHub's realistic floor for
 #   reliable scheduled triggers, and using a single job (no matrix) means only one runner
-#   boots per invocation instead of three. To claw back ~1-minute reminder granularity from
-#   that single runner boot, this job runs an INNER tick loop that calls
-#   /api/cron/reminders five times (t=0s, 60s, 120s, 180s, 240s) within the same run.
+#   boots per invocation instead of three. To claw back ~1-minute granularity from that
+#   single runner boot, this job runs an INNER tick loop that calls /api/cron/reminders
+#   AND /api/cron/sync five times each (t=0s, 60s, 120s, 180s, 240s) within the same run.
+#   /api/cron/sync carries event-start reminders ("Standup in 15 min"), which are just as
+#   time-sensitive as item reminders and useless at 5-minute granularity, so it rides the
+#   same 60s inner cadence rather than firing only once per invocation like
+#   briefing/weekly-digest do.
 #
 # - GitHub automatically DISABLES scheduled workflows in a repository that has gone 60 days
 #   without any commit activity. If reminders silently stop firing, check whether this
@@ -18,6 +22,15 @@ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+
+# A delayed run (see above) can start while the previous one is still inside its 5-minute inner
+# loop, and two overlapping ticks hitting /api/cron/sync would both read the same sync cursor
+# and send the same calendar-conflict prompt twice. `cancel-in-progress: false` because the run
+# already in flight is the one holding a tick loop mid-way through its reminders — cancelling it
+# would drop pings it is the only chance to send.
+concurrency:
+  group: cron-tick
+  cancel-in-progress: false
 
 jobs:
   tick:
@@ -49,14 +62,16 @@ jobs:
           reminders_total=5
           reminders_failures=0
 
-          echo "== t=0s: briefing, weekly-digest (once per invocation), reminders =="
+          echo "== t=0s: briefing, weekly-digest (once per invocation), sync, reminders =="
           call "/api/cron/briefing" || echo "::warning::briefing tick failed (once/day endpoint; will retry next invocation)"
           call "/api/cron/weekly-digest" || echo "::warning::weekly-digest tick failed (once/day endpoint; will retry next invocation)"
+          call "/api/cron/sync" || echo "::warning::sync tick failed (will retry next tick)"
           call "/api/cron/reminders" || reminders_failures=$((reminders_failures + 1))
 
           for i in 1 2 3 4; do
             sleep 60
-            echo "== t=${i}x60s: reminders =="
+            echo "== t=${i}x60s: sync, reminders =="
+            call "/api/cron/sync" || echo "::warning::sync tick failed (will retry next tick)"
             call "/api/cron/reminders" || reminders_failures=$((reminders_failures + 1))
           done
 

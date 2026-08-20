@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  BookOpen,
   Sparkles,
   ListTodo,
   CalendarDays,
@@ -142,12 +143,12 @@ export default function HowToUsePage() {
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
-        <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase">
-          Guide
-        </p>
-        <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground mt-0.5 tracking-tight">
-          How To Use
-        </h1>
+        <div className="flex items-center gap-2.5">
+          <BookOpen className="w-6 h-6 text-primary shrink-0" />
+          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
+            How To Use
+          </h1>
+        </div>
         <p className="text-sm text-muted-foreground mt-2">
           Everything you need to know to get started with CalCapone.
         </p>

@@ -6,18 +6,37 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 
 ### Core
 - **Natural language input** — type freely in Telegram, AI parses intent and takes action
-- **Voice notes** — send a voice message in Telegram and it's transcribed + processed automatically
-- **Slash commands** — `/todo`, `/remind`, `/event`, `/done`, `/today`, `/list`, `/timezone` for quick entry
+- **Agentic tool loop** — the model sees what each tool returned and can chain up to 3 rounds, so "find the dentist task and push it to Friday" works in one sentence and "what's on this week?" gets a real summary instead of a raw dump
+- **Voice notes** — transcribed, echoed back as `🎤 Heard: …` before the model runs, then processed
+- **Photos & screenshots** — send a poster, timetable or syllabus screenshot and it becomes events or assignments (needs a vision-capable model)
+- **Forwarded messages** — become tasks, with a `Forwarded from …` source line (and a `t.me` link where one exists) in the description
+- **Slash commands** — `/todo`, `/remind`, `/event`, `/note`, `/done`, `/today`, `/week`, `/list`, `/search`, `/undo`, `/timezone`, plus the school commands below
 - **Subtasks** — break tasks into smaller pieces manually or via AI decomposition
 - **Global search** — Cmd+K on web, or ask "find my task about X" in Telegram
 
+### Chat interactions
+- **Reminder buttons** — every reminder arrives with ✅ Done · ⏰ 10m · ⏰ 1h · 🌙 Tomorrow; the message rewrites itself into its own receipt
+- **Undo** — every change is journalled with a compensating action. `/undo` walks back one step at a time for 24h, and single changes carry an inline ↩️ button
+- **Disambiguation** — when a title matches several tasks the bot offers buttons instead of guessing, then re-runs the original call against the exact item you picked
+- **Positional and reply targeting** — `/done 3` uses the numbering `/list` printed, and replying "done" or "move it to Friday" to any bot message targets whatever that message was about
+
+### School
+- **Courses** — `/courses`, `/courses add CS2040 Data Structures`, `/due CS2040`
+- **Assignments and exams** — first-class item kinds, so "CS2040 midterm week 8" files correctly
+- **Kind-aware escalation** — an exam warns at 7 days / 3 days / 1 day / morning-of; an assignment at 72h / 24h / 2h / overdue; a plain task keeps 24h / 2h / overdue
+- **`/exams`** — everything upcoming, soonest first, with the days remaining
+
 ### Calendar
 - **Google Calendar sync** — create, update, delete events; conflict detection; agenda view
+- **Two-way sync** — incremental `syncToken` polling pulls Google's edits back; when both sides changed since they last agreed you get *Keep mine / Take Google's* buttons rather than a silent overwrite
+- **Event-start reminders** — "📅 Standup starts in 15 min", from a local mirror of your calendar so events created in Google are covered too
 - **Schedule suggestions** — AI recommends optimal time slots based on your calendar
 
 ### Notifications
-- **Recurring reminders** — daily, weekly, or monthly with automatic rescheduling
-- **Deadline escalation** — progressive alerts at 24h, 2h before due, and when overdue
+- **Recurring reminders** — daily, weekly, monthly or any RRULE, with automatic rescheduling
+- **Recurring tasks** — due-date-only repeats roll forward when you complete them, not just when a reminder fires
+- **Series editing** — "stop the daily meds reminder" (`scope: series`) and "skip this week" (`skip_next`)
+- **Deadline escalation** — progressive alerts on a ladder chosen by item kind (see School above)
 - **Morning briefing** — AI-generated daily summary at your chosen time
 - **Weekly digest** — configurable day/time recap of completed, overdue, and upcoming work
 - **Quiet hours** — suppress notifications during a time window (e.g., 23:00–07:00)
@@ -27,7 +46,7 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 - **Conversation memory** — multi-turn context (last 10 messages, 4h window) for natural follow-ups
 - **Task decomposition** — "break down my presentation prep" creates subtasks automatically
 - **Smart recommendations** — dashboard suggests your top 3 priority tasks
-- **Multi-provider** — OpenAI, Anthropic, Gemini, or OpenRouter with your own key
+- **Multi-provider** — OpenAI, Anthropic, Gemini, or OpenRouter with your own key. One provider-neutral thread type with a thin adapter each, so the tool loop behaves identically on all four
 
 ## Stack
 
@@ -116,23 +135,30 @@ Set `GOOGLE_REDIRECT_URI` to `https://your-domain/api/settings/google/callback` 
 ## Architecture
 
 ```
-Telegram message (text or voice)
-  → /api/telegram (webhook)
-  → Voice? → OpenAI transcription → text
-  → Slash command? → DB-direct handler (/done, /today, /list, /timezone)
-  → Otherwise    → AI chat path (parses intent, calls tools)
-                    → conversation history loaded (last 10 msgs, 4h)
-                    → execute-tool.ts (CRUD items, calendar, search, decompose)
-                    → response saved to conversation memory
+Telegram update
+  → /api/telegram (webhook, deduped on update_id, always 200)
+  → callback_query? → button handler (done / snooze / undo / pick / calendar conflict)
+  → Voice?          → transcription → "🎤 Heard: …" echo → text
+  → Photo?          → downloaded, sent to the model as an image
+  → Slash command?  → DB-direct handler (no AI call, no trial quota)
+  → Otherwise       → agent loop (ai.ts)
+                       ├─ conversation history (last 10 msgs, 4h)
+                       ├─ reply-to context, forwarded-message source
+                       └─ up to 3 rounds:
+                            model → tool calls → execute-tool.ts → results back to model
+                       → mutations journalled to action_log (undo)
+                       → numbered output remembered in message_refs (/done 3, replies)
 
 Web dashboard
   → Server actions → same service layer
   → Cmd+K search dialog → searchItems service
 
-Cron jobs (GitHub Actions hits all three; ticks may be minutes late, endpoints are idempotent):
-  → /api/cron/briefing       — AI morning summary (once/day, within 2h of the chosen time)
-  → /api/cron/reminders      — fires due reminders + deadline escalation
-  → /api/cron/weekly-digest  — configurable weekly recap (once/day on the chosen weekday)
+Cron (one GitHub Actions run per 5 min; ticks may be late, every endpoint is idempotent):
+  t=0        → /api/cron/briefing       — AI morning summary (once/day, within 2h of target)
+  t=0        → /api/cron/weekly-digest  — weekly recap (once/day on the chosen weekday)
+  t=0,1,…,4  → /api/cron/sync           — Google syncToken pull (≤1 per user per 4 min)
+                                          + event-start reminders (every tick)
+  t=0,1,…,4  → /api/cron/reminders      — due reminders + deadline escalation + housekeeping
 ```
 
 ## Telegram Commands
@@ -142,17 +168,30 @@ Cron jobs (GitHub Actions hits all three; ticks may be minutes late, endpoints a
 | `/todo buy groceries by Friday` | Creates a task with AI-parsed due date |
 | `/remind take meds daily at 9am` | Sets a recurring reminder |
 | `/event lunch tomorrow noon` | Creates a calendar event |
-| `/done buy groceries` | Marks matching task complete (asks which, if several match) |
+| `/note pick up dry cleaning` | Captures a note instantly — no AI call, no quota |
+| `/done buy groceries` | Marks matching task complete (offers buttons if several match) |
+| `/done 3` | Completes the 3rd item from the last numbered list the bot printed |
 | `/today` | Shows agenda: overdue, today's tasks, upcoming events |
+| `/week` | The next 7 days, grouped by day |
 | `/list` | Lists all open items |
+| `/search milk` | Finds items by keyword or meaning |
+| `/undo` | Reverses your last change; repeat to walk back further (24h) |
+| `/alerts 15` | Ping 15 min before a calendar event starts; `/alerts off` disables |
+| `/courses` | Lists your courses; `/courses add CS2040 Data Structures` adds one |
+| `/exams` | Upcoming exams, soonest first, with days remaining |
+| `/due CS2040` | What's outstanding for one course |
 | `/timezone` | Shows your timezone; `/timezone Europe/London` changes it |
 | `/help` | Shows available commands |
 
-You can also just type naturally — "move my dentist appointment to 3pm", "break down my presentation prep", or "find that task about the client meeting" — and the AI handles it. Voice messages work too.
+You can also just type naturally — "move my dentist appointment to 3pm", "break down my presentation prep", or "find the dentist task and push it to Friday" — and the AI handles it. Voice notes, photos of posters or timetables, and forwarded messages all work too.
+
+**Replying targets things.** Reply "done" to a reminder and it completes that reminder. Reply "move it to Friday" to a line in `/list` and it moves that item. No need to name it again.
 
 ## AI Tools
 
-The AI has access to 14 tools:
+The model sees the result of every tool it calls and may chain up to 3 rounds per message, so it can look something up and then act on what it found. Read-only results go to the model only (you get its summary); changes print their own receipt with an ↩️ Undo button.
+
+The 16 tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -168,5 +207,9 @@ The AI has access to 14 tools:
 | `suggest_schedule` | Find optimal time slots |
 | `create_category` | Create a new category |
 | `list_categories` | List categories |
-| `search_items` | Search tasks by keyword |
+| `search_items` | Search tasks by keyword or meaning |
 | `decompose_task` | Break task into subtasks |
+| `create_course` | Register a school course/module |
+| `list_courses` | List registered courses |
+
+`create_item` and `update_item` also take `kind` (`task` / `assignment` / `exam` / `class`) and `course`; `update_item` and `delete_item` take `scope` (`this` / `series`) and `update_item` takes `skip_next`, which is how "stop the daily meds reminder" and "skip this week" are expressed.

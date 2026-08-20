@@ -33,6 +33,8 @@ export function paramsToRRule(params: RecurrenceParams, dtstart?: Date): string 
     interval: params.interval ?? 1,
   };
 
+  // COUNT and UNTIL only mean anything against a fixed DTSTART: with none, `getNextOccurrence`
+  // re-anchors the rule to each occurrence in turn and the window never runs out.
   if (dtstart) options.dtstart = dtstart;
   if (params.byDay) {
     options.byweekday = params.byDay.map((d) => DAY_MAP[d]).filter(Boolean);
@@ -44,6 +46,16 @@ export function paramsToRRule(params: RecurrenceParams, dtstart?: Date): string 
 
   const rule = new RRule(options as ConstructorParameters<typeof RRule>[0]);
   return rule.toString();
+}
+
+/**
+ * DTSTART for a rule that hangs off a due *date* rather than a reminder time.
+ *
+ * UTC midnight, because that's the anchor `nextDueDate` reads occurrences back out with — a
+ * zoned midnight would render as the previous day everywhere east of UTC.
+ */
+export function dueDateAnchor(dueDate: string): Date {
+  return new Date(`${dueDate}T00:00:00.000Z`);
 }
 
 /**

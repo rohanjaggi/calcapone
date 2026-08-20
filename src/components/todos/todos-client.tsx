@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "motion/react";
-import { Bell, Plus, ChevronRight, Inbox, Trash2, Pencil, X, MoreHorizontal, GripVertical } from "lucide-react";
+import { Bell, Plus, ChevronRight, Inbox, Trash2, Pencil, X, MoreHorizontal, GripVertical, ListTodo } from "lucide-react";
 import Link from "next/link";
 import {
   DndContext,
@@ -737,13 +737,13 @@ export function TodosClient({ items: initialItems, categories }: Props) {
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         className="px-5 pt-6 pb-2"
       >
-        <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase mb-0.5">
-          Manage
-        </p>
         <div className="flex items-center justify-between">
-          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
-            Tasks
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <ListTodo className="w-6 h-6 text-primary shrink-0" />
+            <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
+              Tasks
+            </h1>
+          </div>
           {localCategories.length > 0 && (
             <button
               onClick={() => setEditMode((v) => !v)}

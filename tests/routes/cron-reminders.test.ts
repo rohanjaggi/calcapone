@@ -42,7 +42,13 @@ vi.mock("@/lib/services/telegram", () => ({
 
 vi.mock("@/lib/services/alert", () => ({ notifyOwner: vi.fn() }));
 vi.mock("@/lib/services/conversation", () => ({ pruneOldMessages: mockPrune }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    actionLog: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    messageRef: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    pendingAction: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+  },
+}));
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/cron/reminders/route";
@@ -78,6 +84,7 @@ const dueItem = (over = {}) => ({
   recurrenceRule: null,
   recurrenceEnd: null,
   notificationStage: 0,
+  kind: "task",
   user: user(),
   ...over,
 });
@@ -265,5 +272,51 @@ describe("POST /api/cron/reminders", () => {
     const response = await POST(request());
     expect(response.status).toBe(200); // an invalid zone must not 500 the whole route
     expect(mockSendMessage).not.toHaveBeenCalled();
+  });
+
+  // Deadline-escalation ladders now vary by kind (src/lib/services/escalation.ts) — an exam
+  // wants a week's notice, a task doesn't get one until the day is here.
+  it("escalates an exam a week out while a task with the same deadline does not", async () => {
+    mockGetEscalationCandidates.mockResolvedValue([
+      { ...dueItem({ remindAt: null, dueDate: "2026-06-22", dueTime: "12:00", kind: "exam" }), notificationStage: 0 },
+    ]);
+    const body = await (await POST(request())).json();
+
+    expectSent(12345, "Exam in a week");
+    expect(mockClaimNotificationStage).toHaveBeenCalledWith("i1", 0, 1);
+    expect(body.escalated).toBe(1);
+  });
+
+  it("does not escalate a task the same week out that an exam would", async () => {
+    mockGetEscalationCandidates.mockResolvedValue([
+      { ...dueItem({ remindAt: null, dueDate: "2026-06-22", dueTime: "12:00", kind: "task" }), notificationStage: 0 },
+    ]);
+    const body = await (await POST(request())).json();
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(mockClaimNotificationStage).not.toHaveBeenCalled();
+    expect(body.escalated).toBe(0);
+  });
+
+  it("claims the stage before sending on a non-task ladder too, so overlapping ticks still can't double-fire", async () => {
+    mockGetEscalationCandidates.mockResolvedValue([
+      { ...dueItem({ remindAt: null, dueDate: "2026-06-15", dueTime: "13:00", kind: "assignment" }), notificationStage: 2 },
+    ]);
+    const body = await (await POST(request())).json();
+
+    expectSent(12345, "Due soon");
+    expect(mockClaimNotificationStage).toHaveBeenCalledWith("i1", 2, 3);
+    expect(body.escalated).toBe(1);
+  });
+
+  it("does not alert on a kind-specific rung when another tick already claimed the stage", async () => {
+    mockGetEscalationCandidates.mockResolvedValue([
+      { ...dueItem({ remindAt: null, dueDate: "2026-06-22", dueTime: "12:00", kind: "exam" }), notificationStage: 0 },
+    ]);
+    mockClaimNotificationStage.mockResolvedValue(false);
+    const body = await (await POST(request())).json();
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(body.escalated).toBe(0);
   });
 });

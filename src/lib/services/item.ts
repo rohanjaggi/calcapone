@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
+import type { ItemStatus, Priority, RecurringType, ItemKind } from "@/generated/prisma/enums";
 import { getNextOccurrence } from "@/lib/services/recurrence";
 import { buildEmbeddingText, scheduleItemEmbedding } from "@/lib/services/embeddings";
+import { ladderFor, ESCALATION_KINDS } from "@/lib/services/escalation";
 
 type CreateItemInput = {
   userId: string;
@@ -17,6 +18,9 @@ type CreateItemInput = {
   recurrenceEnd?: Date | null;
   googleEventId?: string | null;
   parentId?: string | null;
+  kind?: ItemKind;
+  courseId?: string | null;
+  seriesId?: string | null;
 };
 
 type ItemFilters = {
@@ -24,10 +28,18 @@ type ItemFilters = {
   status?: ItemStatus | ItemStatus[];
   categoryId?: string;
   priority?: Priority;
+  kind?: ItemKind;
+  courseId?: string;
 };
 
 /** Everything that isn't finished — what "my tasks" means to a user. */
 export const OPEN_STATUSES: ItemStatus[] = ["pending", "in_progress"];
+
+const LEGACY_RULES: Record<string, string> = {
+  daily: "FREQ=DAILY",
+  weekly: "FREQ=WEEKLY",
+  monthly: "FREQ=MONTHLY",
+};
 
 type UpdateItemInput = {
   title?: string;
@@ -42,6 +54,9 @@ type UpdateItemInput = {
   recurrenceRule?: string | null;
   recurrenceEnd?: Date | null;
   googleEventId?: string | null;
+  kind?: ItemKind;
+  courseId?: string | null;
+  calendarSyncedAt?: Date | null;
 };
 
 export async function createItem(data: CreateItemInput) {
@@ -49,6 +64,13 @@ export async function createItem(data: CreateItemInput) {
     data,
     include: { category: true },
   });
+
+  // The first occurrence of a run names the series, so "stop the daily meds reminder" can
+  // reach every future copy rather than only the one the user happens to be looking at.
+  if (data.recurrenceRule && !data.seriesId) {
+    await prisma.item.update({ where: { id: item.id }, data: { seriesId: item.id } });
+    item.seriesId = item.id;
+  }
 
   const text = buildEmbeddingText({ title: item.title, description: item.description, category: item.category.name });
   await scheduleItemEmbedding(item.id, text);
@@ -86,25 +108,44 @@ export async function updateItem(id: string, userId: string, data: UpdateItemInp
   // otherwise an overdue task moved to next week never alerts again.
   const touchesDeadline = data.dueDate !== undefined || data.dueTime !== undefined;
   const mayReopen = data.status !== undefined && data.status !== "done";
-  if (touchesDeadline || mayReopen) {
-    const current = await prisma.item.findUnique({
-      where: { id, userId },
-      select: { status: true, dueDate: true, dueTime: true, notificationStage: true },
-    });
-    if (current && current.notificationStage > 0) {
+  const completing = data.status === "done";
+
+  let before: Awaited<ReturnType<typeof prisma.item.findUnique>> = null;
+  if (touchesDeadline || mayReopen || completing) {
+    before = await prisma.item.findUnique({ where: { id, userId } });
+    if (before && before.notificationStage > 0) {
       const deadlineChanged =
-        (data.dueDate !== undefined && data.dueDate !== current.dueDate) ||
-        (data.dueTime !== undefined && data.dueTime !== current.dueTime);
-      const reopened = mayReopen && current.status === "done";
+        (data.dueDate !== undefined && data.dueDate !== before.dueDate) ||
+        (data.dueTime !== undefined && data.dueTime !== before.dueTime);
+      const reopened = mayReopen && before.status === "done";
       if (deadlineChanged || reopened) payload.notificationStage = 0;
     }
   }
 
-  const item = await prisma.item.update({
-    where: { id, userId },
-    data: payload,
-    include: { category: true },
-  });
+  // Completion is a one-way transition that also rolls the series forward, so a double-tapped
+  // Done button (two concurrent calls) must not both win it — same claim-then-act shape as
+  // claimDueReminder/claimNotificationStage: only the call that actually flips the row's
+  // status away from "done" gets to roll forward.
+  let completed = false;
+  let item;
+  if (completing) {
+    const claim = await prisma.item.updateMany({
+      where: { id, userId, status: { not: "done" } },
+      data: payload,
+    });
+    completed = claim.count === 1;
+    item = await prisma.item.findUniqueOrThrow({ where: { id, userId }, include: { category: true } });
+  } else {
+    item = await prisma.item.update({
+      where: { id, userId },
+      data: payload,
+      include: { category: true },
+    });
+  }
+
+  if (completed && before) {
+    await rollForwardDatedSeries(before);
+  }
 
   if (data.title !== undefined || data.description !== undefined || data.categoryId !== undefined) {
     const text = buildEmbeddingText({ title: item.title, description: item.description, category: item.category.name });
@@ -168,6 +209,93 @@ export async function restoreDueReminder(
   return result.count === 1;
 }
 
+/**
+ * A repeating task with a *due date* rolls forward when it is completed, not when a reminder
+ * fires — a weekly reading with no alarm attached would otherwise vanish the first time it
+ * was ticked off. Reminder-driven recurrence is advanced by the cron instead, so items with
+ * a `remindAt` are left alone here to avoid creating the next occurrence twice.
+ */
+async function rollForwardDatedSeries(before: {
+  id: string;
+  userId: string;
+  categoryId: string;
+  courseId: string | null;
+  seriesId: string | null;
+  title: string;
+  description: string | null;
+  priority: Priority;
+  kind: ItemKind;
+  dueDate: string | null;
+  dueTime: string | null;
+  remindAt: Date | null;
+  recurring: RecurringType;
+  recurrenceRule: string | null;
+  recurrenceEnd: Date | null;
+}): Promise<void> {
+  if (before.remindAt || !before.dueDate) return;
+  const rule = before.recurrenceRule || LEGACY_RULES[before.recurring];
+  if (!rule) return;
+
+  const nextDate = nextDueDate(before.dueDate, rule);
+  if (!nextDate) return;
+  if (before.recurrenceEnd && startOfUtcDay(nextDate) > before.recurrenceEnd) return;
+
+  await createItem({
+    userId: before.userId,
+    categoryId: before.categoryId,
+    courseId: before.courseId,
+    seriesId: before.seriesId ?? before.id,
+    title: before.title,
+    description: before.description,
+    priority: before.priority,
+    kind: before.kind,
+    dueDate: nextDate,
+    dueTime: before.dueTime,
+    recurring: before.recurring,
+    recurrenceRule: before.recurrenceRule,
+    recurrenceEnd: before.recurrenceEnd,
+  });
+}
+
+function startOfUtcDay(dateStr: string): Date {
+  return new Date(`${dateStr}T00:00:00.000Z`);
+}
+
+/**
+ * The next calendar day a `YYYY-MM-DD` due date lands on.
+ *
+ * Deliberately timezone-free: a due *date* has no clock time, so anchoring the rule at UTC
+ * midnight and reading the day back out keeps "every other Tuesday" on a Tuesday everywhere,
+ * which converting through a zone would not.
+ */
+export function nextDueDate(dueDate: string, rule: string): string | null {
+  const next = getNextOccurrence(rule, startOfUtcDay(dueDate));
+  return next ? next.toISOString().slice(0, 10) : null;
+}
+
+/** Every item in the same repeating run, including the one that named it. */
+export async function listSeries(seriesId: string, userId: string) {
+  return prisma.item.findMany({ where: { userId, OR: [{ seriesId }, { id: seriesId }] } });
+}
+
+/**
+ * Apply the same change to every occurrence in a run ("move the daily standup to 10am").
+ * Returns the members as they were *before* the change, which is what an undo needs.
+ */
+export async function updateSeries(seriesId: string, userId: string, data: UpdateItemInput) {
+  const members = await listSeries(seriesId, userId);
+  for (const member of members) {
+    await updateItem(member.id, userId, data);
+  }
+  return members;
+}
+
+/** Drop a whole repeating run. Returns how many rows went. */
+export async function deleteSeries(seriesId: string, userId: string): Promise<number> {
+  const result = await prisma.item.deleteMany({ where: { userId, OR: [{ seriesId }, { id: seriesId }] } });
+  return result.count;
+}
+
 /** Re-arm a fired reminder. Status returns to pending because firing may have completed it. */
 export async function snoozeReminder(id: string, userId: string, remindAt: Date) {
   return prisma.item.update({
@@ -180,12 +308,6 @@ export async function snoozeReminder(id: string, userId: string, remindAt: Date)
 export async function getItem(id: string, userId: string) {
   return prisma.item.findFirst({ where: { id, userId } });
 }
-
-const LEGACY_RULES: Record<string, string> = {
-  daily: "FREQ=DAILY",
-  weekly: "FREQ=WEEKLY",
-  monthly: "FREQ=MONTHLY",
-};
 
 /**
  * Next occurrence after `current` (and after `now`, if given, so a backlog of missed
@@ -209,8 +331,11 @@ export async function getEscalationCandidates() {
       status: { not: "done" },
       dueDate: { not: null },
       remindAt: null,
-      notificationStage: { lt: 3 },
       parentId: null,
+      // Bounded per kind, not on the shared max stage: a task's ladder tops out at 3 rungs,
+      // so gating everyone on the longest ladder (exam's 4) would leave an overdue task in
+      // the scan forever, re-evaluated every tick for a rung it can never reach.
+      OR: ESCALATION_KINDS.map((kind) => ({ kind, notificationStage: { lt: ladderFor(kind).length } })),
     },
     include: { user: true, category: true },
   });

@@ -12,7 +12,11 @@ import {
 import { sendMessage, b, TelegramBlockedError } from "@/lib/services/telegram";
 import { reminderKeyboard, doneOnlyKeyboard } from "@/lib/services/callbacks";
 import { shouldNotify, isQuietHours, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
+import { ladderFor, nextEscalation, type Rung } from "@/lib/services/escalation";
 import { pruneOldMessages } from "@/lib/services/conversation";
+import { pruneActionLog } from "@/lib/services/action-log";
+import { pruneMessageRefs, rememberMessageRef } from "@/lib/services/message-ref";
+import { prunePendingActions } from "@/lib/services/pending-action";
 import { notifyOwner } from "@/lib/services/alert";
 import { formatDateInTz, formatHHmmInTz, isValidTz } from "@/lib/tz";
 
@@ -66,9 +70,15 @@ export async function POST(request: NextRequest) {
       const originalRemindAt = item.remindAt;
 
       try {
-        await sendMessage(Number(item.user.telegramId), `🔔 ${b("Reminder:")} ${b(item.title)}`, {
+        const chatId = Number(item.user.telegramId);
+        const messageId = await sendMessage(chatId, `🔔 ${b("Reminder:")} ${b(item.title)}`, {
           keyboard: reminderKeyboard(item.id),
         });
+        // Lets the user reply "done" or "push it to Friday" straight to the reminder instead
+        // of having to name the task again.
+        if (messageId) {
+          await rememberMessageRef({ userId: item.userId, chatId, messageId, kind: "item", itemIds: [item.id] });
+        }
       } catch (error) {
         // The claim already cleared remindAt. Without putting it back, a rate limit or a
         // transient 5xx would lose this reminder permanently — the one failure mode a
@@ -99,6 +109,12 @@ export async function POST(request: NextRequest) {
             title: item.title,
             description: item.description,
             priority: item.priority,
+            // kind/courseId/seriesId have to ride along too, same as rollForwardDatedSeries's
+            // due-date path — otherwise occurrence two of a weekly exam/class silently
+            // degrades to a plain, course-less task and drops off its own escalation ladder.
+            kind: item.kind,
+            courseId: item.courseId,
+            seriesId: item.seriesId ?? item.id,
             dueDate: item.dueDate ? formatDateInTz(nextRemindAt, item.user.timezone) : null,
             dueTime: item.dueTime,
             remindAt: nextRemindAt,
@@ -141,31 +157,26 @@ export async function POST(request: NextRequest) {
       const minutesUntilDue = dueMinutes - nowMinutes;
       const hoursUntilDue = minutesUntilDue / 60;
 
-      let newStage = item.notificationStage;
-      let message = "";
+      // The ladder is per-kind (an exam wants a week's notice, a task doesn't) — see
+      // src/lib/services/escalation.ts. This just turns the picked rung into a message.
+      const next = nextEscalation(item.kind, hoursUntilDue, item.notificationStage);
 
-      if (hoursUntilDue < 0 && item.notificationStage < 3) {
-        newStage = 3;
-        message = `🚨 ${b("Overdue:")} ${b(item.title)}`;
-      } else if (hoursUntilDue <= 2 && hoursUntilDue > 0 && item.notificationStage < 2) {
-        newStage = 2;
-        message = `⚠️ ${b("Due soon:")} ${b(item.title)} (in ${Math.round(minutesUntilDue)} min)`;
-      } else if (hoursUntilDue <= 24 && hoursUntilDue > 2 && item.notificationStage < 1) {
-        newStage = 1;
-        const label = item.dueDate === userNowStr ? "Due today:" : "Due tomorrow:";
-        message = `📋 ${b(label)} ${b(item.title)}`;
-      }
-
-      if (newStage > item.notificationStage) {
+      if (next) {
         // Ticks are ~60s apart while maxDuration is 60s, so two runs can overlap. Claiming
         // the stage first means only one of them can alert; sending first and writing after
         // let both pass the check and send the same "Due soon" twice.
-        if (!(await claimNotificationStage(item.id, item.notificationStage, newStage))) {
+        if (!(await claimNotificationStage(item.id, item.notificationStage, next.stage))) {
           skipped++;
           continue;
         }
+        const rung = ladderFor(item.kind)[next.stage - 1];
+        const message = formatEscalationMessage(next.label, item.title, rung, minutesUntilDue, item.dueDate);
         try {
-          await sendMessage(Number(item.user.telegramId), message, { keyboard: doneOnlyKeyboard(item.id) });
+          const chatId = Number(item.user.telegramId);
+          const messageId = await sendMessage(chatId, message, { keyboard: doneOnlyKeyboard(item.id) });
+          if (messageId) {
+            await rememberMessageRef({ userId: item.userId, chatId, messageId, kind: "item", itemIds: [item.id] });
+          }
         } catch (error) {
           // A blocked chat keeps the claim: no retry can ever deliver it, and rolling back
           // would re-alert on every future tick. Anything else rolls back to retry.
@@ -184,7 +195,22 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const pruned = shouldPrune(now) ? await pruneOldMessages() : 0;
+  // Housekeeping must never be able to fail the tick: a reminder that doesn't go out is a
+  // missed deadline, a row that lives an hour longer than it should is nothing at all.
+  let pruned = 0;
+  if (shouldPrune(now)) {
+    try {
+      const counts = await Promise.all([
+        pruneOldMessages(),
+        pruneActionLog(now),
+        pruneMessageRefs(now),
+        prunePendingActions(now),
+      ]);
+      pruned = counts.reduce((total, n) => total + n, 0);
+    } catch (error) {
+      console.error("[cron:reminders] prune failed:", error instanceof Error ? error.message : error);
+    }
+  }
 
   if (errors > 0) {
     await notifyOwner("cron:reminders", `${errors} item(s) failed this tick — see Vercel logs`);
@@ -201,6 +227,25 @@ export async function POST(request: NextRequest) {
     escalated,
     pruned,
   });
+}
+
+/**
+ * Every rung above the 2h tier ("Due", "Due in 3 days", "Exam tomorrow", ...) reads fine on
+ * its own, except the plain task/class "Due" label, which used to distinguish today from
+ * tomorrow and no longer can once it's shared across every kind's outer rungs. Repeating the
+ * due date on all of them keeps that context instead of special-casing just the one label.
+ */
+function formatEscalationMessage(
+  label: string,
+  title: string,
+  rung: Rung,
+  minutesUntilDue: number,
+  dueDate: string
+): string {
+  const headline = `${b(`${label}:`)} ${b(title)}`;
+  if (rung.hoursBefore === 0) return `🚨 ${headline}`;
+  if (rung.hoursBefore <= 2) return `⚠️ ${headline} (in ${Math.round(minutesUntilDue)} min)`;
+  return `📋 ${headline} — ${dueDate}`;
 }
 
 function toMinutes(dateStr: string, timeStr: string): number {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { paramsToRRule, getNextOccurrence } from "@/lib/services/recurrence";
-import { createNextOccurrence } from "@/lib/services/item";
+import { paramsToRRule, getNextOccurrence, dueDateAnchor } from "@/lib/services/recurrence";
+import { createNextOccurrence, nextDueDate } from "@/lib/services/item";
 
 describe("recurrence", () => {
   it("daily rule without DTSTART advances from the item's own remindAt, not from now", () => {
@@ -32,6 +32,15 @@ describe("recurrence", () => {
     expect(getNextOccurrence(until, start)).toBeNull();
     const count = paramsToRRule({ frequency: "daily", count: 1 }, start);
     expect(getNextOccurrence(count, start)).toBeNull();
+  });
+
+  it("a COUNT-bounded due-date rule runs out instead of repeating forever", () => {
+    // "Weekly report due Fridays, stop after 3" — no remind_at, so the due date is the anchor
+    const rule = paramsToRRule({ frequency: "weekly", count: 3 }, dueDateAnchor("2026-08-21"));
+    expect(rule).toContain("DTSTART:20260821T000000Z");
+    expect(nextDueDate("2026-08-21", rule)).toBe("2026-08-28");
+    expect(nextDueDate("2026-08-28", rule)).toBe("2026-09-04");
+    expect(nextDueDate("2026-09-04", rule)).toBeNull();
   });
 
   it("legacy monthly handles the 31st without overflowing into March", () => {

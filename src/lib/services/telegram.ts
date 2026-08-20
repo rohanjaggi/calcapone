@@ -206,14 +206,23 @@ function parseRetryAfter(body: string): number | null {
 
 type SendOptions = { parseMode?: "HTML" | null; keyboard?: InlineKeyboard };
 
+/** The `message_id` Telegram assigned, or null if the shape wasn't what we expected. */
+function sentMessageId(result: unknown): number | null {
+  const id = (result as { result?: { message_id?: unknown } } | null)?.result?.message_id;
+  return typeof id === "number" ? id : null;
+}
+
 /**
  * Send a message (HTML parse mode by default). Long messages are chunked; buttons ride on
  * the final chunk so they land at the bottom of the conversation.
  *
  * If Telegram rejects the HTML entities the chunk is retried once as plain text, so the
  * user still gets the content instead of nothing.
+ *
+ * Returns the id of the LAST chunk — the one carrying the buttons, and the one a user
+ * replying "done" would be replying to.
  */
-export async function sendMessage(chatId: number | bigint, text: string, options: SendOptions = {}) {
+export async function sendMessage(chatId: number | bigint, text: string, options: SendOptions = {}): Promise<number | null> {
   const parseMode = options.parseMode === undefined ? "HTML" : options.parseMode;
   const keyboard = options.keyboard ? sanitizeKeyboard(options.keyboard) : undefined;
   const chunks = chunkMessage(text);
@@ -244,11 +253,11 @@ export async function sendMessage(chatId: number | bigint, text: string, options
     last = res.result;
   }
 
-  return last;
+  return sentMessageId(last);
 }
 
 /** Best-effort send that never throws (for error replies inside catch blocks). */
-export async function sendMessageSafe(chatId: number | bigint, text: string, options: SendOptions = {}) {
+export async function sendMessageSafe(chatId: number | bigint, text: string, options: SendOptions = {}): Promise<number | null> {
   try {
     return await sendMessage(chatId, text, options);
   } catch (error) {
@@ -335,9 +344,18 @@ export async function setMyCommands() {
     { command: "todo", description: "Add a task" },
     { command: "remind", description: "Set a reminder" },
     { command: "event", description: "Create a calendar event" },
-    { command: "done", description: "Mark a task complete" },
+    { command: "note", description: "Capture a note instantly (no AI)" },
+    { command: "done", description: "Complete a task — by name or list number" },
     { command: "today", description: "Today's agenda" },
+    { command: "week", description: "The next 7 days" },
     { command: "list", description: "All pending tasks" },
+    { command: "search", description: "Find a task" },
+    { command: "exams", description: "Upcoming exams, soonest first" },
+    { command: "due", description: "What's outstanding for a course" },
+    { command: "courses", description: "List or add school courses" },
+    { command: "undo", description: "Undo the last change" },
+    { command: "alerts", description: "Warning time before a calendar event" },
+    { command: "timezone", description: "Show or change your timezone" },
     { command: "help", description: "Show commands" },
   ];
 
@@ -394,6 +412,13 @@ export type TelegramMessage = {
     mime_type?: string;
     file_size?: number;
   };
+  /** Telegram sends every rendition, smallest first; the last is the highest resolution. */
+  photo?: Array<{ file_id: string; file_unique_id: string; width: number; height: number; file_size?: number }>;
+  document?: { file_id: string; file_unique_id: string; file_name?: string; mime_type?: string; file_size?: number };
+  /** Bot API 7.0+ provenance for a forwarded message. Shape varies by origin type. */
+  forward_origin?: { type: string; [key: string]: unknown };
+  /** Present when the user replied to an earlier message — how "done" targets a specific item. */
+  reply_to_message?: TelegramMessage;
 };
 
 export type TelegramCallbackQuery = {

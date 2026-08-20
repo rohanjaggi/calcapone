@@ -49,10 +49,14 @@ export function Greeting({ name, timezone }: { name: string; timezone?: string }
       <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase min-h-4">
         {clock?.weekday ?? ""}
       </p>
-      <h1 className="date-gradient text-[3.25rem] leading-none font-bold mt-0.5 tracking-tighter min-h-[3.25rem]">
+      {/* `date-gradient` clips its background to the glyphs, and that background only covers
+          the element's own box — so with `leading-none` the descenders in "August"/"January"
+          fall outside it and render transparent. `pb-1.5` gives them room; the greeting below
+          drops its top margin by the same amount so the layout is unchanged. */}
+      <h1 className="date-gradient text-[3.25rem] leading-none font-bold mt-0.5 tracking-tighter pb-1.5 min-h-[3.625rem]">
         {clock?.monthDay ?? ""}
       </h1>
-      <p className="text-muted-foreground text-base mt-1.5 min-h-6">
+      <p className="text-muted-foreground text-base min-h-6">
         {clock ? (
           <>
             {clock.greeting},{" "}

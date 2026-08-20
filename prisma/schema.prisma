@@ -28,14 +28,25 @@ model User {
   aiModel            String?     @map("ai_model")
   lastBriefingSentOn  String?     @map("last_briefing_sent_on")
   lastDigestSentOn    String?     @map("last_digest_sent_on")
+  /// Google's incremental-sync cursor. Cleared to force a full resync (Google answers 410
+  /// GONE when a token has aged out).
+  googleSyncToken      String?    @map("google_sync_token")
+  lastCalendarSyncAt   DateTime?  @map("last_calendar_sync_at") @db.Timestamptz
+  /// Minutes of warning before an event starts. Null means event-start pings are off.
+  eventReminderMinutes Int?       @map("event_reminder_minutes")
   aiCallsDate         String?     @map("ai_calls_date")
   aiCallsCount        Int         @default(0) @map("ai_calls_count")
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz
 
-  categories Category[]
-  items      Item[]
-  messages   Message[]
+  calendarEvents CalendarEvent[]
+  categories     Category[]
+  courses        Course[]
+  items          Item[]
+  messages       Message[]
+  actionLog      ActionLog[]
+  messageRefs    MessageRef[]
+  pendingActions PendingAction[]
 
   @@map("users")
 }
@@ -57,6 +68,19 @@ enum Priority {
   low
   medium
   high
+}
+
+/**
+ * What a dated item actually is.
+ *
+ * Only used to decide how far ahead to start nagging: a 24-hour warning is useful for a
+ * chore and useless for an exam, which is the whole reason this is not just a label.
+ */
+enum ItemKind {
+  task
+  assignment
+  exam
+  class
 }
 
 enum RecurringType {
@@ -100,6 +124,17 @@ model Item {
   parentId    String?       @map("parent_id") @db.Uuid
   parent      Item?         @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
   subtasks    Item[]        @relation("Subtasks")
+  kind        ItemKind      @default(task)
+  /// The FK only guarantees the course exists, not that it belongs to this item's user — that
+  /// invariant is app-only (every write routes through a user-scoped lookup) and unchecked here.
+  courseId    String?       @map("course_id") @db.Uuid
+  course      Course?       @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  /// Every occurrence of a repeating item shares the first occurrence's id, so "stop the daily
+  /// meds reminder" can reach the whole run rather than only the copy in front of the user.
+  seriesId    String?       @map("series_id") @db.Uuid
+  /// When this item and its Google event were last known to agree. A change on both sides
+  /// since this instant is the definition of a sync conflict.
+  calendarSyncedAt DateTime?  @map("calendar_synced_at") @db.Timestamptz
   notificationStage Int    @default(0) @map("notification_stage")
   embedding   Unsupported("vector(768)")?
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
@@ -112,7 +147,59 @@ model Item {
   @@index([userId, status, dueDate])
   @@index([parentId])
   @@index([userId, categoryId])
+  @@index([userId, kind, dueDate])
+  @@index([courseId])
+  @@index([seriesId])
   @@map("items")
+}
+
+/// A subject/module. Deliberately not a Category: an assignment belongs to the School
+/// category *and* to CS2040, and collapsing those two axes loses one of them.
+model Course {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  code      String
+  name      String
+  color     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items Item[]
+
+  @@unique([userId, code])
+  @@map("courses")
+}
+
+/// A read-only mirror of the user's Google Calendar.
+///
+/// Deliberately not an Item: these never appear in a task list. It exists so "standup in 15
+/// minutes" can fire for an event created in Google (which the bot would otherwise never see)
+/// and so the assistant can answer calendar questions without a live API round trip.
+model CalendarEvent {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  googleEventId   String    @map("google_event_id")
+  calendarId      String    @map("calendar_id")
+  title           String
+  description     String?
+  startsAt        DateTime  @map("starts_at") @db.Timestamptz
+  endsAt          DateTime  @map("ends_at") @db.Timestamptz
+  allDay          Boolean   @default(false) @map("all_day")
+  transparent     Boolean   @default(false)
+  googleUpdatedAt DateTime? @map("google_updated_at") @db.Timestamptz
+  /// Set once the "starting soon" ping has gone out, so a rescheduled event pings again but
+  /// an unchanged one never pings twice.
+  reminderSentAt  DateTime? @map("reminder_sent_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, googleEventId])
+  @@index([userId, startsAt])
+  @@index([startsAt, reminderSentAt])
+  @@map("calendar_events")
 }
 
 model Message {
@@ -149,4 +236,65 @@ model OAuthState {
 
   @@index([expiresAt])
   @@map("oauth_states")
+}
+
+/// One reversible mutation. Written by every tool call that changes something, so `/undo`
+/// (and the ↩️ button on a receipt) can walk changes back without the model guessing at an
+/// inverse. `inverse` is a serialised {@link UndoOp}; rows are pruned after 24h.
+model ActionLog {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  chatId    BigInt?   @map("chat_id")
+  kind      String
+  summary   String
+  inverse   Json
+  undoneAt  DateTime? @map("undone_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, undoneAt, createdAt])
+  @@index([createdAt])
+  @@map("action_log")
+}
+
+/// What a message the bot sent was *about*.
+///
+/// Telegram gives a reply the id of the message being replied to but nothing about its
+/// content, and a numbered list is meaningless without the ordering that produced it. One
+/// row per outgoing message lets `/done 3` resolve against the last list and lets a reply
+/// to any bot message target what that message referred to.
+model MessageRef {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  chatId    BigInt   @map("chat_id")
+  messageId BigInt   @map("message_id")
+  kind      String
+  itemIds   String[] @map("item_ids") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, messageId])
+  @@index([userId, chatId, kind, createdAt])
+  @@index([createdAt])
+  @@map("message_refs")
+}
+
+/// A tool call parked because it matched several items. The buttons carry this row's id, so
+/// the choice re-runs the original call against one exact item instead of a fuzzy guess.
+model PendingAction {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  chatId     BigInt   @map("chat_id")
+  tool       String
+  args       Json
+  candidates String[] @db.Uuid
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("pending_actions")
 }
