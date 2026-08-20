@@ -117,7 +117,7 @@ const sections = [
       "A few more things to help you get the most out of CalCapone.",
     tips: [
       "The home screen timeline shows everything scheduled for today, ordered by time",
-      "Stats at the top of the home screen show your pending tasks, events, and reminders at a glance",
+      "Stats at the top of the home screen break your pending tasks down by priority — high, medium, and low",
       "Tasks cycle through statuses: pending → done (tap the circle icon)",
       "High-priority tasks show a colored badge so they stand out",
       "All data syncs automatically — changes are saved instantly",

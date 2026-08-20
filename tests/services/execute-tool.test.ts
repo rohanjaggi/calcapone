@@ -16,6 +16,10 @@ const mockUpdateEvent = vi.hoisted(() => vi.fn());
 const mockDeleteEvent = vi.hoisted(() => vi.fn());
 const mockMarkDisconnected = vi.hoisted(() => vi.fn());
 const mockSearchItems = vi.hoisted(() => vi.fn());
+const mockFindCourse = vi.hoisted(() => vi.fn());
+const mockListCourses = vi.hoisted(() => vi.fn());
+const mockCreateCourse = vi.hoisted(() => vi.fn());
+const mockSetCourseArchived = vi.hoisted(() => vi.fn());
 const MockCalendarAuthError = vi.hoisted(
   () =>
     class CalendarAuthError extends Error {
@@ -58,6 +62,13 @@ vi.mock("@/lib/services/calendar-link", () => ({
 
 vi.mock("@/lib/services/search", () => ({
   searchItems: mockSearchItems,
+}));
+
+vi.mock("@/lib/services/course", () => ({
+  findCourse: mockFindCourse,
+  listCourses: mockListCourses,
+  createCourse: mockCreateCourse,
+  setCourseArchived: mockSetCourseArchived,
 }));
 
 import { executeToolCall, FORCED_ITEM_ID } from "@/lib/services/execute-tool";
@@ -294,6 +305,19 @@ describe("executeToolCall", () => {
         expect(line).toBe(`${i + 1}. 📋 [pending] ${items[i].title}`);
         expect(result.itemIds?.[i]).toBe(items[i].id);
       });
+    });
+
+    it("orders items by due date, soonest first, undated last", async () => {
+      mockListCategories.mockResolvedValue([]);
+      mockListItems.mockResolvedValue([
+        makeItem({ id: "undated", title: "Someday" }),
+        makeItem({ id: "far", title: "Next month", dueDate: "2026-09-30" }),
+        makeItem({ id: "near", title: "This week", dueDate: "2026-08-21" }),
+      ]);
+
+      const result = await executeToolCall("list_items", {}, "u1", baseUser);
+
+      expect(result.itemIds).toEqual(["near", "far", "undated"]);
     });
 
     it("returns 'No items found.' with no itemIds when there are none", async () => {
@@ -1064,5 +1088,94 @@ describe("executeToolCall", () => {
       ).rejects.toThrow("503 backend error");
       expect(mockMarkDisconnected).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("course archiving", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const activeCourse = { id: "co1", code: "CS2040", name: "Data Structures", archived: false };
+  const archivedCourse = { id: "co1", code: "CS2040", name: "Data Structures", archived: true };
+
+  it("archive_course archives a resolved course", async () => {
+    mockFindCourse.mockResolvedValue(activeCourse);
+    mockSetCourseArchived.mockResolvedValue(archivedCourse);
+
+    const result = await executeToolCall("archive_course", { course: "CS2040", archived: true }, "u1", baseUser);
+
+    expect(mockSetCourseArchived).toHaveBeenCalledWith("co1", "u1", true);
+    expect(result.echo).toBe(true);
+    expect(result.text).toContain("Archived");
+  });
+
+  it("archive_course records an inverse so the undo button works", async () => {
+    mockFindCourse.mockResolvedValue(activeCourse);
+    mockSetCourseArchived.mockResolvedValue(archivedCourse);
+
+    const result = await executeToolCall("archive_course", { course: "CS2040", archived: true }, "u1", baseUser);
+
+    expect(result.undo?.inverse).toEqual({ op: "set_course_archived", courseId: "co1", archived: false });
+  });
+
+  it("archive_course unarchives when archived is false", async () => {
+    mockFindCourse.mockResolvedValue(archivedCourse);
+    mockSetCourseArchived.mockResolvedValue(activeCourse);
+
+    const result = await executeToolCall("archive_course", { course: "CS2040", archived: false }, "u1", baseUser);
+
+    expect(mockSetCourseArchived).toHaveBeenCalledWith("co1", "u1", false);
+    expect(result.text).toContain("Unarchived");
+  });
+
+  it("archive_course fails rather than guessing when the course does not resolve", async () => {
+    mockFindCourse.mockResolvedValue(null);
+
+    const result = await executeToolCall("archive_course", { course: "PHYSICS", archived: true }, "u1", baseUser);
+
+    expect(mockSetCourseArchived).not.toHaveBeenCalled();
+    expect(result.failed).toBe(true);
+  });
+
+  it("list_courses hides archived courses by default", async () => {
+    mockListCourses.mockResolvedValue([activeCourse]);
+
+    await executeToolCall("list_courses", {}, "u1", baseUser);
+
+    expect(mockListCourses).toHaveBeenCalledWith("u1", { includeArchived: false });
+  });
+
+  it("list_courses includes archived when asked", async () => {
+    mockListCourses.mockResolvedValue([activeCourse, archivedCourse]);
+
+    const result = await executeToolCall("list_courses", { include_archived: true }, "u1", baseUser);
+
+    expect(mockListCourses).toHaveBeenCalledWith("u1", { includeArchived: true });
+    expect(result.text).toContain("archived");
+  });
+
+  it("refuses to file new work under an archived course", async () => {
+    mockListCategories.mockResolvedValue([{ id: "c1", name: "School" }]);
+    mockFindCourse.mockResolvedValue(archivedCourse);
+
+    const result = await executeToolCall(
+      "create_item",
+      { title: "Assignment 3", category: "School", course: "CS2040" },
+      "u1",
+      baseUser
+    );
+
+    expect(mockCreateItem).not.toHaveBeenCalled();
+    expect(result.failed).toBe(true);
+    expect(result.text).toContain("archived");
+  });
+
+  it("still reads items filed under an archived course", async () => {
+    mockFindCourse.mockResolvedValue(archivedCourse);
+    mockListItems.mockResolvedValue([makeItem({ id: "i1", title: "Final exam" })]);
+
+    const result = await executeToolCall("list_items", { course: "CS2040", kind: "exam" }, "u1", baseUser);
+
+    expect(mockListItems).toHaveBeenCalledWith("u1", expect.objectContaining({ courseId: "co1", kind: "exam" }));
+    expect(result.text).toContain("Final exam");
   });
 });

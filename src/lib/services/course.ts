@@ -10,15 +10,32 @@ export async function createCourse(data: {
   return prisma.course.create({ data });
 }
 
-export async function listCourses(userId: string): Promise<Course[]> {
+/**
+ * Active courses only unless `includeArchived` is set. Archived rows sort last rather than
+ * being interleaved, so `/courses all` reads as "this semester, then everything before it".
+ */
+export async function listCourses(
+  userId: string,
+  opts: { includeArchived?: boolean } = {}
+): Promise<Course[]> {
   return prisma.course.findMany({
-    where: { userId },
-    orderBy: { code: "asc" },
+    where: { userId, ...(opts.includeArchived ? {} : { archived: false }) },
+    orderBy: [{ archived: "asc" }, { code: "asc" }],
   });
 }
 
 export async function getCourse(id: string, userId: string): Promise<Course | null> {
   return prisma.course.findFirst({ where: { id, userId } });
+}
+
+/** Retire a course at the end of a semester, or bring one back. Items keep their tag either way. */
+export async function setCourseArchived(id: string, userId: string, archived: boolean): Promise<Course> {
+  return prisma.course.update({ where: { id, userId }, data: { archived } });
+}
+
+/** How much work is still filed under this course — the guard on a hard delete. */
+export async function countCourseItems(courseId: string, userId: string): Promise<number> {
+  return prisma.item.count({ where: { courseId, userId } });
 }
 
 export async function deleteCourse(id: string, userId: string): Promise<void> {
@@ -37,7 +54,9 @@ export async function findCourse(userId: string, query: string): Promise<Course 
   const q = query.trim().toLowerCase();
   if (!q) return null;
 
-  const courses = await listCourses(userId);
+  // Archived courses stay resolvable on purpose: `/due CS2040` and the course prefix on
+  // `/exams` are how you read back a finished semester, and both go through here.
+  const courses = await listCourses(userId, { includeArchived: true });
 
   const exact = courses.find((course) => course.code.toLowerCase() === q);
   if (exact) return exact;

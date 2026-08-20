@@ -10,12 +10,13 @@ import {
   OPEN_STATUSES,
 } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
-import { createCourse, listCourses, findCourse } from "@/lib/services/course";
+import { createCourse, listCourses, findCourse, setCourseArchived } from "@/lib/services/course";
 import { getEvents, createEvent, updateEvent, deleteEvent, CalendarAuthError } from "@/lib/services/calendar";
 import { markCalendarDisconnected, CALENDAR_RECONNECT_MESSAGE } from "@/lib/services/calendar-link";
 import { searchItems } from "@/lib/services/search";
 import { paramsToRRule, getNextOccurrence, dueDateAnchor, type RecurrenceParams } from "@/lib/services/recurrence";
 import { matchByTitle } from "@/lib/services/match-items";
+import { renderFlatList } from "@/lib/services/commands/format";
 import { dueWindowToGcal } from "@/lib/services/gcal-window";
 import { esc, b } from "@/lib/services/telegram";
 import { parseInTz, todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
@@ -232,10 +233,25 @@ type CourseResolution =
  * would otherwise quietly become a second module, and "what's due for CS2040" would then
  * miss half of it.
  */
-async function resolveCourse(userId: string, args: Record<string, unknown>): Promise<CourseResolution> {
+async function resolveCourse(
+  userId: string,
+  args: Record<string, unknown>,
+  opts: { forWrite?: boolean } = {}
+): Promise<CourseResolution> {
   const query = requireStr(args, "course");
   if (!query) return { kind: "ok", courseId: null, code: null };
   const course = await findCourse(userId, query);
+  // Reads must still reach archived courses — that history is the point of archiving. Writes
+  // must not: silently filing new work under a retired course hides it from every list the
+  // user looks at, and unarchiving is one command away.
+  if (course?.archived && opts.forWrite) {
+    return {
+      kind: "stop",
+      outcome: refuse(
+        `${b(course.code)} is archived. Bring it back with ${b(`/courses unarchive ${course.code}`)} before filing new work under it.`
+      ),
+    };
+  }
   if (!course) {
     return {
       kind: "stop",
@@ -344,7 +360,7 @@ async function runTool(
         if (!dueTime) return refuse("I couldn't understand that due time — could you give it as a 24-hour time, like 14:30?");
       }
 
-      const course = await resolveCourse(userId, args);
+      const course = await resolveCourse(userId, args, { forWrite: true });
       if (course.kind === "stop") return course.outcome;
 
       const remindAt = args.remind_at ? parseInTz(args.remind_at as string, user.timezone) : null;
@@ -418,12 +434,11 @@ async function runTool(
       });
       if (items.length === 0) return readOutcome("No items found.");
 
-      const lines = items.map((item, i) => {
-        const icon = item.remindAt ? "🔔" : "📋";
-        const due = item.dueDate ? ` (due ${item.dueDate}${item.dueTime ? ` ${item.dueTime}` : ""})` : "";
-        return `${i + 1}. ${icon} [${item.status}] ${esc(item.title)}${due}`;
-      });
-      return readOutcome(lines.join("\n"), items.map((item) => item.id));
+      // Same renderer `/list` uses: this and the slash command answer the same question, and
+      // when they each owned a copy of the format they drifted — and both inherited
+      // `listItems`' priority ordering, which is not the order anyone asks "what's due" in.
+      const { text, itemIds } = renderFlatList(items, user.timezone, { showStatus: true });
+      return readOutcome(text, itemIds);
     }
 
     case "complete_item": {
@@ -523,7 +538,7 @@ async function runTool(
 
       if (args.skip_next === true) return skipNextOccurrence(item, userId);
 
-      const course = await resolveCourse(userId, args);
+      const course = await resolveCourse(userId, args, { forWrite: true });
       if (course.kind === "stop") return course.outcome;
 
       const updates: {
@@ -731,7 +746,11 @@ async function runTool(
       if (!name) return missing("course name");
       try {
         const created = await createCourse({ userId, code: code.toUpperCase(), name, color: (args.color as string) ?? null });
-        return echoOutcome(`Added course: ${b(created.code)} — ${esc(created.name)}`);
+        return echoOutcome(`Added course: ${b(created.code)} — ${esc(created.name)}`, {
+          kind: "create_course",
+          summary: `added the ${b(created.code)} course`,
+          inverse: { op: "delete_course", courseId: created.id },
+        });
       } catch (error) {
         if ((error as { code?: string })?.code === "P2002") {
           return refuse(`You already have a course called ${esc(code.toUpperCase())}.`);
@@ -741,9 +760,36 @@ async function runTool(
     }
 
     case "list_courses": {
-      const courses = await listCourses(userId);
+      const includeArchived = args.include_archived === true;
+      const courses = await listCourses(userId, { includeArchived });
       if (courses.length === 0) return readOutcome("No courses yet.");
-      return readOutcome(courses.map((c) => `- ${esc(c.code)} — ${esc(c.name)}`).join("\n"));
+      return readOutcome(
+        courses
+          .map((c) => `- ${esc(c.code)} — ${esc(c.name)}${c.archived ? " (archived)" : ""}`)
+          .join("\n")
+      );
+    }
+
+    case "archive_course": {
+      const query = requireStr(args, "course");
+      if (!query) return missing("course");
+      const archived = args.archived === true;
+
+      const course = await findCourse(userId, query);
+      if (!course) {
+        return refuse(`I don't have a course matching "${esc(query)}". ${b("/courses all")} lists them.`);
+      }
+      if (course.archived === archived) {
+        return echoOutcome(`${b(course.code)} is already ${archived ? "archived" : "active"}.`);
+      }
+
+      await setCourseArchived(course.id, userId, archived);
+      const verb = archived ? "Archived" : "Unarchived";
+      return echoOutcome(`${verb} ${b(course.code)} — ${esc(course.name)}`, {
+        kind: "archive_course",
+        summary: `${archived ? "archived" : "unarchived"} ${b(course.code)}`,
+        inverse: { op: "set_course_archived", courseId: course.id, archived: !archived },
+      });
     }
 
     case "list_categories": {

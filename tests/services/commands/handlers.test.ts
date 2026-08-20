@@ -14,7 +14,14 @@ vi.mock("@/lib/services/user", () => ({ updateUserSettings: mockUpdateUserSettin
 vi.mock("@/lib/services/message-ref", () => ({ latestListRef: vi.fn(), resolvePosition: vi.fn() }));
 vi.mock("@/lib/services/action-log", () => ({ undoLast: vi.fn() }));
 vi.mock("@/lib/services/search", () => ({ searchItems: vi.fn() }));
-vi.mock("@/lib/services/course", () => ({ createCourse: vi.fn(), listCourses: vi.fn(), findCourse: vi.fn() }));
+vi.mock("@/lib/services/course", () => ({
+  createCourse: vi.fn(),
+  listCourses: vi.fn(),
+  findCourse: vi.fn(),
+  setCourseArchived: vi.fn(),
+  countCourseItems: vi.fn(),
+  deleteCourse: vi.fn(),
+}));
 
 import {
   handleDone,
@@ -36,7 +43,14 @@ import { getEvents } from "@/lib/services/calendar";
 import { latestListRef, resolvePosition } from "@/lib/services/message-ref";
 import { undoLast } from "@/lib/services/action-log";
 import { searchItems } from "@/lib/services/search";
-import { createCourse, listCourses, findCourse } from "@/lib/services/course";
+import {
+  createCourse,
+  listCourses,
+  findCourse,
+  setCourseArchived,
+  countCourseItems,
+  deleteCourse,
+} from "@/lib/services/course";
 
 const mockListItems = vi.mocked(listItems);
 const mockUpdateItem = vi.mocked(updateItem);
@@ -50,6 +64,9 @@ const mockSearchItems = vi.mocked(searchItems);
 const mockCreateCourse = vi.mocked(createCourse);
 const mockListCourses = vi.mocked(listCourses);
 const mockFindCourse = vi.mocked(findCourse);
+const mockSetCourseArchived = vi.mocked(setCourseArchived);
+const mockCountCourseItems = vi.mocked(countCourseItems);
+const mockDeleteCourse = vi.mocked(deleteCourse);
 
 const ctx: CommandContext = {
   userId: "u1",
@@ -105,12 +122,13 @@ const makeItem = (
   ...overrides,
 });
 
-const makeCourse = (id: string, code: string, name: string) => ({
+const makeCourse = (id: string, code: string, name: string, archived = false) => ({
   id,
   userId: "u1",
   code,
   name,
   color: null,
+  archived,
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -209,6 +227,263 @@ describe("handleDone", () => {
     mockUpdateItem.mockResolvedValue(makeItem("i1", "Fix <script> & _underscore_ bug") as never);
 
     const result = await handleDone("Fix", ctx);
+
+    expect(result.text).toContain("Fix &lt;script&gt; &amp; _underscore_ bug");
+    expect(result.text).not.toContain("<script>");
+  });
+});
+
+describe("handleToday", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore" }).format(new Date());
+
+  it("shows tasks due today", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Morning standup", { dueDate: todayStr })]);
+
+    const result = await handleToday(ctx);
+
+    expect(result.text).toContain("Morning standup");
+    expect(result.text).toContain("Today");
+  });
+
+  it("shows empty message when nothing scheduled", async () => {
+    mockListItems.mockResolvedValue([]);
+
+    const result = await handleToday(ctx);
+
+    expect(result.text).toBe("Nothing scheduled for today!");
+    expect(result.itemIds).toBeUndefined();
+  });
+
+  it("includes Google Calendar events when connected", async () => {
+    const ctxWithGcal: CommandContext = {
+      ...ctx,
+      user: { ...ctx.user, googleRefreshToken: "enc-token", googleCalendarId: "primary" },
+    };
+    mockListItems.mockResolvedValue([]);
+    mockGetEvents.mockResolvedValue([
+      { id: "e1", title: "Team sync <Q3>", startTime: "2026-06-11T10:00:00+08:00", endTime: "2026-06-11T10:30:00+08:00", description: null, allDay: false, transparency: "opaque" },
+      { id: "e2", title: "Public holiday", startTime: "2026-06-12", endTime: "2026-06-13", description: null, allDay: true, transparency: "transparent" },
+    ]);
+
+    const result = await handleToday(ctxWithGcal);
+
+    expect(mockGetEvents).toHaveBeenCalledWith(
+      "enc-token",
+      "primary",
+      expect.any(Date),
+      expect.any(Date),
+      "Asia/Singapore"
+    );
+    expect(result.text).toContain("10:00 — Team sync &lt;Q3&gt;");
+    expect(result.text).toContain("2026-06-12 (all day) — Public holiday");
+    expect(result.text).toContain("<b>Next up</b>");
+  });
+
+  it("shows overdue section for items with dueDate before today", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Submit invoice", { dueDate: "2026-05-01" })]);
+
+    const result = await handleToday(ctx);
+
+    expect(result.text).toContain("Overdue");
+    expect(result.text).toContain("Submit invoice");
+  });
+
+  it("shows today section for items due today", async () => {
+    mockListItems.mockResolvedValue([makeItem("i2", "Team standup", { dueDate: todayStr, dueTime: "10:00" })]);
+
+    const result = await handleToday(ctx);
+
+    expect(result.text).toContain("Today");
+    expect(result.text).toContain("Team standup");
+    expect(result.text).not.toContain("Overdue");
+  });
+
+  it("separates overdue from today items", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem("i1", "Submit invoice", { dueDate: "2026-05-01" }),
+      makeItem("i2", "Team standup", { dueDate: todayStr }),
+    ]);
+
+    const result = await handleToday(ctx);
+
+    const overduePos = result.text.indexOf("Overdue");
+    const todayPos = result.text.indexOf("Today");
+    expect(overduePos).toBeLessThan(todayPos);
+    expect(result.text).toContain("Submit invoice");
+    expect(result.text).toContain("Team standup");
+  });
+
+  it("returns a flat itemIds array spanning overdue, today items, then today reminders, numbered to match", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem("i1", "Overdue task", { dueDate: "2020-01-01" }),
+      makeItem("i2", "Today task", { dueDate: todayStr }),
+      makeItem("i3", "Today reminder", { remindAt: new Date() }),
+    ]);
+
+    const result = await handleToday(ctx);
+
+    expect(result.itemIds).toEqual(["i1", "i2", "i3"]);
+    expect(result.text).toContain("1. Overdue task");
+    expect(result.text).toContain("2. Today task");
+    expect(result.text).toContain("3. 🔔");
+  });
+});
+
+describe("handleWeek", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore" }).format(new Date());
+
+  function addDays(dateStr: string, days: number): string {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  }
+
+  it("groups items by day heading and returns itemIds in printed order", async () => {
+    const day3 = addDays(todayStr, 3);
+    mockListItems.mockResolvedValue([
+      makeItem("i1", "Today task", { dueDate: todayStr }),
+      makeItem("i2", "Later task", { dueDate: day3 }),
+    ]);
+
+    const result = await handleWeek(ctx);
+
+    expect(result.text).toContain("Today task");
+    expect(result.text).toContain("Later task");
+    expect(result.text).toContain(day3);
+    expect(result.itemIds).toEqual(["i1", "i2"]);
+    expect(result.text.indexOf("Today task")).toBeLessThan(result.text.indexOf("Later task"));
+  });
+
+  it("excludes items due more than 7 days out", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Far future task", { dueDate: addDays(todayStr, 10) })]);
+
+    const result = await handleWeek(ctx);
+
+    expect(result.text).toBe("Nothing scheduled for the next 7 days.");
+  });
+
+  it("returns the empty message when nothing is scheduled", async () => {
+    mockListItems.mockResolvedValue([]);
+
+    const result = await handleWeek(ctx);
+
+    expect(result.text).toBe("Nothing scheduled for the next 7 days.");
+    expect(result.itemIds).toBeUndefined();
+  });
+
+  it("survives a calendar fetch that rejects", async () => {
+    const ctxWithGcal: CommandContext = {
+      ...ctx,
+      user: { ...ctx.user, googleRefreshToken: "enc-token", googleCalendarId: "primary" },
+    };
+    mockListItems.mockResolvedValue([makeItem("i1", "Today task", { dueDate: todayStr })]);
+    mockGetEvents.mockRejectedValue(new Error("calendar down"));
+
+    const result = await handleWeek(ctxWithGcal);
+
+    expect(result.text).toContain("Today task");
+    expect(result.itemIds).toEqual(["i1"]);
+  });
+});
+
+describe("handleList", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore" }).format(new Date());
+  /** Exact calendar-day arithmetic on the date string — no tz-instant drift near midnight. */
+  const shiftDay = (dateStr: string, days: number) => {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  };
+
+  it("lists pending items by default", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Buy milk"), makeItem("i2", "Write tests")]);
+
+    const result = await handleList("", ctx);
+
+    expect(mockListItems).toHaveBeenCalledWith("u1", { status: ["pending", "in_progress"] });
+    expect(result.text).toContain("Buy milk");
+    expect(result.text).toContain("Write tests");
+  });
+
+  it("lists all items when body is 'all'", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Buy milk"), makeItem("i2", "Done task")]);
+
+    await handleList("all", ctx);
+
+    expect(mockListItems).toHaveBeenCalledWith("u1", {});
+  });
+
+  it("returns empty message when no items", async () => {
+    mockListItems.mockResolvedValue([]);
+
+    const result = await handleList("", ctx);
+
+    expect(result.text).toBe("No items found.");
+    expect(result.itemIds).toBeUndefined();
+  });
+
+  it("groups items under due-date headers", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem("i1", "Undated thing"),
+      makeItem("i2", "Today thing", { dueDate: todayStr }),
+      makeItem("i3", "Late thing", { dueDate: shiftDay(todayStr, -3) }),
+    ]);
+
+    const result = await handleList("", ctx);
+
+    expect(result.text).toContain("<b>Overdue (1)</b>");
+    expect(result.text).toContain("<b>Today (1)</b>");
+    expect(result.text).toContain("<b>No date (1)</b>");
+  });
+
+  it("orders by due date rather than the order the query returned", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem("i1", "Next month", { dueDate: shiftDay(todayStr, 30) }),
+      makeItem("i2", "Tomorrow", { dueDate: shiftDay(todayStr, 1) }),
+      makeItem("i3", "Overdue", { dueDate: shiftDay(todayStr, -1) }),
+    ]);
+
+    const result = await handleList("", ctx);
+
+    expect(result.itemIds).toEqual(["i3", "i2", "i1"]);
+  });
+
+  it("returns itemIds in exactly printed order across group headers", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem("i2", "Second", { dueDate: shiftDay(todayStr, 1) }),
+      makeItem("i1", "First", { dueDate: shiftDay(todayStr, -1) }),
+      makeItem("i3", "Third"),
+    ]);
+
+    const result = await handleList("", ctx);
+
+    expect(result.itemIds).toEqual(["i1", "i2", "i3"]);
+    expect(result.text).toContain("1. 📋 First");
+    expect(result.text).toContain("2. 📋 Second");
+    expect(result.text).toContain("3. 📋 Third");
+  });
+
+  it("files completed items under Done rather than Overdue", async () => {
+    mockListItems.mockResolvedValue([
+      { ...makeItem("i1", "Finished"), status: "done" as const, dueDate: shiftDay(todayStr, -5) },
+      makeItem("i2", "Still open", { dueDate: shiftDay(todayStr, -5) }),
+    ]);
+
+    const result = await handleList("all", ctx);
+
+    expect(result.text).toContain("<b>Done (1)</b>");
+    expect(result.text).toContain("<b>Overdue (1)</b>");
+    expect(result.itemIds).toEqual(["i2", "i1"]);
+  });
+
+  it("HTML-escapes titles containing <, & and _", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Fix <script> & _underscore_ bug")]);
+
+    const result = await handleList("", ctx);
 
     expect(result.text).toContain("Fix &lt;script&gt; &amp; _underscore_ bug");
     expect(result.text).not.toContain("<script>");
@@ -485,6 +760,18 @@ describe("handleSearch", () => {
     expect(result.text).toContain("No items matching");
     expect(result.text).toContain("nonexistent");
     expect(result.itemIds).toBeUndefined();
+  });
+
+  it("marks reminder results with a bell and tasks with a clipboard", async () => {
+    mockSearchItems.mockResolvedValue([
+      makeResult("i1", "Take meds", "reminder"),
+      makeResult("i2", "Buy milk", "task"),
+    ] as never);
+
+    const result = await handleSearch("thing", ctx);
+
+    expect(result.text).toContain("1. 🔔 Take meds");
+    expect(result.text).toContain("2. 📋 Buy milk");
   });
 
   it("returns itemIds in printed order, capped at 10", async () => {
@@ -794,6 +1081,20 @@ describe("handleDue", () => {
     expect(result.text.indexOf("Assignment 2")).toBeLessThan(result.text.indexOf("Read chapter 3"));
   });
 
+  it("sorts within each group by due date, soonest first", async () => {
+    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
+    mockListItems.mockResolvedValue([
+      makeItem("i1", "Final exam", { kind: "exam", courseId: "c1", dueDate: "2026-12-01" }),
+      makeItem("i2", "Assignment 1", { kind: "assignment", courseId: "c1", dueDate: "2026-08-25" }),
+      makeItem("i3", "Read chapter 9", { kind: "class", courseId: "c1", dueDate: "2026-11-01" }),
+      makeItem("i4", "Read chapter 3", { kind: "class", courseId: "c1", dueDate: "2026-09-01" }),
+    ]);
+
+    const result = await handleDue("CS2040", ctx);
+
+    expect(result.itemIds).toEqual(["i2", "i1", "i4", "i3"]);
+  });
+
   it("reports no open items for the course", async () => {
     mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
     mockListItems.mockResolvedValue([]);
@@ -802,5 +1103,153 @@ describe("handleDue", () => {
 
     expect(result.text).toContain("CS2040");
     expect(result.itemIds).toBeUndefined();
+  });
+});
+
+describe("handleCourses archiving", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("lists active courses only, and says how many are archived", async () => {
+    mockListCourses.mockResolvedValue([
+      makeCourse("c1", "CS2030", "Programming Methodology II"),
+      makeCourse("c2", "CS2040", "Data Structures", true),
+    ] as never);
+
+    const result = await handleCourses("", ctx);
+
+    // One query, partitioned in memory — a user has a handful of courses, not a page of them.
+    expect(mockListCourses).toHaveBeenCalledTimes(1);
+    expect(result.text).toContain("CS2030");
+    expect(result.text).not.toContain("CS2040");
+    expect(result.text).toContain("1 archived");
+  });
+
+  it("omits the archived footer when nothing is archived", async () => {
+    mockListCourses.mockResolvedValue([makeCourse("c1", "CS2030", "Programming Methodology II")] as never);
+
+    const result = await handleCourses("", ctx);
+
+    expect(result.text).not.toContain("archived");
+  });
+
+  it("/courses all shows archived courses marked as such", async () => {
+    mockListCourses.mockResolvedValue([
+      makeCourse("c1", "CS2030", "Programming Methodology II"),
+      makeCourse("c2", "CS2040", "Data Structures", true),
+    ] as never);
+
+    const result = await handleCourses("all", ctx);
+
+    expect(mockListCourses).toHaveBeenCalledWith("u1", { includeArchived: true });
+    expect(result.text).toContain("CS2040");
+    expect(result.text).toContain("archived");
+  });
+
+  it("archives a course and reports how many items kept their tag", async () => {
+    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
+    mockCountCourseItems.mockResolvedValue(12);
+    mockSetCourseArchived.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", true) as never);
+
+    const result = await handleCourses("archive CS2040", ctx);
+
+    expect(mockSetCourseArchived).toHaveBeenCalledWith("c1", "u1", true);
+    expect(result.text).toContain("CS2040");
+    expect(result.text).toContain("12");
+  });
+
+  it("unarchives a course", async () => {
+    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", true) as never);
+    mockSetCourseArchived.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
+
+    const result = await handleCourses("unarchive CS2040", ctx);
+
+    expect(mockSetCourseArchived).toHaveBeenCalledWith("c1", "u1", false);
+    expect(result.text).toContain("CS2040");
+  });
+
+  it("says so when archiving a course that is already archived", async () => {
+    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", true) as never);
+
+    const result = await handleCourses("archive CS2040", ctx);
+
+    expect(mockSetCourseArchived).not.toHaveBeenCalled();
+    expect(result.text).toContain("already archived");
+  });
+
+  it("refuses to archive a course it cannot resolve", async () => {
+    mockFindCourse.mockResolvedValue(null);
+
+    const result = await handleCourses("archive PHYSICS", ctx);
+
+    expect(mockSetCourseArchived).not.toHaveBeenCalled();
+    expect(result.text).toContain("PHYSICS");
+  });
+
+  it("refuses a hard delete while items still reference the course, and points at archive", async () => {
+    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
+    mockCountCourseItems.mockResolvedValue(12);
+
+    const result = await handleCourses("remove CS2040", ctx);
+
+    expect(mockDeleteCourse).not.toHaveBeenCalled();
+    expect(result.text).toContain("12");
+    expect(result.text).toContain("archive");
+  });
+
+  it("hard deletes an empty course", async () => {
+    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2O40", "Typo Course") as never);
+    mockCountCourseItems.mockResolvedValue(0);
+    mockDeleteCourse.mockResolvedValue(undefined);
+
+    const result = await handleCourses("remove CS2O40", ctx);
+
+    expect(mockDeleteCourse).toHaveBeenCalledWith("c1", "u1");
+    expect(result.text).toContain("Deleted");
+  });
+
+  it("treats a vanished course on delete as a message, not a crash", async () => {
+    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
+    mockCountCourseItems.mockResolvedValue(0);
+    mockDeleteCourse.mockRejectedValue({ code: "P2025" });
+
+    const result = await handleCourses("remove CS2040", ctx);
+
+    expect(result.text).toContain("CS2040");
+  });
+
+  it("rejects archive with no code", async () => {
+    const result = await handleCourses("archive", ctx);
+
+    expect(result.text).toContain("Usage");
+    expect(mockFindCourse).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleExams with archived courses", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("still labels an exam whose course has been archived", async () => {
+    // Archiving retires the course but keeps its work readable — the code prefix is how you
+    // tell last semester's finals apart in the list, so it must survive the archive.
+    mockListItems.mockResolvedValue([
+      {
+        id: "i1",
+        title: "Final",
+        kind: "exam",
+        dueDate: "2026-08-25",
+        dueTime: null,
+        courseId: "c2",
+        status: "pending",
+        priority: "medium",
+        category: { name: "School" },
+        subtasks: [],
+      },
+    ] as never);
+    mockListCourses.mockResolvedValue([makeCourse("c2", "CS2040", "Data Structures", true)] as never);
+
+    const result = await handleExams(ctx);
+
+    expect(mockListCourses).toHaveBeenCalledWith("u1", { includeArchived: true });
+    expect(result.text).toContain("CS2040");
   });
 });

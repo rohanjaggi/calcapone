@@ -61,6 +61,9 @@ export type UndoOp =
   /** Recreates the Google event, then (if `item` is set) the in-app row pointing at the new event id. */
   | { op: "recreate_event"; calendarId: string; event: EventSnapshot; item?: ItemSnapshot & { id: string; title: string; categoryId: string } }
   | { op: "delete_category"; categoryId: string }
+  | { op: "delete_course"; courseId: string }
+  /** Puts a course back on the side of the archive line it was on before. */
+  | { op: "set_course_archived"; courseId: string; archived: boolean }
   /** Applied in order, best-effort: one user-visible action can be several writes (decomposing a task). */
   | { op: "sequence"; ops: UndoOp[] }
   | { op: "noop" };

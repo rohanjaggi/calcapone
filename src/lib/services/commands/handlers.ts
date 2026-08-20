@@ -1,7 +1,14 @@
 import { listItems, updateItem, createItem, OPEN_STATUSES } from "@/lib/services/item";
 import { listCategories } from "@/lib/services/category";
 import { searchItems } from "@/lib/services/search";
-import { createCourse, listCourses, findCourse } from "@/lib/services/course";
+import {
+  createCourse,
+  listCourses,
+  findCourse,
+  setCourseArchived,
+  countCourseItems,
+  deleteCourse,
+} from "@/lib/services/course";
 import { getEvents } from "@/lib/services/calendar";
 import { esc, b } from "@/lib/services/telegram";
 import { matchByTitle } from "@/lib/services/match-items";
@@ -16,8 +23,10 @@ import {
 } from "@/lib/tz";
 import { updateUserSettings } from "@/lib/services/user";
 import { latestListRef, resolvePosition } from "@/lib/services/message-ref";
+import { renderGroupedList, renderFlatList, sortByDue } from "./format";
 import { undoLast } from "@/lib/services/action-log";
 import type { ItemStatus } from "@/generated/prisma/enums";
+import type { Course } from "@/generated/prisma/client";
 import type { CommandContext, CommandReply } from "./index";
 
 export async function handleDone(body: string, ctx: CommandContext): Promise<CommandReply> {
@@ -217,21 +226,20 @@ export async function handleWeek(ctx: CommandContext): Promise<CommandReply> {
   return { text: parts.join("\n"), ...(itemIds.length > 0 ? { itemIds } : {}) };
 }
 
+/**
+ * Everything still open, grouped by when it's due.
+ *
+ * The flat version of this listed items in `listItems`' `priority desc, createdAt desc` order,
+ * which reads as noise: a task due in six weeks could sit above one that was due yesterday.
+ * Grouping is what makes the sort legible — the same shape `/today` and `/week` already use.
+ */
 export async function handleList(body: string, ctx: CommandContext): Promise<CommandReply> {
   const filters = body === "all" ? {} : { status: OPEN_STATUSES };
   const items = await listItems(ctx.userId, filters);
 
   if (items.length === 0) return { text: "No items found." };
 
-  const text = items
-    .map((item, i) => {
-      const icon = item.remindAt ? "🔔" : "📋";
-      const due = item.dueDate ? ` (${item.dueDate})` : "";
-      return `${i + 1}. ${icon} ${esc(item.title)}${due}`;
-    })
-    .join("\n");
-
-  return { text, itemIds: items.map((item) => item.id) };
+  return renderGroupedList(items, ctx.user.timezone);
 }
 
 /**
@@ -262,15 +270,9 @@ export async function handleSearch(body: string, ctx: CommandContext): Promise<C
   if (results.length === 0) return { text: `No items matching "${esc(body)}"` };
 
   const capped = results.slice(0, 10);
-  const text = capped
-    .map((item, i) => {
-      const icon = item.type === "reminder" ? "🔔" : "📋";
-      const due = item.dueDate ? ` (${item.dueDate})` : "";
-      return `${i + 1}. ${icon} ${esc(item.title)}${due}`;
-    })
-    .join("\n");
-
-  return { text, itemIds: capped.map((item) => item.id) };
+  // `sort: false` on purpose — these come back ranked by relevance, and reordering them by due
+  // date would bury the item the user actually described under whatever is merely due soonest.
+  return renderFlatList(capped, ctx.user.timezone, { sort: false });
 }
 
 export async function handleUndo(ctx: CommandContext): Promise<CommandReply> {
@@ -380,18 +382,141 @@ async function handleAddCourse(body: string, ctx: CommandContext): Promise<Comma
   }
 }
 
-/** `/courses` lists; `/courses add <CODE> <Name...>` creates — a course is not a Category, so it gets its own list. */
-export async function handleCourses(body: string, ctx: CommandContext): Promise<CommandReply> {
-  const addMatch = body.trim().match(/^add(?:\s+([\s\S]*))?$/i);
-  if (addMatch) return handleAddCourse(addMatch[1] ?? "", ctx);
+/** Prisma's "record to update/delete not found" code. */
+function isMissingRow(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === "P2025";
+}
 
-  const courses = await listCourses(ctx.userId);
-  if (courses.length === 0) {
+function pluralItems(count: number): string {
+  return count === 1 ? "1 item" : `${count} items`;
+}
+
+/**
+ * The course a subcommand names, or the reply explaining why we couldn't get one.
+ *
+ * Resolution goes through `findCourse`, which deliberately sees archived courses too —
+ * otherwise `/courses unarchive` could never reach the very rows it exists to bring back.
+ */
+async function resolveCourseArg(
+  verb: string,
+  body: string,
+  ctx: CommandContext
+): Promise<{ course: Course } | { reply: CommandReply }> {
+  const query = body.trim();
+  if (!query) return { reply: { text: `Usage: /courses ${verb} <CODE>` } };
+
+  const course = await findCourse(ctx.userId, query);
+  if (!course) {
+    return { reply: { text: `I don't know a course matching "${esc(query)}" — ${b("/courses all")} lists them.` } };
+  }
+  return { course };
+}
+
+/** `/courses archive|unarchive <CODE>`. Items keep their `courseId` either way — that's the point. */
+async function handleSetCourseArchived(
+  body: string,
+  ctx: CommandContext,
+  archived: boolean
+): Promise<CommandReply> {
+  const verb = archived ? "archive" : "unarchive";
+  const resolved = await resolveCourseArg(verb, body, ctx);
+  if ("reply" in resolved) return resolved.reply;
+  const { course } = resolved;
+
+  if (course.archived === archived) {
+    return { text: `${b(course.code)} is already ${archived ? "archived" : "active"}.` };
+  }
+
+  await setCourseArchived(course.id, ctx.userId, archived);
+  if (!archived) return { text: `Unarchived ${b(course.code)} — ${esc(course.name)}` };
+
+  // Say the item count out loud: "archive" reads like "delete" to most people, and the whole
+  // reason to prefer it is that nothing is lost.
+  const count = await countCourseItems(course.id, ctx.userId);
+  const kept = count === 0 ? "No items were tagged with it." : `${pluralItems(count)} kept their tag.`;
+  return { text: `Archived ${b(course.code)} — ${esc(course.name)}\n${kept}` };
+}
+
+/**
+ * `/courses remove <CODE>` — a real delete, for a course added by mistake.
+ *
+ * Gated on the course being empty. The FK is `onDelete: SetNull`, so deleting a course with
+ * work under it silently strips the tag off a semester's assignments; archiving is what the
+ * user almost always meant, so point them at it rather than doing the destructive thing.
+ */
+async function handleRemoveCourse(body: string, ctx: CommandContext): Promise<CommandReply> {
+  const resolved = await resolveCourseArg("remove", body, ctx);
+  if ("reply" in resolved) return resolved.reply;
+  const { course } = resolved;
+
+  const count = await countCourseItems(course.id, ctx.userId);
+  if (count > 0) {
+    return {
+      text:
+        `${b(course.code)} still has ${pluralItems(count)} — deleting it would untag them for good.\n` +
+        `${b(`/courses archive ${course.code}`)} hides the course and keeps the tag.`,
+    };
+  }
+
+  try {
+    await deleteCourse(course.id, ctx.userId);
+  } catch (error) {
+    // Raced with another delete. The user's goal is already met, so this isn't an error.
+    if (!isMissingRow(error)) throw error;
+    return { text: `${b(course.code)} is already gone.` };
+  }
+  return { text: `Deleted ${b(course.code)} — ${esc(course.name)}` };
+}
+
+/** `/courses` (active only) and `/courses all` (everything, archived marked). */
+async function handleListCourses(ctx: CommandContext, includeArchived: boolean): Promise<CommandReply> {
+  // Always one query: `listCourses` already sorts archived last, so the bare view is a filter
+  // over the same rows rather than a second round trip.
+  const all = await listCourses(ctx.userId, { includeArchived: true });
+  if (all.length === 0) {
     return { text: `No courses yet — tell me: ${b("add course CS2040 Data Structures")}` };
   }
 
-  const text = courses.map((course) => `${esc(course.code)} — ${esc(course.name)}`).join("\n");
-  return { text };
+  const shown = includeArchived ? all : all.filter((course) => !course.archived);
+  const archivedCount = all.length - all.filter((course) => !course.archived).length;
+
+  if (shown.length === 0) {
+    return { text: `No active courses — ${archivedCount} archived. ${b("/courses all")} shows them.` };
+  }
+
+  const lines = shown.map((course) => {
+    const suffix = course.archived ? " (archived)" : "";
+    return `${esc(course.code)} — ${esc(course.name)}${suffix}`;
+  });
+
+  const footer = !includeArchived && archivedCount > 0 ? `\n\n${archivedCount} archived — ${b("/courses all")}` : "";
+  return { text: lines.join("\n") + footer };
+}
+
+/**
+ * `/courses` and its subcommands. A course is not a Category, so it gets its own list —
+ * and its own retirement path, since a semester ends but its assignments stay worth reading.
+ */
+export async function handleCourses(body: string, ctx: CommandContext): Promise<CommandReply> {
+  // Verb split keeps the remainder raw so a multi-word course name survives intact.
+  const match = body.trim().match(/^(\S+)([\s\S]*)$/);
+  const verb = match?.[1]?.toLowerCase() ?? "";
+  const rest = match?.[2]?.trim() ?? "";
+
+  switch (verb) {
+    case "add":
+      return handleAddCourse(rest, ctx);
+    case "archive":
+      return handleSetCourseArchived(rest, ctx, true);
+    case "unarchive":
+      return handleSetCourseArchived(rest, ctx, false);
+    case "remove":
+      return handleRemoveCourse(rest, ctx);
+    case "all":
+      return handleListCourses(ctx, true);
+    default:
+      return handleListCourses(ctx, false);
+  }
 }
 
 export async function handleExams(ctx: CommandContext): Promise<CommandReply> {
@@ -400,7 +525,9 @@ export async function handleExams(ctx: CommandContext): Promise<CommandReply> {
 
   const [open, courses] = await Promise.all([
     listItems(ctx.userId, { status: OPEN_STATUSES }),
-    listCourses(ctx.userId),
+    // Archived courses included: this map only labels items that already exist, and an exam
+    // from a retired module still needs its code shown.
+    listCourses(ctx.userId, { includeArchived: true }),
   ]);
   const courseById = new Map(courses.map((course) => [course.id, course]));
 
@@ -429,7 +556,7 @@ export async function handleDue(body: string, ctx: CommandContext): Promise<Comm
 
   const course = await findCourse(ctx.userId, query);
   if (!course) {
-    return { text: `I don't know a course matching "${esc(query)}" — /courses lists them.` };
+    return { text: `I don't know a course matching "${esc(query)}" — ${b("/courses all")} lists them.` };
   }
 
   const open = await listItems(ctx.userId, { status: OPEN_STATUSES });
@@ -439,9 +566,12 @@ export async function handleDue(body: string, ctx: CommandContext): Promise<Comm
 
   // Assignments and exams are the things with real deadlines — surface them ahead of class
   // sessions and anything else merely tagged with the course.
+  // Graded work first, then everything else — but soonest-first inside each group, so the
+  // assignment due this week can't sit below the exam in December.
+  const tz = ctx.user.timezone;
   const primary = items.filter((item) => item.kind === "assignment" || item.kind === "exam");
   const rest = items.filter((item) => item.kind !== "assignment" && item.kind !== "exam");
-  const ordered = [...primary, ...rest];
+  const ordered = [...sortByDue(primary, tz), ...sortByDue(rest, tz)];
 
   const lines = ordered
     .map((item, i) => {

@@ -5,20 +5,33 @@ const mockPrisma = vi.hoisted(() => ({
     create: vi.fn(),
     findMany: vi.fn(),
     findFirst: vi.fn(),
+    update: vi.fn(),
     delete: vi.fn(),
+  },
+  item: {
+    count: vi.fn(),
   },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
-import { createCourse, listCourses, getCourse, deleteCourse, findCourse } from "@/lib/services/course";
+import {
+  createCourse,
+  listCourses,
+  getCourse,
+  deleteCourse,
+  findCourse,
+  setCourseArchived,
+  countCourseItems,
+} from "@/lib/services/course";
 
-const makeCourse = (id: string, code: string, name: string) => ({
+const makeCourse = (id: string, code: string, name: string, archived = false) => ({
   id,
   userId: "u1",
   code,
   name,
   color: null,
+  archived,
   createdAt: new Date(),
   updatedAt: new Date(),
 });
@@ -36,14 +49,25 @@ describe("CourseService", () => {
     expect(mockPrisma.course.create).toHaveBeenCalledWith({ data: input });
   });
 
-  it("lists courses ordered by code ascending", async () => {
+  it("lists only active courses by default, active before archived then by code", async () => {
     mockPrisma.course.findMany.mockResolvedValue([]);
 
     await listCourses("u1");
 
     expect(mockPrisma.course.findMany).toHaveBeenCalledWith({
+      where: { userId: "u1", archived: false },
+      orderBy: [{ archived: "asc" }, { code: "asc" }],
+    });
+  });
+
+  it("includes archived courses when asked", async () => {
+    mockPrisma.course.findMany.mockResolvedValue([]);
+
+    await listCourses("u1", { includeArchived: true });
+
+    expect(mockPrisma.course.findMany).toHaveBeenCalledWith({
       where: { userId: "u1" },
-      orderBy: { code: "asc" },
+      orderBy: [{ archived: "asc" }, { code: "asc" }],
     });
   });
 
@@ -62,6 +86,39 @@ describe("CourseService", () => {
     const result = await getCourse("missing", "u1");
 
     expect(result).toBeNull();
+  });
+
+  it("archives a course scoped to its owner", async () => {
+    mockPrisma.course.update.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", true));
+
+    const result = await setCourseArchived("c1", "u1", true);
+
+    expect(mockPrisma.course.update).toHaveBeenCalledWith({
+      where: { id: "c1", userId: "u1" },
+      data: { archived: true },
+    });
+    expect(result.archived).toBe(true);
+  });
+
+  it("unarchives a course", async () => {
+    mockPrisma.course.update.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", false));
+
+    const result = await setCourseArchived("c1", "u1", false);
+
+    expect(mockPrisma.course.update).toHaveBeenCalledWith({
+      where: { id: "c1", userId: "u1" },
+      data: { archived: false },
+    });
+    expect(result.archived).toBe(false);
+  });
+
+  it("counts the items still tagged with a course", async () => {
+    mockPrisma.item.count.mockResolvedValue(12);
+
+    const result = await countCourseItems("c1", "u1");
+
+    expect(mockPrisma.item.count).toHaveBeenCalledWith({ where: { courseId: "c1", userId: "u1" } });
+    expect(result).toBe(12);
   });
 
   it("deletes a course scoped to its owner", async () => {
@@ -121,6 +178,18 @@ describe("CourseService", () => {
       const result = await findCourse("u1", "physics");
 
       expect(result).toBeNull();
+    });
+
+    it("resolves an archived course, so /due and /exams still answer for last semester", async () => {
+      mockPrisma.course.findMany.mockResolvedValue([makeCourse("c1", "CS2040", "Data Structures", true)]);
+
+      const result = await findCourse("u1", "CS2040");
+
+      expect(result?.id).toBe("c1");
+      expect(mockPrisma.course.findMany).toHaveBeenCalledWith({
+        where: { userId: "u1" },
+        orderBy: [{ archived: "asc" }, { code: "asc" }],
+      });
     });
 
     it("returns null for a blank query", async () => {

@@ -161,6 +161,10 @@ model Course {
   code      String
   name      String
   color     String?
+  /// A finished semester's course. Hidden from the pickers and from `/courses`, but its items
+  /// keep their `courseId` — dropping the row instead would SetNull the tag off a term's work,
+  /// which is exactly the history `/due CS2040` and `/exams` exist to answer against.
+  archived  Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 

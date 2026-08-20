@@ -352,7 +352,7 @@ export async function setMyCommands() {
     { command: "search", description: "Find a task" },
     { command: "exams", description: "Upcoming exams, soonest first" },
     { command: "due", description: "What's outstanding for a course" },
-    { command: "courses", description: "List or add school courses" },
+    { command: "courses", description: "List, add or archive school courses" },
     { command: "undo", description: "Undo the last change" },
     { command: "alerts", description: "Warning time before a calendar event" },
     { command: "timezone", description: "Show or change your timezone" },

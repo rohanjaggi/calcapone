@@ -53,6 +53,11 @@ export function weekdayInTz(date: Date, tz: string): string {
   return formatInTimeZone(date, tz, "EEEE");
 }
 
+/** Abbreviated weekday name ("Mon") in `tz` — for list rows, where the full name is noise. */
+export function shortWeekdayInTz(date: Date, tz: string): string {
+  return formatInTimeZone(date, tz, "EEE");
+}
+
 /** Instant at local midnight of `dateStr` (YYYY-MM-DD) in `tz`. */
 export function startOfDayInTz(dateStr: string, tz: string): Date {
   return fromZonedTime(`${dateStr}T00:00:00`, tz);

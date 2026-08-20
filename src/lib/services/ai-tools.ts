@@ -224,9 +224,30 @@ export const AI_TOOLS = [
     },
   },
   {
+    name: "archive_course",
+    description:
+      "Retire a course at the end of a semester, or bring an archived one back. Archiving hides it from the course list but keeps every assignment and exam filed under it, so past work stays readable. Use this when the user says they are done with a module — never offer to delete a course.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        course: { type: "string", description: "Course code or name, e.g. 'CS2040'" },
+        archived: { type: "boolean", description: "true to archive, false to bring it back" },
+      },
+      required: ["course", "archived"],
+    },
+  },
+  {
     name: "list_courses",
     description: "List the user's registered school courses. Call this when the user names a course you have not seen.",
-    parameters: { type: "object" as const, properties: {} },
+    parameters: {
+      type: "object" as const,
+      properties: {
+        include_archived: {
+          type: "boolean",
+          description: "Include courses from finished semesters. Defaults to false.",
+        },
+      },
+    },
   },
   {
     name: "list_categories",
@@ -304,6 +325,7 @@ Rules:
 - When the user asks to cancel or delete a calendar event, use delete_calendar_event.
 - School work: file homework, essays and labs as kind "assignment", and tests, midterms and finals as kind "exam". Both get earlier reminders than a plain task, so getting the kind right matters more than the wording.
 - A course code like "CS2040" or "MA1521" means the course argument, not the category. If the course does not exist yet, call list_courses to check, then create_course before creating the item.
+- When a semester ends or the user says they are done with a module, use archive_course — it hides the course but keeps its assignments and exams readable. Never offer to delete a course.
 - For a repeating item, scope "series" changes or deletes the whole run and skip_next true skips just this one. Default to "this" unless the user clearly means all of them.
 
 Examples:
