@@ -6,30 +6,8 @@ import { DayTimeline } from "@/components/dashboard/day-timeline";
 import { AiInput } from "@/components/dashboard/ai-input";
 import { AiRecommendation } from "@/components/dashboard/ai-recommendation";
 import { useStreamed } from "@/lib/use-streamed";
-import type { Item, TimelineItem } from "@/lib/mock-data";
-
-function buildTimeline(items: Item[]): TimelineItem[] {
-  const timelineItems: TimelineItem[] = [];
-
-  for (const item of items) {
-    const time = item.remindAt ?? (item.dueDate && item.dueTime ? `${item.dueDate}T${item.dueTime}:00` : null);
-    if (!time) continue;
-
-    timelineItems.push({
-      id: item.id,
-      type: "item",
-      title: item.title,
-      time,
-      subtitle: `${item.category.name} · ${item.priority}`,
-      color: item.category.color,
-      isReminder: !!item.remindAt,
-      status: item.status,
-    });
-  }
-
-  timelineItems.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-  return timelineItems;
-}
+import { buildTimeline } from "@/lib/timeline";
+import type { Item } from "@/lib/mock-data";
 
 type Props = {
   userName: string;
@@ -37,11 +15,14 @@ type Props = {
   /** Streams in after the first paint — the stats row counts up from 0 when it lands. */
   eventCountPromise: Promise<number>;
   aiSuggestionEnabled: boolean;
+  timezone: string;
+  /** Today's "YYYY-MM-DD" in `timezone`, settled on the server so both renders agree. */
+  today: string;
 };
 
-export function DashboardClient({ userName, items, eventCountPromise, aiSuggestionEnabled }: Props) {
+export function DashboardClient({ userName, items, eventCountPromise, aiSuggestionEnabled, timezone, today }: Props) {
   const eventCount = useStreamed(eventCountPromise, 0);
-  const timeline = buildTimeline(items);
+  const timeline = buildTimeline(items, timezone, today);
   const pendingItems = items.filter((i) => i.status !== "done").length;
   const pendingReminders = items.filter((i) => i.remindAt && i.status !== "done").length;
 

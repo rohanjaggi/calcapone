@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { listItems } from "@/lib/services/item";
 import { getEvents } from "@/lib/services/calendar";
+import { todayInTz } from "@/lib/tz";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
 import { SearchDialog } from "@/components/search/search-dialog";
 
@@ -58,6 +59,8 @@ export default async function Dashboard() {
         items={serializedItems}
         eventCountPromise={eventCountPromise}
         aiSuggestionEnabled={user.aiSuggestionEnabled}
+        timezone={user.timezone}
+        today={todayInTz(user.timezone)}
       />
     </>
   );
