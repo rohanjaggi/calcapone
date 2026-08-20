@@ -118,6 +118,99 @@ function parseToolArgs(raw: string): Record<string, unknown> {
   }
 }
 
+/**
+ * Native OpenAI, over the Responses API.
+ *
+ * The GPT-5.6 family reasons by default, and `/v1/chat/completions` rejects function tools
+ * whenever a reasoning effort other than "none" is in play — which, because the default is
+ * server-side, happens even though we never send the parameter. Every model in our OpenAI
+ * picker except gpt-5.4-mini is in that family, so the agent path has to live here. The only
+ * way to keep tools on chat/completions would be to give up reasoning entirely.
+ *
+ * `callOpenAi` below stays for OpenRouter, which speaks chat/completions and not this.
+ */
+async function callOpenAiResponses({ apiKey, model, system, turns, tools }: AdapterInput): Promise<ProviderReply> {
+  const client = new OpenAI({ apiKey });
+
+  const input: OpenAI.Responses.ResponseInputItem[] = [];
+  for (const turn of turns) {
+    if (turn.role === "user") {
+      input.push(
+        turn.images?.length
+          ? {
+              role: "user",
+              content: [
+                { type: "input_text" as const, text: turn.content },
+                ...turn.images.map((image) => ({
+                  type: "input_image" as const,
+                  detail: "auto" as const,
+                  image_url: `data:${image.mimeType};base64,${image.base64}`,
+                })),
+              ],
+            }
+          : { role: "user", content: turn.content }
+      );
+    } else if (turn.role === "assistant") {
+      // Tool calls are their own top-level items here rather than a field on the message, so
+      // an assistant turn can expand to several — and to none at all when the model replied
+      // with a bare tool call. An empty message item is not worth sending.
+      if (turn.text) input.push({ role: "assistant", content: turn.text });
+      for (const call of turn.toolCalls) {
+        input.push({
+          type: "function_call",
+          call_id: call.id,
+          name: call.name,
+          arguments: JSON.stringify(call.args),
+        });
+      }
+    } else {
+      for (const result of turn.results) {
+        input.push({ type: "function_call_output", call_id: result.id, output: result.content });
+      }
+    }
+  }
+
+  const response = await client.responses.create({
+    model,
+    instructions: system,
+    input,
+    // Chat Completions kept nothing server-side; this endpoint stores by default. These are
+    // the user's own key and their own todos, so opt back out.
+    store: false,
+    ...(tools
+      ? {
+          tools: AI_TOOLS.map((t) => ({
+            type: "function" as const,
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+            // Strict mode is the default here and our schemas are not shaped for it (optional
+            // fields, no additionalProperties: false). Off matches chat/completions.
+            strict: false,
+          })),
+        }
+      : {}),
+  });
+
+  const output = response.output ?? [];
+
+  const text = output
+    .filter((item): item is OpenAI.Responses.ResponseOutputMessage => item.type === "message")
+    .flatMap((item) => item.content)
+    .filter((part): part is OpenAI.Responses.ResponseOutputText => part.type === "output_text")
+    .map((part) => part.text)
+    .join("");
+
+  const toolCalls = output
+    .filter((item): item is OpenAI.Responses.ResponseFunctionToolCall => item.type === "function_call")
+    // `call_id` is what a function_call_output has to echo back; `id` identifies the item
+    // itself and is not accepted there.
+    .map((call) => ({ id: call.call_id, name: call.name, args: parseToolArgs(call.arguments) }));
+
+  return { text, toolCalls };
+}
+
+/** Chat Completions — OpenRouter only; see `callOpenAiResponses` for why native OpenAI moved off it. */
 async function callOpenAi({ apiKey, model, system, turns, tools, baseURL }: AdapterInput): Promise<ProviderReply> {
   const client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
 
@@ -344,7 +437,7 @@ async function callGemini({ apiKey, model, system, turns, tools }: AdapterInput)
 function adapterFor(provider: string): (input: AdapterInput) => Promise<ProviderReply> {
   switch (provider) {
     case "openai":
-      return callOpenAi;
+      return callOpenAiResponses;
     case "openrouter":
       return (input) => callOpenAi({ ...input, baseURL: "https://openrouter.ai/api/v1" });
     case "anthropic":
