@@ -8,6 +8,7 @@ export type DueEventReminder = {
   title: string;
   startsAt: Date;
   timezone: string;
+  /** Negative for an event that already started (a ping held back by quiet hours) — reads as "now". */
   minutesUntil: number;
 };
 
@@ -19,13 +20,21 @@ export type DueEventReminder = {
  */
 const MAX_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * How long past its start an event still counts as due. A ping deferred by quiet hours is
+ * left unclaimed for the next tick to pick up, so it has to survive the start time it was
+ * counting down to — without this grace the event simply drops out of the query at `startsAt`
+ * and the ping is lost rather than delayed. Beyond it the ping is stale enough to be noise.
+ */
+const START_GRACE_MS = 30 * 60 * 1000;
+
 /** Events whose lead time has arrived and which have not pinged for this start time yet. */
 export async function findDueEventReminders(now: Date = new Date()): Promise<DueEventReminder[]> {
   const candidates = await prisma.calendarEvent.findMany({
     where: {
       reminderSentAt: null,
       allDay: false,
-      startsAt: { gt: now, lte: new Date(now.getTime() + MAX_LOOKAHEAD_MS) },
+      startsAt: { gt: new Date(now.getTime() - START_GRACE_MS), lte: new Date(now.getTime() + MAX_LOOKAHEAD_MS) },
       user: { eventReminderMinutes: { not: null } },
     },
     include: {
@@ -43,7 +52,7 @@ export async function findDueEventReminders(now: Date = new Date()): Promise<Due
     if (leadMinutes == null) continue;
 
     const msUntilStart = event.startsAt.getTime() - now.getTime();
-    if (msUntilStart <= 0 || msUntilStart > leadMinutes * 60_000) continue;
+    if (msUntilStart < -START_GRACE_MS || msUntilStart > leadMinutes * 60_000) continue;
 
     due.push({
       eventId: event.id,

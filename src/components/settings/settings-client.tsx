@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { HelpCircle, ChevronRight, LogOut } from "lucide-react";
+import { HelpCircle, ChevronRight, LogOut, Settings } from "lucide-react";
 import { AiProviderForm } from "@/components/settings/ai-provider-form";
 import { TimezoneSelect } from "@/components/settings/timezone-select";
 import { NotificationsConfig } from "@/components/settings/notifications-config";
@@ -84,12 +84,12 @@ export function SettingsClient({ settings }: Props) {
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         className="px-5 pt-6 pb-2"
       >
-        <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase">
-          Configuration
-        </p>
-        <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground mt-0.5 tracking-tight">
-          Settings
-        </h1>
+        <div className="flex items-center gap-2.5">
+          <Settings className="w-6 h-6 text-primary shrink-0" />
+          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
+            Settings
+          </h1>
+        </div>
       </motion.header>
       <div className="px-5 mt-5 space-y-4">
         <motion.div

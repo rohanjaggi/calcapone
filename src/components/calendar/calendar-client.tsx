@@ -309,15 +309,12 @@ export function CalendarClient({ items, googleFeedPromise, hasGoogleCalendar, ca
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         className="px-5 pt-6 pb-2"
       >
-        <div className="flex items-center gap-2 mb-0.5">
-          <CalendarDays className="w-3.5 h-3.5 text-muted-foreground" />
-          <p className="text-muted-foreground text-xs font-medium tracking-[0.15em] uppercase">
-            Schedule
-          </p>
+        <div className="flex items-center gap-2.5">
+          <CalendarDays className="w-6 h-6 text-primary shrink-0" />
+          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
+            Calendar
+          </h1>
         </div>
-        <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
-          Calendar
-        </h1>
       </motion.header>
 
       {/* Month navigation */}

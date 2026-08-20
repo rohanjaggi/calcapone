@@ -74,7 +74,14 @@ export async function resolveConflict(
       console.error("[conflict] push to Google failed:", error instanceof Error ? error.message : error);
       return { ok: false, reason: "I couldn't write that to Google Calendar." };
     }
-    await prisma.item.updateMany({ where: { id: item.id, userId: user.id }, data: { calendarSyncedAt: now } });
+    // `updatedAt` is stamped explicitly alongside it: left to @updatedAt it lands a few ms
+    // later, and `updatedAt > calendarSyncedAt` is the local half of the conflict test — the
+    // pair would still read as "changed on both sides" and the next sync would re-raise the
+    // conflict this button just settled.
+    await prisma.item.updateMany({
+      where: { id: item.id, userId: user.id },
+      data: { calendarSyncedAt: now, updatedAt: now },
+    });
     return { ok: true, text: `📱 Kept your version of ${b(item.title)} — Google updated to match.`, toast: "Kept yours" };
   }
 
@@ -90,7 +97,14 @@ export async function resolveConflict(
     title: mirrored.title,
     dueDate: formatDateInTz(mirrored.startsAt, user.timezone),
     dueTime: mirrored.allDay ? null : formatHHmmInTz(mirrored.startsAt, user.timezone),
-    calendarSyncedAt: now,
+  });
+
+  // The agreement is recorded after that write, not inside it: `updateItem` lets Prisma stamp
+  // @updatedAt at write time, so a `calendarSyncedAt` set in the same call would already be the
+  // older of the two and the next Google-side edit would re-raise this same conflict.
+  await prisma.item.updateMany({
+    where: { id: item.id, userId: user.id },
+    data: { calendarSyncedAt: now, updatedAt: now },
   });
 
   const when = `${formatDateInTz(mirrored.startsAt, user.timezone)}${mirrored.allDay ? "" : ` ${formatHHmmInTz(mirrored.startsAt, user.timezone)}`}`;

@@ -323,6 +323,13 @@ export type SyncedEvent = {
   startsAt: Date | null;
   endsAt: Date | null;
   allDay: boolean;
+  /**
+   * The calendar's own "YYYY-MM-DD" for an all-day event, null otherwise. Carried alongside
+   * `startsAt` because that instant only means the right day when read back in the calendar's
+   * timezone — a consumer formatting it in the user's zone lands a day off whenever the two
+   * straddle midnight.
+   */
+  allDayDate: string | null;
   transparent: boolean;
   googleUpdatedAt: Date | null;
   cancelled: boolean;
@@ -353,15 +360,20 @@ function parseGoogleInstant(
 
 /**
  * One page-walk of events.list, shared by the full and incremental passes — the only
- * difference Google sees between them is whether `syncToken` is on the request. `timeMin`,
- * `timeMax`, `orderBy` and `q` are deliberately never set here: Google rejects all of them
- * outright once a `syncToken` is present, and setting them only on the full pass would make
- * the two passes cover different event sets, defeating the point of a sync cursor.
+ * difference Google sees between them is whether `syncToken` is on the request.
+ *
+ * `timeMin` is the single exception, and only on the full pass: Google rejects it outright
+ * once a `syncToken` is present, but it folds the original request's window into the token it
+ * hands back, so the bound carries into the incremental passes instead of making the two cover
+ * different event sets. `timeMax`, `orderBy` and `q` stay off entirely — a `timeMax` frozen
+ * into the token at first-sync time would hide events as the mirror's forward window slid past
+ * it, which is exactly the failure `timeMin` doesn't have (older events are dropped anyway).
  */
 async function fetchEventChanges(
   calendar: calendar_v3.Calendar,
   calendarId: string,
-  syncToken: string | null
+  syncToken: string | null,
+  timeMin: Date | null = null
 ): Promise<{ events: SyncedEvent[]; nextSyncToken: string | null }> {
   const events: SyncedEvent[] = [];
   let pageToken: string | undefined;
@@ -374,7 +386,7 @@ async function fetchEventChanges(
       singleEvents: true,
       showDeleted: true,
       maxResults: 2500,
-      ...(syncToken ? { syncToken } : {}),
+      ...(syncToken ? { syncToken } : timeMin ? { timeMin: timeMin.toISOString() } : {}),
       ...(pageToken ? { pageToken } : {}),
     });
 
@@ -389,6 +401,7 @@ async function fetchEventChanges(
         startsAt: cancelled ? null : parseGoogleInstant(event.start, calendarTz),
         endsAt: cancelled ? null : parseGoogleInstant(event.end, calendarTz),
         allDay: !cancelled && !event.start?.dateTime,
+        allDayDate: cancelled ? null : event.start?.date ?? null,
         transparent: event.transparency === "transparent",
         googleUpdatedAt: event.updated ? new Date(event.updated) : null,
         cancelled,
@@ -405,6 +418,17 @@ async function fetchEventChanges(
 }
 
 /**
+ * How far back a tokenless full sync reaches. Unbounded, Google expands the calendar's entire
+ * recurring history into single events — years of standups on a personal calendar — which the
+ * caller then applies one DB round-trip at a time, overrunning the cron invocation's budget
+ * and, because the sync token is only persisted at the very end, discarding all of it and
+ * retrying identically on every tick. Anything older than this is dropped by the local mirror
+ * window anyway (MIRROR_PAST_MS in calendar-sync; kept in step with it by hand, since
+ * importing it here would close an import cycle).
+ */
+const FULL_SYNC_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
  * One incremental sync pass. Pass the stored token; get back the changes since it was issued
  * plus the token for next time.
  *
@@ -418,9 +442,11 @@ export async function listEventChanges(
   calendarId: string,
   syncToken: string | null
 ): Promise<{ events: SyncedEvent[]; nextSyncToken: string | null; fullResync: boolean }> {
+  const fullSyncFrom = new Date(Date.now() - FULL_SYNC_LOOKBACK_MS);
+
   return withCalendar(encryptedRefreshToken, async (calendar) => {
     if (!syncToken) {
-      const result = await fetchEventChanges(calendar, calendarId, null);
+      const result = await fetchEventChanges(calendar, calendarId, null, fullSyncFrom);
       return { ...result, fullResync: true };
     }
 
@@ -429,7 +455,7 @@ export async function listEventChanges(
       return { ...result, fullResync: false };
     } catch (error) {
       if (!isSyncTokenExpired(error)) throw error;
-      const result = await fetchEventChanges(calendar, calendarId, null);
+      const result = await fetchEventChanges(calendar, calendarId, null, fullSyncFrom);
       return { ...result, fullResync: true };
     }
   });

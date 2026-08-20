@@ -148,9 +148,15 @@ async function reconcileItem(user: SyncUser, change: SyncedEvent, now: Date): Pr
     where: { id: item.id, userId: user.id },
     data: {
       title: change.title,
-      dueDate: formatDateInTz(change.startsAt, user.timezone),
+      // An all-day event's date belongs to the calendar's own timezone; re-deriving it from the
+      // instant in the *user's* zone lands a day off whenever the two straddle midnight.
+      dueDate: change.allDayDate ?? formatDateInTz(change.startsAt, user.timezone),
       dueTime: change.allDay ? null : formatHHmmInTz(change.startsAt, user.timezone),
       calendarSyncedAt: now,
+      // `updatedAt` is stamped explicitly rather than left to @updatedAt: the automatic value
+      // lands a few ms after `now`, which would make `updatedAt > calendarSyncedAt` — the local
+      // half of the conflict test — true forever, so the pair could never read as "in agreement".
+      updatedAt: now,
     },
   });
   return null;
