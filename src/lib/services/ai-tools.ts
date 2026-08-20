@@ -1,4 +1,4 @@
-import { offsetInTz } from "@/lib/tz";
+import { offsetInTz, formatInTz } from "@/lib/tz";
 export const AI_TOOLS = [
   {
     name: "create_item",
@@ -10,6 +10,8 @@ export const AI_TOOLS = [
         description: { type: "string", description: "Optional longer description" },
         priority: { type: "string", enum: ["low", "medium", "high"], description: "Priority level" },
         category: { type: "string", description: "Category name (e.g. Work, Personal). Required." },
+        kind: { type: "string", enum: ["task", "assignment", "exam", "class"], description: "What this is. Use 'assignment' for homework/essays/labs with a hand-in date, 'exam' for tests/midterms/finals, 'class' for a lecture or tutorial. Exams and assignments get earlier reminders than plain tasks." },
+        course: { type: "string", description: "Course code or name for school work, e.g. 'CS2040'. Must already exist — call list_courses if unsure, create_course to add one." },
         due_date: { type: "string", description: "Due date in YYYY-MM-DD format" },
         due_time: { type: "string", description: "Due time in HH:mm format (24h)" },
         remind_at: { type: "string", description: "When to send the Telegram reminder: ISO 8601 datetime WITH the user's UTC offset, e.g. 2026-08-20T15:00:00+08:00" },
@@ -40,6 +42,8 @@ export const AI_TOOLS = [
       properties: {
         status: { type: "string", enum: ["pending", "in_progress", "done"], description: "Filter by status" },
         category: { type: "string", description: "Filter by category name" },
+        kind: { type: "string", enum: ["task", "assignment", "exam", "class"], description: "Filter by kind — use 'exam' for \"when are my exams\", 'assignment' for \"what homework do I have\"" },
+        course: { type: "string", description: "Filter by course code or name, e.g. 'CS2040'" },
       },
     },
   },
@@ -61,6 +65,7 @@ export const AI_TOOLS = [
       type: "object" as const,
       properties: {
         title: { type: "string", description: "The title of the item to delete (fuzzy match)" },
+        scope: { type: "string", enum: ["this", "series"], description: "For a repeating item: 'this' deletes only this occurrence (default), 'series' deletes the whole run. Use 'series' for \"stop the daily meds reminder\"." },
       },
       required: ["title"],
     },
@@ -73,6 +78,10 @@ export const AI_TOOLS = [
       properties: {
         query: { type: "string", description: "The title or partial title to find the item" },
         title: { type: "string", description: "New title" },
+        kind: { type: "string", enum: ["task", "assignment", "exam", "class"], description: "What this is. Use 'assignment' for homework/essays/labs with a hand-in date, 'exam' for tests/midterms/finals, 'class' for a lecture or tutorial. Exams and assignments get earlier reminders than plain tasks." },
+        course: { type: "string", description: "Course code or name for school work, e.g. 'CS2040'. Must already exist — call list_courses if unsure, create_course to add one." },
+        scope: { type: "string", enum: ["this", "series"], description: "For a repeating item: 'this' changes only this occurrence (default), 'series' changes every occurrence." },
+        skip_next: { type: "boolean", description: "Skip this occurrence of a repeating item and move it to the next one, without completing it. Use for \"skip this week\"." },
         due_date: { type: ["string", "null"] as unknown as "string", description: "New due date YYYY-MM-DD, or null to clear" },
         due_time: { type: ["string", "null"] as unknown as "string", description: "New due time HH:mm, or null to clear" },
         remind_at: { type: ["string", "null"] as unknown as "string", description: "New reminder time: ISO 8601 datetime with the user's UTC offset (e.g. 2026-08-20T15:00:00+08:00), or null to clear" },
@@ -202,6 +211,24 @@ export const AI_TOOLS = [
     },
   },
   {
+    name: "create_course",
+    description: "Register a school course/module so assignments and exams can be filed under it. Do this before using the `course` argument on anything else.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        code: { type: "string", description: "Short code, e.g. CS2040" },
+        name: { type: "string", description: "Full course name, e.g. Data Structures and Algorithms" },
+        color: { type: "string", description: "Hex color code (e.g. #B8860B)" },
+      },
+      required: ["code", "name"],
+    },
+  },
+  {
+    name: "list_courses",
+    description: "List the user's registered school courses. Call this when the user names a course you have not seen.",
+    parameters: { type: "object" as const, properties: {} },
+  },
+  {
     name: "list_categories",
     description: "List the user's categories",
     parameters: { type: "object" as const, properties: {} },
@@ -248,14 +275,15 @@ export function buildSystemPrompt(user: { telegramUsername: string; timezone: st
     : "No categories exist yet.";
 
   const nowDate = new Date();
-  const now = nowDate.toLocaleString("en-US", { timeZone: user.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
   const offset = offsetInTz(nowDate, user.timezone);
+  // Minute precision, not second: every distinct prefix is a fresh prompt-cache entry, and a
+  // ticking seconds field guarantees a miss on every single call.
+  const now = formatInTz(nowDate, user.timezone);
 
   return `You are Calcapone, a smart personal assistant that helps manage calendar, todos, and reminders.
 
 User: ${user.telegramUsername}
 Timezone: ${user.timezone} (UTC offset ${offset})
-Current time in user's timezone: ${now}
 
 ${categoryList}
 
@@ -263,14 +291,20 @@ Rules:
 - All datetimes you pass to tools (remind_at, start_time, end_time, start_date, end_date) MUST be ISO 8601 with the user's UTC offset ${offset}, e.g. 2026-08-20T15:00:00${offset}. Never send a naive or UTC-shifted time.
 - When the user mentions a time without a date, assume today.
 - When the user says "tomorrow", use the next calendar day in their timezone.
+- You will see the result of every tool you call, so chain them: look something up first, then act on what you found. Do not guess an answer you could look up.
+- After a read-only tool (list_items, search_items, get_calendar, list_categories, suggest_schedule) the user sees only YOUR summary, not the raw output — so answer the question in your own words.
+- After a tool that changes something the user already sees a receipt, so acknowledge briefly or say nothing at all rather than repeating it.
+- If a tool reports it matched several items, stop and let the user choose. Do not re-call it with a guess.
 - If create_calendar_event reports a conflict and the user then confirms ("yes", "go ahead", "book it anyway"), call create_calendar_event again with the same details plus confirm_conflict: true.
-- Always confirm what you did after performing an action.
 - Keep responses concise — this is a Telegram chat.
 - If the user references "that", "it", or "the reminder/task" without a name, check conversation history for context.
 - When creating tasks, ONLY use one of the existing categories listed above. Never invent new category names.
 - Calendar events are separate from tasks — do NOT create an in-app task when creating a calendar event.
 - When the user asks to move, reschedule, or change a calendar event, use update_calendar_event.
 - When the user asks to cancel or delete a calendar event, use delete_calendar_event.
+- School work: file homework, essays and labs as kind "assignment", and tests, midterms and finals as kind "exam". Both get earlier reminders than a plain task, so getting the kind right matters more than the wording.
+- A course code like "CS2040" or "MA1521" means the course argument, not the category. If the course does not exist yet, call list_courses to check, then create_course before creating the item.
+- For a repeating item, scope "series" changes or deletes the whole run and skip_next true skips just this one. Default to "this" unless the user clearly means all of them.
 
 Examples:
 User: "remind me to call mom tomorrow at 3pm"
@@ -284,6 +318,12 @@ User: "lunch with Sarah tomorrow noon to 1pm"
 
 User: "actually make that 2pm" (referring to a previously created item)
 → Use update_item with query matching the recently mentioned task
+
+User: "find the dentist thing and push it to Friday"
+→ Use search_items to find it, read the result, then update_item with the title you found
+
+User: "what's on this week?"
+→ Use get_calendar and list_items, then summarise both in a few lines — do not paste the raw output
 
 User: "remind me every other Tuesday at 10am to check reports"
 → Use create_item with remind_at and recurrence: { frequency: "weekly", interval: 2, byDay: ["TU"] }
@@ -301,5 +341,22 @@ User: "change my weekly standup to every 2 weeks"
 → Use update_item with recurrence: { frequency: "weekly", interval: 2 }
 
 User: "stop that recurring reminder"
-→ Use update_item with clear_recurrence: true`;
+→ Use update_item with clear_recurrence: true
+
+User: "CS2040 assignment 2 due next Friday 2359"
+→ Use create_item with title "Assignment 2", kind "assignment", course "CS2040", due_date next Friday, due_time "23:59"
+
+User: "my CS2040 midterm is week 8 wednesday"
+→ Use create_item with kind "exam", course "CS2040", and the resolved date
+
+User: "what's due for CS2040?"
+→ Use list_items with course "CS2040", then summarise
+
+User: "stop the daily meds reminder"
+→ Use delete_item with scope "series"
+
+User: "skip this week's standup"
+→ Use update_item with query "standup" and skip_next: true
+
+Current time in the user's timezone: ${now}`;
 }

@@ -3,6 +3,7 @@ import { google } from "googleapis";
 import type { calendar_v3 } from "googleapis";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { decrypt } from "@/lib/encryption";
+import { startOfDayInTz } from "@/lib/tz";
 
 function getOAuthClient() {
   return new google.auth.OAuth2(
@@ -306,5 +307,130 @@ export async function getEvents(
     } while (pageToken);
 
     return events;
+  });
+}
+
+/**
+ * A change since the last sync: either the event's current state, or (`cancelled: true`) word
+ * that it's gone. Google's cancelled-event payload is minimal — id and status, nothing else —
+ * so every other field is null/false on a cancellation rather than stale carried-over data.
+ */
+export type SyncedEvent = {
+  googleEventId: string;
+  title: string;
+  description: string | null;
+  /** null for a cancelled/deleted event — the caller removes it from the mirror. */
+  startsAt: Date | null;
+  endsAt: Date | null;
+  allDay: boolean;
+  transparent: boolean;
+  googleUpdatedAt: Date | null;
+  cancelled: boolean;
+};
+
+/** Google's answer to an aged-out sync token — the only valid response is a fresh full sync. */
+function isSyncTokenExpired(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as { code?: number | string; response?: { status?: number } };
+  return err.response?.status === 410 || Number(err.code) === 410;
+}
+
+/**
+ * An all-day date ("2026-08-20") carries no offset, so it means midnight in *some* zone —
+ * Google's answer is the calendar's own zone (returned once per list response), not whatever
+ * zone happens to be running this server. A `dateTime` already carries an explicit offset and
+ * parses unambiguously on its own.
+ */
+function parseGoogleInstant(
+  value: calendar_v3.Schema$EventDateTime | undefined,
+  calendarTz: string
+): Date | null {
+  if (!value) return null;
+  if (value.dateTime) return new Date(value.dateTime);
+  if (value.date) return startOfDayInTz(value.date, calendarTz);
+  return null;
+}
+
+/**
+ * One page-walk of events.list, shared by the full and incremental passes — the only
+ * difference Google sees between them is whether `syncToken` is on the request. `timeMin`,
+ * `timeMax`, `orderBy` and `q` are deliberately never set here: Google rejects all of them
+ * outright once a `syncToken` is present, and setting them only on the full pass would make
+ * the two passes cover different event sets, defeating the point of a sync cursor.
+ */
+async function fetchEventChanges(
+  calendar: calendar_v3.Calendar,
+  calendarId: string,
+  syncToken: string | null
+): Promise<{ events: SyncedEvent[]; nextSyncToken: string | null }> {
+  const events: SyncedEvent[] = [];
+  let pageToken: string | undefined;
+  let nextSyncToken: string | null = null;
+  let calendarTz = "UTC";
+
+  do {
+    const response = await calendar.events.list({
+      calendarId: calendarId || "primary",
+      singleEvents: true,
+      showDeleted: true,
+      maxResults: 2500,
+      ...(syncToken ? { syncToken } : {}),
+      ...(pageToken ? { pageToken } : {}),
+    });
+
+    calendarTz = response.data.timeZone ?? calendarTz;
+
+    for (const event of response.data.items ?? []) {
+      const cancelled = event.status === "cancelled";
+      events.push({
+        googleEventId: event.id!,
+        title: event.summary ?? "(No title)",
+        description: event.description ?? null,
+        startsAt: cancelled ? null : parseGoogleInstant(event.start, calendarTz),
+        endsAt: cancelled ? null : parseGoogleInstant(event.end, calendarTz),
+        allDay: !cancelled && !event.start?.dateTime,
+        transparent: event.transparency === "transparent",
+        googleUpdatedAt: event.updated ? new Date(event.updated) : null,
+        cancelled,
+      });
+    }
+
+    pageToken = response.data.nextPageToken ?? undefined;
+    // Only the last page carries this — grab it whenever it shows up rather than assuming
+    // it's the final iteration, since an empty final page still needs to report it.
+    if (response.data.nextSyncToken) nextSyncToken = response.data.nextSyncToken;
+  } while (pageToken);
+
+  return { events, nextSyncToken };
+}
+
+/**
+ * One incremental sync pass. Pass the stored token; get back the changes since it was issued
+ * plus the token for next time.
+ *
+ * No token in → full sync (there's nothing to diff against). A token that Google has since
+ * aged out answers 410, and the only valid recovery is a full sync — `fullResync` tells the
+ * caller these results can't be patched onto its existing mirror and the mirror has to be
+ * rebuilt instead.
+ */
+export async function listEventChanges(
+  encryptedRefreshToken: string,
+  calendarId: string,
+  syncToken: string | null
+): Promise<{ events: SyncedEvent[]; nextSyncToken: string | null; fullResync: boolean }> {
+  return withCalendar(encryptedRefreshToken, async (calendar) => {
+    if (!syncToken) {
+      const result = await fetchEventChanges(calendar, calendarId, null);
+      return { ...result, fullResync: true };
+    }
+
+    try {
+      const result = await fetchEventChanges(calendar, calendarId, syncToken);
+      return { ...result, fullResync: false };
+    } catch (error) {
+      if (!isSyncTokenExpired(error)) throw error;
+      const result = await fetchEventChanges(calendar, calendarId, null);
+      return { ...result, fullResync: true };
+    }
   });
 }

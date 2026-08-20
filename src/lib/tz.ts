@@ -98,3 +98,8 @@ export function isSelectableTz(tz: string): boolean {
   if (!/^[A-Za-z][A-Za-z_+-]*\/[A-Za-z0-9_+\-\/]+$/.test(tz)) return false;
   return isValidTz(tz);
 }
+
+/** "2026-08-20 15:04" in `tz` — minute precision, for prompts and logs. */
+export function formatInTz(date: Date, tz: string): string {
+  return formatInTimeZone(date, tz, "yyyy-MM-dd HH:mm");
+}

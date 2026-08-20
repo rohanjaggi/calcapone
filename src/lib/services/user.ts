@@ -58,6 +58,7 @@ export async function updateUserSettings(
     notifyMinPriority?: Priority;
     digestDay?: number;
     digestTime?: string;
+    eventReminderMinutes?: number | null;
   }
 ) {
   const updateData = { ...data };
