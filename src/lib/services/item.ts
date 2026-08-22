@@ -86,6 +86,44 @@ export async function listItems(userId: string, filters: ItemFilters = {}) {
   });
 }
 
+/**
+ * The board pages' item set: everything still open, plus recently completed work.
+ *
+ * `listItems(userId)` with no filter returns every item the user has ever created, including
+ * every completed one, on every page load — fine at a few hundred rows, a cliff in the low
+ * thousands. Open items stay unbounded because an overdue task from last year is still work;
+ * completed items are history, so they are capped to a recent window.
+ */
+export async function listItemsForBoard(
+  userId: string,
+  { days, take, categoryId }: { days: number; take: number; categoryId?: string },
+  now: Date = new Date()
+) {
+  const include = {
+    category: true,
+    subtasks: { include: { category: true }, orderBy: { createdAt: "asc" as const } },
+  };
+  const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+
+  const scope = { userId, parentId: null, ...(categoryId ? { categoryId } : {}) };
+
+  const [open, done] = await Promise.all([
+    prisma.item.findMany({
+      where: { ...scope, status: { in: OPEN_STATUSES } },
+      include,
+      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+    }),
+    prisma.item.findMany({
+      where: { ...scope, status: "done", updatedAt: { gte: cutoff } },
+      include,
+      orderBy: { updatedAt: "desc" },
+      take,
+    }),
+  ]);
+
+  return [...open, ...done];
+}
+
 export async function listSubtasks(parentId: string, userId: string) {
   return prisma.item.findMany({
     where: { parentId, userId },

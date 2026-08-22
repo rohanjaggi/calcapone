@@ -22,6 +22,7 @@ vi.mock("@/lib/services/embeddings", () => ({
 import {
   createItem,
   listItems,
+  listItemsForBoard,
   updateItem,
   deleteItem,
   getDueItems,
@@ -110,6 +111,42 @@ describe("ItemService", () => {
         where: { userId: "u1", parentId: null, status: { in: ["pending", "in_progress"] } },
       })
     );
+  });
+
+  describe("listItemsForBoard", () => {
+    it("asks for open items in full and done items only inside the window", async () => {
+      mockPrisma.item.findMany.mockResolvedValue([]);
+      await listItemsForBoard("u1", { days: 14, take: 50 });
+
+      expect(mockPrisma.item.findMany).toHaveBeenCalledTimes(2);
+      const [openCall, doneCall] = mockPrisma.item.findMany.mock.calls.map((c) => c[0]);
+
+      // Everything still open, however old -- an overdue task from last year still matters.
+      expect(openCall.where.status).toEqual({ in: ["pending", "in_progress"] });
+      expect(openCall.take).toBeUndefined();
+
+      // Completed work is history: recent only, and capped.
+      expect(doneCall.where.status).toBe("done");
+      expect(doneCall.take).toBe(50);
+      expect(doneCall.orderBy).toEqual({ updatedAt: "desc" });
+      expect(doneCall.where.updatedAt.gte).toBeInstanceOf(Date);
+    });
+
+    it("concatenates both result sets", async () => {
+      mockPrisma.item.findMany
+        .mockResolvedValueOnce([{ id: "open" }])
+        .mockResolvedValueOnce([{ id: "done" }]);
+      const rows = await listItemsForBoard("u1", { days: 14, take: 50 });
+      expect(rows.map((r: { id: string }) => r.id)).toEqual(["open", "done"]);
+    });
+
+    it("computes the cutoff from the days argument", async () => {
+      mockPrisma.item.findMany.mockResolvedValue([]);
+      const now = new Date("2026-08-20T00:00:00.000Z");
+      await listItemsForBoard("u1", { days: 14, take: 50 }, now);
+      const doneCall = mockPrisma.item.findMany.mock.calls[1][0];
+      expect(doneCall.where.updatedAt.gte).toEqual(new Date("2026-08-06T00:00:00.000Z"));
+    });
   });
 
   describe("notificationStage reset", () => {
