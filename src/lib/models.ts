@@ -40,7 +40,3 @@ export const AI_MODELS: Record<string, ModelOption[]> = {
 };
 
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_DEFAULTS);
-
-export function isKnownModel(provider: string, model: string): boolean {
-  return (AI_MODELS[provider] ?? []).some((m) => m.id === model);
-}
