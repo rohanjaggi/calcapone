@@ -50,7 +50,7 @@ next-env.d.ts
 
 #others
 .claude/
-docs/
+docs/*
 !docs/superpowers/
 !docs/superpowers/**
 .superpowers/
