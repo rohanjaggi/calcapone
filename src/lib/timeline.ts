@@ -1,38 +1,47 @@
 import { formatDateInTz } from "@/lib/tz";
-import type { Item, TimelineItem } from "@/lib/mock-data";
+import type { Item, AgendaEvent, TimelineItem } from "@/lib/mock-data";
+
+/** Calendar events all share one colour — they aren't categorised the way items are. */
+const EVENT_COLOR = "#4A6FA5";
 
 /**
- * The rows under the dashboard's "Today" heading.
+ * The rows under the dashboard's day heading.
  *
- * `today` is passed in rather than read from the clock so this stays pure: the dashboard is a
+ * `day` is passed in rather than read from the clock so this stays pure: the dashboard is a
  * client component that also renders on the server, and a `new Date()` here would be read
  * twice — once per environment — which mismatches on a midnight boundary. The server settles
  * the calendar day once, in the user's zone, and both renders agree.
  *
- * The two time sources are not the same kind of value, and bucketing them into a day differs:
- *  - `remindAt` is an absolute instant (UTC ISO), so its calendar day depends on `tz`
+ * The time sources are not the same kind of value, and bucketing them into a day differs:
+ *  - `remindAt` and an event's `startsAt` are absolute instants (UTC ISO), so their calendar
+ *    day depends on `tz`
  *  - `dueDate`/`dueTime` is already wall-clock in the user's zone, so `dueDate` *is* the day
  */
-export function buildTimeline(items: Item[], tz: string, today: string): TimelineItem[] {
+export function buildTimeline(
+  items: Item[],
+  events: AgendaEvent[],
+  tz: string,
+  day: string
+): TimelineItem[] {
   const timelineItems: TimelineItem[] = [];
 
   for (const item of items) {
     if (item.status === "done") continue;
 
     let time: string | null = null;
-    let day: string | null = null;
+    let itemDay: string | null = null;
 
     if (item.remindAt) {
       const instant = new Date(item.remindAt);
       if (isNaN(instant.getTime())) continue;
       time = item.remindAt;
-      day = formatDateInTz(instant, tz);
+      itemDay = formatDateInTz(instant, tz);
     } else if (item.dueDate && item.dueTime) {
       time = `${item.dueDate}T${item.dueTime}:00`;
-      day = item.dueDate;
+      itemDay = item.dueDate;
     }
 
-    if (!time || day !== today) continue;
+    if (!time || itemDay !== day) continue;
 
     timelineItems.push({
       id: item.id,
@@ -46,6 +55,29 @@ export function buildTimeline(items: Item[], tz: string, today: string): Timelin
     });
   }
 
-  timelineItems.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+  for (const ev of events) {
+    const instant = new Date(ev.startsAt);
+    if (isNaN(instant.getTime())) continue;
+    if (formatDateInTz(instant, tz) !== day) continue;
+
+    timelineItems.push({
+      id: ev.id,
+      type: "event",
+      title: ev.title,
+      time: ev.startsAt,
+      endTime: ev.endsAt,
+      subtitle: ev.allDay ? "All day" : "Calendar",
+      color: EVENT_COLOR,
+      allDay: ev.allDay,
+    });
+  }
+
+  // An all-day event has no time-of-day to sort by, and midnight in the user's zone would
+  // place it arbitrarily among the early rows — so it heads the list instead.
+  timelineItems.sort((a, b) => {
+    if (!!a.allDay !== !!b.allDay) return a.allDay ? -1 : 1;
+    return new Date(a.time).getTime() - new Date(b.time).getTime();
+  });
+
   return timelineItems;
 }

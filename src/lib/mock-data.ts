@@ -34,5 +34,20 @@ export type TimelineItem = {
   subtitle: string;
   color: string;
   isReminder?: boolean;
+  /** All-day events have no meaningful time-of-day, so they sort ahead of every timed row. */
+  allDay?: boolean;
   status?: string;
+};
+
+/**
+ * A calendar event as the dashboard consumes it — read from the local `calendar_events`
+ * mirror, not the Google API. Declared here rather than in `agenda.ts` because `timeline.ts`
+ * needs it and `agenda.ts` imports `buildTimeline`; the other direction would be a cycle.
+ */
+export type AgendaEvent = {
+  id: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  allDay: boolean;
 };

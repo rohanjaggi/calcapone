@@ -139,13 +139,6 @@ function addDaysToDateStr(dateStr: string, days: number): string {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
-/** Calendar-day gap between two YYYY-MM-DD strings — same UTC-arithmetic reasoning as addDaysToDateStr. */
-function daysBetweenDateStrs(fromStr: string, toStr: string): number {
-  const [fy, fm, fd] = fromStr.split("-").map(Number);
-  const [ty, tm, td] = toStr.split("-").map(Number);
-  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
-}
-
 export async function handleWeek(ctx: CommandContext): Promise<CommandReply> {
   const now = new Date();
   const tz = ctx.user.timezone;

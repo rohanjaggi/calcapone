@@ -97,23 +97,6 @@ const makeItem = (
   ...overrides,
 });
 
-const makeCourse = (id: string, code: string, name: string, archived = false) => ({
-  id,
-  userId: "u1",
-  code,
-  name,
-  color: null,
-  archived,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-});
-
-/** Calendar-day offset from a YYYY-MM-DD string, mirroring the handler's own date arithmetic. */
-function addDaysToDate(dateStr: string, days: number): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
-}
-
 describe("handleDone", () => {
   beforeEach(() => vi.clearAllMocks());
 
