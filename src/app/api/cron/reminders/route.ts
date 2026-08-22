@@ -11,7 +11,7 @@ import {
 } from "@/lib/services/item";
 import { sendMessage, b, TelegramBlockedError } from "@/lib/services/telegram";
 import { reminderKeyboard, doneOnlyKeyboard } from "@/lib/services/callbacks";
-import { shouldNotify, isQuietHours, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
+import { shouldNotify, isQuietHours, isAuthorizedCronRequest, touchHeartbeat, STALE_TICK_MS } from "@/lib/services/cron-utils";
 import { LADDER, nextEscalation, type Rung } from "@/lib/services/escalation";
 import { pruneOldMessages } from "@/lib/services/conversation";
 import { pruneActionLog } from "@/lib/services/action-log";
@@ -37,6 +37,16 @@ export async function POST(request: NextRequest) {
   }
 
   const now = new Date();
+
+  // Reminders are the product's core promise, and a scheduler that stops fails silently.
+  // Noticing our own gap is what turns "reminders stopped three days ago" into a ping.
+  if (await touchHeartbeat("reminders", now)) {
+    await notifyOwner(
+      "cron:heartbeat",
+      `No reminders tick for over ${STALE_TICK_MS / 60000} minutes — the scheduler may have stopped.`
+    );
+  }
+
   const dueItems = await getDueItems(now);
   let sent = 0;
   let skipped = 0;

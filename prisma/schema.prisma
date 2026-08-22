@@ -268,3 +268,13 @@ model PendingAction {
   @@index([expiresAt])
   @@map("pending_actions")
 }
+
+/// One row per cron job, holding when it last ran. A scheduler that stops produces no error
+/// anywhere -- the first sign is a missed reminder days later -- so a tick that notices the
+/// gap is what turns that silence into an alert.
+model CronHeartbeat {
+  job        String   @id
+  lastTickAt DateTime @map("last_tick_at") @db.Timestamptz
+
+  @@map("cron_heartbeat")
+}

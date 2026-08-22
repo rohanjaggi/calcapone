@@ -167,13 +167,37 @@ Web dashboard
   → Server actions → same service layer
   → Cmd+K search dialog → searchItems service
 
-Cron (one GitHub Actions run per 5 min; ticks may be late, every endpoint is idempotent):
-  t=0        → /api/cron/briefing       — AI morning summary (once/day, within 2h of target)
-  t=0        → /api/cron/weekly-digest  — weekly recap (once/day on the chosen weekday)
-  t=0,1,…,4  → /api/cron/sync           — Google syncToken pull (≤1 per user per 4 min)
-                                          + event-start reminders (every tick)
-  t=0,1,…,4  → /api/cron/reminders      — due reminders + deadline escalation + housekeeping
+Cron (cron-job.org primary, GitHub Actions backstop; every endpoint is idempotent):
+  every 1 min → /api/cron/reminders      — due reminders + deadline escalation + housekeeping
+  every 1 min → /api/cron/sync           — Google syncToken pull (≤1 per user per 4 min)
+                                           + event-start reminders
+  every 5 min → /api/cron/briefing       — AI morning summary (once/day, within 2h of target)
+  every 5 min → /api/cron/weekly-digest  — weekly recap (once/day on the chosen weekday)
 ```
+
+### Scheduling the cron
+
+Create four jobs at [cron-job.org](https://cron-job.org) (free, 1-minute granularity,
+execution history, email alerts on failure). Each is a **POST** to
+`$NEXT_PUBLIC_APP_URL/api/cron/<name>` with the header
+`Authorization: Bearer $CRON_SECRET`:
+
+| Endpoint | Interval |
+|----------|----------|
+| `/api/cron/reminders` | 1 minute |
+| `/api/cron/sync` | 1 minute |
+| `/api/cron/briefing` | 5 minutes |
+| `/api/cron/weekly-digest` | 5 minutes |
+
+`.github/workflows/cron-reminders.yml` fires the same four every 15 minutes as a backstop.
+Running both is safe: every endpoint claims before it sends, so a double tick cannot
+double-send. GitHub is the backstop rather than the primary because it throttles and drops
+scheduled runs under load, and **disables scheduled workflows entirely after 60 days without
+a commit** — if reminders stop, check the Actions tab for a disabled workflow first.
+
+`/api/cron/reminders` also self-monitors: a tick that finds the previous one was more than 15
+minutes ago DMs the owner (`TELEGRAM_USER_ID`), so a dead scheduler announces itself instead
+of failing silently.
 
 ## Telegram Commands
 

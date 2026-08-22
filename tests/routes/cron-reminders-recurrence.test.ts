@@ -39,6 +39,8 @@ vi.mock("@/lib/prisma", () => ({
     actionLog: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     messageRef: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     pendingAction: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    // A first-ever tick has no previous heartbeat, so these routes never alert here.
+    cronHeartbeat: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({}) },
   },
 }));
 

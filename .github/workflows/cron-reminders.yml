@@ -1,33 +1,35 @@
-name: Cron tick (reminders, briefing, weekly digest, calendar sync)
+name: Cron backstop (reminders, briefing, weekly digest, calendar sync)
 
-# Why this workflow looks the way it does:
+# This is a BACKSTOP, not the primary scheduler.
 #
-# - GitHub throttles/delays scheduled workflows that fire every minute, especially under
-#   load: a `* * * * *` schedule (previously run as a 3-way matrix here) got delayed by
-#   5-20 minutes or silently dropped. `*/5 * * * *` is roughly GitHub's realistic floor for
-#   reliable scheduled triggers, and using a single job (no matrix) means only one runner
-#   boots per invocation instead of three. To claw back ~1-minute granularity from that
-#   single runner boot, this job runs an INNER tick loop that calls /api/cron/reminders
-#   AND /api/cron/sync five times each (t=0s, 60s, 120s, 180s, 240s) within the same run.
-#   /api/cron/sync carries event-start reminders ("Standup in 15 min"), which are just as
-#   time-sensitive as item reminders and useless at 5-minute granularity, so it rides the
-#   same 60s inner cadence rather than firing only once per invocation like
-#   briefing/weekly-digest do.
+# Primary scheduling lives at cron-job.org, which offers true 1-minute granularity, custom
+# headers, execution history and email alerts on failure -- none of which GitHub Actions
+# provides. See the README for the job setup.
 #
+# This workflow stays because it costs nothing and covers the case where the external
+# scheduler is the thing that breaks. Two caveats keep it in the backstop role rather than
+# the primary one:
+#
+# - GitHub throttles, delays and silently drops scheduled workflows under load. `*/5` was
+#   already the realistic floor, and even that ran late.
 # - GitHub automatically DISABLES scheduled workflows in a repository that has gone 60 days
-#   without any commit activity. If reminders silently stop firing, check whether this
-#   workflow shows as disabled under the repo's Actions tab BEFORE debugging anything else.
+#   without commit activity. If reminders stop firing, check the Actions tab for a disabled
+#   workflow BEFORE debugging anything else.
+#
+# Firing the same endpoints as cron-job.org is safe: every one of them claims before it
+# sends (claimUpdate, claimDueReminder, claimNotificationStage, the sync claim, and the
+# date-guarded briefing/digest), so a double tick cannot double-send.
+#
+# /api/cron/reminders also self-monitors -- if a tick finds the previous one was more than
+# 15 minutes ago it DMs the owner, so a dead scheduler announces itself.
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
-# A delayed run (see above) can start while the previous one is still inside its 5-minute inner
-# loop, and two overlapping ticks hitting /api/cron/sync would both read the same sync cursor
-# and send the same calendar-conflict prompt twice. `cancel-in-progress: false` because the run
-# already in flight is the one holding a tick loop mid-way through its reminders — cancelling it
-# would drop pings it is the only chance to send.
+# A delayed run can start while the previous one is still going. `cancel-in-progress: false`
+# because the run already in flight may be mid-send, and cancelling it would drop pings.
 concurrency:
   group: cron-tick
   cancel-in-progress: false
@@ -35,7 +37,7 @@ concurrency:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Fire cron endpoints
         env:
@@ -59,32 +61,11 @@ jobs:
             [ "$http_code" = "200" ]
           }
 
-          reminders_total=5
-          reminders_failures=0
+          call "/api/cron/briefing"       || echo "::warning::briefing tick failed (once/day endpoint; will retry next run)"
+          call "/api/cron/weekly-digest"  || echo "::warning::weekly-digest tick failed (once/day endpoint; will retry next run)"
+          call "/api/cron/sync"           || echo "::warning::sync tick failed (will retry next run)"
 
-          echo "== t=0s: briefing, weekly-digest (once per invocation), sync, reminders =="
-          call "/api/cron/briefing" || echo "::warning::briefing tick failed (once/day endpoint; will retry next invocation)"
-          call "/api/cron/weekly-digest" || echo "::warning::weekly-digest tick failed (once/day endpoint; will retry next invocation)"
-          call "/api/cron/sync" || echo "::warning::sync tick failed (will retry next tick)"
-          call "/api/cron/reminders" || reminders_failures=$((reminders_failures + 1))
-
-          for i in 1 2 3 4; do
-            sleep 60
-            echo "== t=${i}x60s: sync, reminders =="
-            call "/api/cron/sync" || echo "::warning::sync tick failed (will retry next tick)"
-            call "/api/cron/reminders" || reminders_failures=$((reminders_failures + 1))
-          done
-
-          reminders_ok=$((reminders_total - reminders_failures))
-          echo "Reminders ticks: ${reminders_ok}/${reminders_total} succeeded"
-
-          if [ "$reminders_failures" -gt 0 ] && [ "$reminders_failures" -lt "$reminders_total" ]; then
-            echo "::warning::${reminders_failures}/${reminders_total} reminders ticks failed this run (partial failure, not failing the job)"
-          fi
-
-          if [ "$reminders_failures" -eq "$reminders_total" ]; then
-            echo "::error::All ${reminders_total} reminders ticks failed this run - possible outage"
+          if ! call "/api/cron/reminders"; then
+            echo "::error::reminders tick failed"
             exit 1
           fi
-
-          exit 0
