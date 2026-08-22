@@ -10,8 +10,6 @@ export const AI_TOOLS = [
         description: { type: "string", description: "Optional longer description" },
         priority: { type: "string", enum: ["low", "medium", "high"], description: "Priority level" },
         category: { type: "string", description: "Category name (e.g. Work, Personal). Required." },
-        kind: { type: "string", enum: ["task", "assignment", "exam", "class"], description: "What this is. Use 'assignment' for homework/essays/labs with a hand-in date, 'exam' for tests/midterms/finals, 'class' for a lecture or tutorial. Exams and assignments get earlier reminders than plain tasks." },
-        course: { type: "string", description: "Course code or name for school work, e.g. 'CS2040'. Must already exist — call list_courses if unsure, create_course to add one." },
         due_date: { type: "string", description: "Due date in YYYY-MM-DD format" },
         due_time: { type: "string", description: "Due time in HH:mm format (24h)" },
         remind_at: { type: "string", description: "When to send the Telegram reminder: ISO 8601 datetime WITH the user's UTC offset, e.g. 2026-08-20T15:00:00+08:00" },
@@ -42,8 +40,6 @@ export const AI_TOOLS = [
       properties: {
         status: { type: "string", enum: ["pending", "in_progress", "done"], description: "Filter by status" },
         category: { type: "string", description: "Filter by category name" },
-        kind: { type: "string", enum: ["task", "assignment", "exam", "class"], description: "Filter by kind — use 'exam' for \"when are my exams\", 'assignment' for \"what homework do I have\"" },
-        course: { type: "string", description: "Filter by course code or name, e.g. 'CS2040'" },
       },
     },
   },
@@ -78,8 +74,6 @@ export const AI_TOOLS = [
       properties: {
         query: { type: "string", description: "The title or partial title to find the item" },
         title: { type: "string", description: "New title" },
-        kind: { type: "string", enum: ["task", "assignment", "exam", "class"], description: "What this is. Use 'assignment' for homework/essays/labs with a hand-in date, 'exam' for tests/midterms/finals, 'class' for a lecture or tutorial. Exams and assignments get earlier reminders than plain tasks." },
-        course: { type: "string", description: "Course code or name for school work, e.g. 'CS2040'. Must already exist — call list_courses if unsure, create_course to add one." },
         scope: { type: "string", enum: ["this", "series"], description: "For a repeating item: 'this' changes only this occurrence (default), 'series' changes every occurrence." },
         skip_next: { type: "boolean", description: "Skip this occurrence of a repeating item and move it to the next one, without completing it. Use for \"skip this week\"." },
         due_date: { type: ["string", "null"] as unknown as "string", description: "New due date YYYY-MM-DD, or null to clear" },
@@ -211,45 +205,6 @@ export const AI_TOOLS = [
     },
   },
   {
-    name: "create_course",
-    description: "Register a school course/module so assignments and exams can be filed under it. Do this before using the `course` argument on anything else.",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        code: { type: "string", description: "Short code, e.g. CS2040" },
-        name: { type: "string", description: "Full course name, e.g. Data Structures and Algorithms" },
-        color: { type: "string", description: "Hex color code (e.g. #B8860B)" },
-      },
-      required: ["code", "name"],
-    },
-  },
-  {
-    name: "archive_course",
-    description:
-      "Retire a course at the end of a semester, or bring an archived one back. Archiving hides it from the course list but keeps every assignment and exam filed under it, so past work stays readable. Use this when the user says they are done with a module — never offer to delete a course.",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        course: { type: "string", description: "Course code or name, e.g. 'CS2040'" },
-        archived: { type: "boolean", description: "true to archive, false to bring it back" },
-      },
-      required: ["course", "archived"],
-    },
-  },
-  {
-    name: "list_courses",
-    description: "List the user's registered school courses. Call this when the user names a course you have not seen.",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        include_archived: {
-          type: "boolean",
-          description: "Include courses from finished semesters. Defaults to false.",
-        },
-      },
-    },
-  },
-  {
     name: "list_categories",
     description: "List the user's categories",
     parameters: { type: "object" as const, properties: {} },
@@ -323,9 +278,6 @@ Rules:
 - Calendar events are separate from tasks — do NOT create an in-app task when creating a calendar event.
 - When the user asks to move, reschedule, or change a calendar event, use update_calendar_event.
 - When the user asks to cancel or delete a calendar event, use delete_calendar_event.
-- School work: file homework, essays and labs as kind "assignment", and tests, midterms and finals as kind "exam". Both get earlier reminders than a plain task, so getting the kind right matters more than the wording.
-- A course code like "CS2040" or "MA1521" means the course argument, not the category. If the course does not exist yet, call list_courses to check, then create_course before creating the item.
-- When a semester ends or the user says they are done with a module, use archive_course — it hides the course but keeps its assignments and exams readable. Never offer to delete a course.
 - For a repeating item, scope "series" changes or deletes the whole run and skip_next true skips just this one. Default to "this" unless the user clearly means all of them.
 
 Examples:
@@ -364,15 +316,6 @@ User: "change my weekly standup to every 2 weeks"
 
 User: "stop that recurring reminder"
 → Use update_item with clear_recurrence: true
-
-User: "CS2040 assignment 2 due next Friday 2359"
-→ Use create_item with title "Assignment 2", kind "assignment", course "CS2040", due_date next Friday, due_time "23:59"
-
-User: "my CS2040 midterm is week 8 wednesday"
-→ Use create_item with kind "exam", course "CS2040", and the resolved date
-
-User: "what's due for CS2040?"
-→ Use list_items with course "CS2040", then summarise
 
 User: "stop the daily meds reminder"
 → Use delete_item with scope "series"

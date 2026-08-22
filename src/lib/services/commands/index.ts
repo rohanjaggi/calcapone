@@ -8,9 +8,6 @@ import {
   handleWeek,
   handleNote,
   handleSearch,
-  handleCourses,
-  handleExams,
-  handleDue,
 } from "./handlers";
 
 export type ParsedCommand = {
@@ -49,9 +46,6 @@ const DB_COMMANDS = new Set([
   "week",
   "note",
   "search",
-  "courses",
-  "exams",
-  "due",
 ]);
 
 const COMMAND_REGEX = /^\/(\w+)(?:@\w+)?(?:\s+([\s\S]+))?$/;
@@ -101,14 +95,6 @@ export const HELP_TEXT = `<b>Calcapone</b> — your task &amp; calendar assistan
 /alerts 15 — ping me 15 min before an event starts
 /timezone — show or change your timezone
 
-<b>School</b>
-/courses — list this semester's courses
-/courses add CS2040 Data Structures — add one
-/courses archive CS2040 — retire it, keep its work
-/courses all — include archived courses
-/exams — upcoming exams, soonest first
-/due CS2040 — what's outstanding for a course
-
 Or just type naturally — I'll figure out the rest.`;
 
 export async function handleCommand(
@@ -134,12 +120,6 @@ export async function handleCommand(
       return handleNote(parsed.body, ctx);
     case "search":
       return handleSearch(parsed.body, ctx);
-    case "courses":
-      return handleCourses(parsed.body, ctx);
-    case "exams":
-      return handleExams(ctx);
-    case "due":
-      return handleDue(parsed.body, ctx);
     case "start":
     case "help":
       return { text: HELP_TEXT };

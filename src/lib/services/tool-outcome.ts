@@ -1,4 +1,4 @@
-import type { Priority, ItemStatus, RecurringType, ItemKind } from "@/generated/prisma/enums";
+import type { Priority, ItemStatus, RecurringType } from "@/generated/prisma/enums";
 
 /**
  * The shared vocabulary between a tool call and everything that happens after it.
@@ -32,8 +32,6 @@ export type ItemSnapshot = {
   googleEventId?: string | null;
   parentId?: string | null;
   notificationStage?: number;
-  kind?: ItemKind;
-  courseId?: string | null;
   /** Which repeating run the item belongs to — dropping it orphans a restored occurrence. */
   seriesId?: string | null;
 };
@@ -61,9 +59,6 @@ export type UndoOp =
   /** Recreates the Google event, then (if `item` is set) the in-app row pointing at the new event id. */
   | { op: "recreate_event"; calendarId: string; event: EventSnapshot; item?: ItemSnapshot & { id: string; title: string; categoryId: string } }
   | { op: "delete_category"; categoryId: string }
-  | { op: "delete_course"; courseId: string }
-  /** Puts a course back on the side of the archive line it was on before. */
-  | { op: "set_course_archived"; courseId: string; archived: boolean }
   /** Applied in order, best-effort: one user-visible action can be several writes (decomposing a task). */
   | { op: "sequence"; ops: UndoOp[] }
   | { op: "noop" };
