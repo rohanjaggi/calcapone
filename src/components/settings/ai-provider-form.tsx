@@ -30,15 +30,27 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
 
   const selectedProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0];
 
+  /**
+   * A saved model the picker doesn't list means the user typed it, so the form reopens in
+   * custom mode with it filled in. Without this, revisiting Settings would silently show one
+   * of the presets as selected while a different model was actually in use.
+   */
+  const [custom, setCustom] = useState(
+    () => !!currentModel && !PROVIDERS.some((p) => p.models.some((m) => m.id === currentModel))
+  );
+
   const handleProviderChange = (value: string) => {
     setProvider(value);
     const p = PROVIDERS.find((pr) => pr.value === value);
-    if (p) setModel(p.models[0].id);
+    if (p) {
+      setModel(p.models[0].id);
+      setCustom(false);
+    }
   };
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave({ aiProvider: provider, ...(apiKey && { aiApiKey: apiKey }), aiModel: model });
+    await onSave({ aiProvider: provider, ...(apiKey && { aiApiKey: apiKey }), aiModel: model.trim() });
     setSaving(false);
     setSaved(true);
     setApiKey("");
@@ -98,13 +110,36 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Model</label>
           <div className="flex flex-wrap gap-1.5">
             {selectedProvider.models.map((m) => (
-              <button key={m.id} onClick={() => setModel(m.id)} className={`px-2.5 py-1 rounded-md text-xs border transition-all duration-150 ${model === m.id ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}>
+              <button key={m.id} onClick={() => { setModel(m.id); setCustom(false); }} className={`px-2.5 py-1 rounded-md text-xs border transition-all duration-150 ${!custom && model === m.id ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}>
                 {m.label}
               </button>
             ))}
+            <button
+              onClick={() => { setCustom(true); setModel(""); }}
+              className={`px-2.5 py-1 rounded-md text-xs border transition-all duration-150 ${custom ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}
+            >
+              Custom…
+            </button>
           </div>
+          {custom && (
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={selectedProvider.models[0].id}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="Custom model id"
+              className="mt-2 w-full h-9 rounded-lg border border-border/60 bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50"
+            />
+          )}
+          {custom && (
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Exactly as the provider spells it — e.g. {selectedProvider.models[0].id}
+            </p>
+          )}
         </div>
-        <button onClick={handleSave} disabled={saving || (!apiKey && !hasApiKey)} className="w-full h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+        <button onClick={handleSave} disabled={saving || !model.trim() || (!apiKey && !hasApiKey)} className="w-full h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
           {saved ? <><Check className="w-4 h-4" />Saved</> : saving ? "Saving..." : "Save AI Configuration"}
         </button>
       </div>
