@@ -6,10 +6,6 @@ import { createCategory, listCategories, updateCategory, deleteCategory, reorder
 import { updateEvent, deleteEvent, getEvents } from "@/lib/services/calendar";
 import { searchItems } from "@/lib/services/search";
 import { prisma } from "@/lib/prisma";
-import { chatWithAi } from "@/lib/services/ai";
-import { decryptUserApiKey } from "@/lib/services/user";
-import { executeToolCall } from "@/lib/services/execute-tool";
-import { checkAndConsumeTrialQuota, trialLimitMessage } from "@/lib/services/trial";
 import { parseInTz } from "@/lib/tz";
 import { dueWindowToGcal } from "@/lib/services/gcal-window";
 import { CalendarAuthError } from "@/lib/services/calendar";
@@ -170,97 +166,6 @@ export async function reorderCategoriesAction(categoryIds: string[]) {
 export async function moveItemToCategory(itemId: string, newCategoryId: string) {
   const user = await requireUser();
   await updateItem(itemId, user.id, { categoryId: newCategoryId });
-}
-
-export async function getAiRecommendation(items: Array<{ title: string; priority: string; status: string; dueDate: string | null; dueTime: string | null; remindAt: string | null; category: { name: string } }>): Promise<{ priorities?: Array<{ task: string; reason: string }>; recommendation?: string | null }> {
-  const user = await requireUser();
-  const aiApiKey = decryptUserApiKey(user.aiApiKey);
-
-  const pending = items.filter((i) => i.status !== "done");
-  if (pending.length === 0) {
-    return { recommendation: "You're all caught up! No pending tasks. Enjoy your day." };
-  }
-
-  const summary = pending.map((i) => {
-    let detail = `- "${i.title}" [${i.priority}] (${i.category.name})`;
-    if (i.dueDate) detail += ` due ${i.dueDate}${i.dueTime ? ` at ${i.dueTime}` : ""}`;
-    if (i.remindAt) detail += ` reminder at ${i.remindAt}`;
-    return detail;
-  }).join("\n");
-
-  const prompt = `Here are my pending tasks:\n${summary}\n\nReturn a JSON array of the top 3 tasks I should focus on right now, ordered by priority. Each item: {"task": "<exact task title>", "reason": "<short reason, max 8 words>"}. Base priority on: overdue > due today > high priority > due soon. Do NOT explain what tasks are or assume their meaning. Only return the JSON array, nothing else.`;
-
-  const quota = await checkAndConsumeTrialQuota({ ...user, aiApiKey: aiApiKey ? user.aiApiKey : null });
-  if (!quota.allowed) return { recommendation: null };
-
-  try {
-    const { text } = await chatWithAi(
-      prompt,
-      { telegramUsername: user.telegramUsername, timezone: user.timezone },
-      { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel },
-      undefined,
-      { tools: false }
-    );
-    if (!text) return { recommendation: null };
-    try {
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as Array<{ task: string; reason: string }>;
-        return { priorities: parsed.slice(0, 3) };
-      }
-    } catch {}
-    return { priorities: [{ task: pending[0].title, reason: "highest priority" }] };
-  } catch {
-    return { recommendation: null };
-  }
-}
-
-export async function aiAddItem(input: string, mode: "task" | "reminder" | "event") {
-  const user = await requireUser();
-  const aiApiKey = decryptUserApiKey(user.aiApiKey);
-
-  const quota = await checkAndConsumeTrialQuota({ ...user, aiApiKey: aiApiKey ? user.aiApiKey : null });
-  if (!quota.allowed) return { success: false, message: trialLimitMessage(quota.limit) };
-
-  const categories = await listCategories(user.id);
-  const categoryNames = categories.map((c) => c.name);
-
-  const modeHint = mode === "task"
-    ? "The user wants to create a task/todo. Use the create_item tool WITHOUT remind_at."
-    : mode === "reminder"
-    ? "The user wants to create a reminder. Use the create_item tool WITH remind_at set to the appropriate time."
-    : "The user wants to create a calendar event. Use the create_calendar_event tool.";
-
-  const prompt = `${modeHint}\n\nUser says: "${input}"`;
-
-  const { text, toolCalls } = await chatWithAi(
-    prompt,
-    { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categoryNames },
-    { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel }
-  );
-
-  const allowed = new Set(["create_item", "create_calendar_event", "create_category"]);
-  const results: string[] = [];
-  for (const call of toolCalls) {
-    if (!allowed.has(call.name)) continue;
-    // Same implementation the Telegram bot uses (timezone-aware, recurrence, conflict checks).
-    const outcome = await executeToolCall(call.name, call.args, user.id, user);
-    if (outcome.text) results.push(stripHtml(outcome.text));
-  }
-
-  if (results.length === 0 && text) {
-    return { success: true, message: text };
-  }
-
-  return { success: true, message: results.join(". ") || "Done!" };
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
 }
 
 /**

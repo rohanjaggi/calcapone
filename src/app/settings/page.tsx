@@ -13,7 +13,6 @@ export default async function SettingsPage() {
         briefingEnabled: user.briefingEnabled,
         briefingTime: user.briefingTime,
         weeklyDigestEnabled: user.weeklyDigestEnabled,
-        aiSuggestionEnabled: user.aiSuggestionEnabled,
         aiProvider: user.aiProvider,
         aiModel: user.aiModel,
         hasAiApiKey: !!user.aiApiKey,

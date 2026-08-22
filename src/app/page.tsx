@@ -33,7 +33,6 @@ export default async function Dashboard() {
       <DashboardClient
         userName={user.telegramUsername}
         items={serializedItems}
-        aiSuggestionEnabled={user.aiSuggestionEnabled}
         timezone={user.timezone}
         today={todayInTz(user.timezone)}
       />

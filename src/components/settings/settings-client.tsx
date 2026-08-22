@@ -24,7 +24,6 @@ type Props = {
     briefingEnabled: boolean;
     briefingTime: string | null;
     weeklyDigestEnabled: boolean;
-    aiSuggestionEnabled: boolean;
     aiProvider: string | null;
     aiModel: string | null;
     hasAiApiKey: boolean;
@@ -80,7 +79,6 @@ export function SettingsClient({ settings }: Props) {
     briefingEnabled: boolean;
     briefingTime: string | null;
     weeklyDigestEnabled: boolean;
-    aiSuggestionEnabled: boolean;
     quietStart: string | null;
     quietEnd: string | null;
     notifyMinPriority: string;
@@ -132,7 +130,6 @@ export function SettingsClient({ settings }: Props) {
           briefingEnabled={settings.briefingEnabled}
           briefingTime={settings.briefingTime}
           weeklyDigestEnabled={settings.weeklyDigestEnabled}
-          aiSuggestionEnabled={settings.aiSuggestionEnabled}
           quietStart={settings.quietStart}
           quietEnd={settings.quietEnd}
           notifyMinPriority={settings.notifyMinPriority}

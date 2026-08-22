@@ -31,7 +31,6 @@ export async function saveNotifications(data: {
   briefingEnabled: boolean;
   briefingTime: string | null;
   weeklyDigestEnabled: boolean;
-  aiSuggestionEnabled: boolean;
   quietStart: string | null;
   quietEnd: string | null;
   notifyMinPriority: string;

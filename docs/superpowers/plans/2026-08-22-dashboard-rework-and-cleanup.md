@@ -14,6 +14,18 @@
 
 - Run `npm run verify` (lint + typecheck + test) before every commit. It must pass.
 - Prisma client is generated to `src/generated/prisma` and is **not** committed. After any schema change run `npx prisma generate` before typechecking.
+- **Never run `prisma migrate dev`.** There is no `DIRECT_DATABASE_URL` in `.env.local`, so `prisma.config.ts` falls back to the pooled `DATABASE_URL`, which cannot run migrations — and `migrate dev` can offer to reset the live database when it detects drift. Generate migrations offline instead:
+  ```bash
+  SCRATCH=<scratchpad>
+  cp prisma/schema.prisma "$SCRATCH/old.prisma"   # BEFORE editing the schema
+  # ...edit prisma/schema.prisma...
+  mkdir -p "prisma/migrations/$(date -u +%Y%m%d%H%M%S)_<name>"
+  npx prisma migrate diff --from-schema "$SCRATCH/old.prisma" --to-schema prisma/schema.prisma --script \
+    > "prisma/migrations/<the folder just created>/migration.sql"
+  npx prisma generate
+  ```
+  This touches no database. Migrations apply on deploy via `npx prisma migrate deploy`.
+- The `rtk` shell hook mangles some `npx` invocations. If a command fails with `[rtk: No such file or directory]`, re-run it as `rtk proxy <command>`.
 - Never edit anything under `src/generated/`.
 - Timezone rule: `remindAt` is an absolute instant whose calendar day depends on the target timezone. `dueDate`/`dueTime` are already wall-clock in the user's zone, so `dueDate` **is** the day. Never convert `dueDate` through a `Date`.
 - Never read the clock during render in a client component. The server renders at a different instant and zone; read it in an effect after mount (see `greeting.tsx:38`, `day-timeline.tsx:129`).

@@ -22,7 +22,6 @@ model User {
   notifyMinPriority   Priority    @default(low) @map("notify_min_priority")
   digestDay           Int         @default(0) @map("digest_day")
   digestTime          String      @default("19:00") @map("digest_time")
-  aiSuggestionEnabled Boolean     @default(true)  @map("ai_suggestion_enabled")
   aiProvider          AiProvider? @map("ai_provider")
   aiApiKey           String?     @map("ai_api_key")
   aiModel            String?     @map("ai_model")
