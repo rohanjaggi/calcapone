@@ -65,7 +65,6 @@ const makeItem = (
     dueTime: string | null;
     remindAt: Date | null;
     kind: "task" | "assignment" | "exam" | "class";
-    courseId: string | null;
     seriesId: string | null;
   }> = {}
 ) => ({
@@ -85,9 +84,7 @@ const makeItem = (
   googleEventId: null,
   parentId: null,
   subtasks: [],
-  // Added alongside course support — /exams and /due filter and group on these.
   kind: "task" as const,
-  courseId: null,
   seriesId: null,
   calendarSyncedAt: null,
   notificationStage: 0,
