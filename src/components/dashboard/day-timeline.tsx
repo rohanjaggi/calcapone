@@ -115,7 +115,12 @@ function TimelineCard({
   );
 }
 
-export function DayTimeline({ items }: { items: TimelineItem[] }) {
+/**
+ * One day's rows. The "Now" marker only renders when the selected day is today — on any
+ * other day there is no present moment to mark, and drawing the line would imply the rows
+ * above it had already passed.
+ */
+export function DayTimeline({ items, isToday }: { items: TimelineItem[]; isToday: boolean }) {
   /**
    * "Now" is read after mount, never during render: the server renders at a different
    * instant (and in a different timezone) than the browser, so reading the clock during
@@ -141,7 +146,7 @@ export function DayTimeline({ items }: { items: TimelineItem[] }) {
     >
       <div className="flex items-baseline justify-between mb-4">
         <h2 className="font-serif text-xl font-semibold text-foreground">
-          Today
+          {isToday ? "Today" : "Schedule"}
         </h2>
         <Link href="/calendar" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
           Full schedule
@@ -157,13 +162,13 @@ export function DayTimeline({ items }: { items: TimelineItem[] }) {
             key={item.id}
             item={item}
             index={i}
-            showNow={i === nowIndex}
+            showNow={isToday && i === nowIndex}
             now={now}
           />
         ))}
 
         {/* Everything is behind us: the marker belongs at the end of the list. */}
-        {nowIndex === -1 && items.length > 0 && items.every((i) => isPast(i.time, now)) && (
+        {isToday && nowIndex === -1 && items.length > 0 && items.every((i) => isPast(i.time, now)) && (
           <motion.div
             initial={{ opacity: 0, scaleX: 0 }}
             animate={{ opacity: 1, scaleX: 1 }}
