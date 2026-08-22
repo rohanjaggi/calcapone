@@ -40,7 +40,6 @@ model User {
 
   calendarEvents CalendarEvent[]
   categories     Category[]
-  courses        Course[]
   items          Item[]
   messages       Message[]
   actionLog      ActionLog[]
@@ -75,12 +74,6 @@ enum Priority {
  * Only used to decide how far ahead to start nagging: a 24-hour warning is useful for a
  * chore and useless for an exam, which is the whole reason this is not just a label.
  */
-enum ItemKind {
-  task
-  assignment
-  exam
-  class
-}
 
 enum RecurringType {
   none
@@ -123,11 +116,6 @@ model Item {
   parentId    String?       @map("parent_id") @db.Uuid
   parent      Item?         @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
   subtasks    Item[]        @relation("Subtasks")
-  kind        ItemKind      @default(task)
-  /// The FK only guarantees the course exists, not that it belongs to this item's user — that
-  /// invariant is app-only (every write routes through a user-scoped lookup) and unchecked here.
-  courseId    String?       @map("course_id") @db.Uuid
-  course      Course?       @relation(fields: [courseId], references: [id], onDelete: SetNull)
   /// Every occurrence of a repeating item shares the first occurrence's id, so "stop the daily
   /// meds reminder" can reach the whole run rather than only the copy in front of the user.
   seriesId    String?       @map("series_id") @db.Uuid
@@ -146,33 +134,12 @@ model Item {
   @@index([userId, status, dueDate])
   @@index([parentId])
   @@index([userId, categoryId])
-  @@index([userId, kind, dueDate])
-  @@index([courseId])
   @@index([seriesId])
   @@map("items")
 }
 
 /// A subject/module. Deliberately not a Category: an assignment belongs to the School
 /// category *and* to CS2040, and collapsing those two axes loses one of them.
-model Course {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  code      String
-  name      String
-  color     String?
-  /// A finished semester's course. Hidden from the pickers and from `/courses`, but its items
-  /// keep their `courseId` — dropping the row instead would SetNull the tag off a term's work,
-  /// which is exactly the history `/due CS2040` and `/exams` exist to answer against.
-  archived  Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
-
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items Item[]
-
-  @@unique([userId, code])
-  @@map("courses")
-}
 
 /// A read-only mirror of the user's Google Calendar.
 ///

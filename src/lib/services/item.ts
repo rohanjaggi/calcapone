@@ -1,8 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import type { ItemStatus, Priority, RecurringType, ItemKind } from "@/generated/prisma/enums";
+import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
 import { getNextOccurrence } from "@/lib/services/recurrence";
 import { buildEmbeddingText, scheduleItemEmbedding } from "@/lib/services/embeddings";
-import { ladderFor, ESCALATION_KINDS } from "@/lib/services/escalation";
+import { MAX_ESCALATION_STAGE } from "@/lib/services/escalation";
 
 type CreateItemInput = {
   userId: string;
@@ -18,8 +18,6 @@ type CreateItemInput = {
   recurrenceEnd?: Date | null;
   googleEventId?: string | null;
   parentId?: string | null;
-  kind?: ItemKind;
-  courseId?: string | null;
   seriesId?: string | null;
 };
 
@@ -28,8 +26,6 @@ type ItemFilters = {
   status?: ItemStatus | ItemStatus[];
   categoryId?: string;
   priority?: Priority;
-  kind?: ItemKind;
-  courseId?: string;
 };
 
 /** Everything that isn't finished — what "my tasks" means to a user. */
@@ -54,8 +50,6 @@ type UpdateItemInput = {
   recurrenceRule?: string | null;
   recurrenceEnd?: Date | null;
   googleEventId?: string | null;
-  kind?: ItemKind;
-  courseId?: string | null;
   calendarSyncedAt?: Date | null;
 };
 
@@ -219,12 +213,10 @@ async function rollForwardDatedSeries(before: {
   id: string;
   userId: string;
   categoryId: string;
-  courseId: string | null;
   seriesId: string | null;
   title: string;
   description: string | null;
   priority: Priority;
-  kind: ItemKind;
   dueDate: string | null;
   dueTime: string | null;
   remindAt: Date | null;
@@ -243,12 +235,10 @@ async function rollForwardDatedSeries(before: {
   await createItem({
     userId: before.userId,
     categoryId: before.categoryId,
-    courseId: before.courseId,
     seriesId: before.seriesId ?? before.id,
     title: before.title,
     description: before.description,
     priority: before.priority,
-    kind: before.kind,
     dueDate: nextDate,
     dueTime: before.dueTime,
     recurring: before.recurring,
@@ -332,10 +322,7 @@ export async function getEscalationCandidates() {
       dueDate: { not: null },
       remindAt: null,
       parentId: null,
-      // Bounded per kind, not on the shared max stage: a task's ladder tops out at 3 rungs,
-      // so gating everyone on the longest ladder (exam's 4) would leave an overdue task in
-      // the scan forever, re-evaluated every tick for a rung it can never reach.
-      OR: ESCALATION_KINDS.map((kind) => ({ kind, notificationStage: { lt: ladderFor(kind).length } })),
+      notificationStage: { lt: MAX_ESCALATION_STAGE },
     },
     include: { user: true, category: true },
   });
