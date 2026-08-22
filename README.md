@@ -45,8 +45,22 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 ### AI
 - **Conversation memory** — multi-turn context (last 10 messages, 4h window) for natural follow-ups
 - **Task decomposition** — "break down my presentation prep" creates subtasks automatically
-- **Smart recommendations** — dashboard suggests your top 3 priority tasks
 - **Multi-provider** — OpenAI, Anthropic, Gemini, or OpenRouter with your own key. One provider-neutral thread type with a thin adapter each, so the tool loop behaves identically on all four
+
+There is deliberately no AI on the web dashboard. The agent lives in Telegram,
+where the tool loop, the undo journal and the disambiguation buttons all are; a
+second, half-featured entry point could create items that nothing could reverse.
+
+### Web dashboard
+The Mini App is for seeing and touching your tasks — the things a chat window is
+bad at. Everything below is direct manipulation, no model involved.
+
+- **Tasks** — categories are colored cards; tap a card's header to open it
+- **Complete** — tap the circle icon on any task
+- **Edit / delete** — swipe a task left to reveal both
+- **Reorder** — enter edit mode from the header to drag categories, or drag a task between categories
+- **Calendar** — a month grid with dots on days that have something; tap a day to see it
+- **Search** — the icon on the home screen, or `Cmd+K` / `Ctrl+K`; results filter as you type
 
 ## Stack
 

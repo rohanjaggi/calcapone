@@ -3,8 +3,7 @@
 import { Children, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { HelpCircle, ChevronRight, LogOut, Settings } from "lucide-react";
+import { LogOut, Settings } from "lucide-react";
 import { AiProviderForm } from "@/components/settings/ai-provider-form";
 import { TimezoneSelect } from "@/components/settings/timezone-select";
 import { NotificationsConfig } from "@/components/settings/notifications-config";
@@ -143,21 +142,6 @@ export function SettingsClient({ settings }: Props) {
           onConnect={handleConnectGoogle}
           onDisconnect={handleDisconnectGoogle}
         />
-        <Link
-          href="/how-to-use"
-          className="flex items-center gap-2 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3 group transition-colors hover:bg-secondary/30"
-        >
-          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-            <HelpCircle className="w-3.5 h-3.5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-foreground">How To Use</p>
-            <p className="text-[11px] text-muted-foreground">
-              Learn how to get the most out of CalCapone
-            </p>
-          </div>
-          <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-muted-foreground group-hover:translate-x-0.5 transition-all shrink-0" />
-        </Link>
         <form action="/api/auth/logout" method="post">
           <button
             type="submit"
