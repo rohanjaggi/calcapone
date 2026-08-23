@@ -100,32 +100,3 @@ function timeToMinutes(time: string): number {
   const [h, m] = time.split(":").map(Number);
   return h * 60 + m;
 }
-
-/**
- * A tick older than this means the scheduler stopped rather than merely ran late. Set to
- * three times the backstop's 5-minute period, so a single delayed or dropped run stays quiet.
- */
-export const STALE_TICK_MS = 15 * 60 * 1000;
-
-/**
- * Record that a cron job ran, and report whether the previous run was too long ago.
- *
- * The failure this exists to catch is silence. A disabled workflow, an expired token, a
- * scheduler that quietly stopped — none of them produce an error anywhere, and the first
- * sign is a reminder that never arrived days earlier. A tick that notices its own gap is
- * the cheapest way to turn that into a ping.
- *
- * Reports on the gap rather than on a missed schedule because the endpoint has no idea how
- * often it is supposed to run; the caller pairs a true with notifyOwner.
- */
-export async function touchHeartbeat(job: string, now: Date = new Date()): Promise<boolean> {
-  const previous = await prisma.cronHeartbeat.findUnique({ where: { job } });
-  await prisma.cronHeartbeat.upsert({
-    where: { job },
-    create: { job, lastTickAt: now },
-    update: { lastTickAt: now },
-  });
-  // A first-ever tick has no gap to measure — a fresh deploy must not alert.
-  if (!previous) return false;
-  return now.getTime() - previous.lastTickAt.getTime() > STALE_TICK_MS;
-}

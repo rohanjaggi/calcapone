@@ -20,8 +20,10 @@ name: Cron backstop (reminders, briefing, weekly digest, calendar sync)
 # sends (claimUpdate, claimDueReminder, claimNotificationStage, the sync claim, and the
 # date-guarded briefing/digest), so a double tick cannot double-send.
 #
-# /api/cron/reminders also self-monitors -- if a tick finds the previous one was more than
-# 15 minutes ago it DMs the owner, so a dead scheduler announces itself.
+# Note: the endpoints do NOT self-monitor for tick gaps. A threshold low enough to catch a
+# dead scheduler also trips on every run whenever this */15 backstop is the one carrying, so
+# it flooded precisely when the primary was down. A dead scheduler shows up as a stale
+# lastCalendarSyncAt instead.
 
 on:
   schedule:

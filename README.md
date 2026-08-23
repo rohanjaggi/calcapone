@@ -195,9 +195,10 @@ double-send. GitHub is the backstop rather than the primary because it throttles
 scheduled runs under load, and **disables scheduled workflows entirely after 60 days without
 a commit** — if reminders stop, check the Actions tab for a disabled workflow first.
 
-`/api/cron/reminders` also self-monitors: a tick that finds the previous one was more than 15
-minutes ago DMs the owner (`TELEGRAM_USER_ID`), so a dead scheduler announces itself instead
-of failing silently.
+There is no tick-gap self-monitoring: a threshold low enough to catch a dead scheduler also
+fires on every run whenever the `*/15` backstop is the one carrying, which is exactly when the
+primary is already down — so it alerted hardest in the case it was meant to report calmly.
+A dead scheduler currently shows up as a stale `lastCalendarSyncAt`, not as a DM.
 
 ## Telegram Commands
 
