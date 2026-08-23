@@ -12,6 +12,12 @@
 
 ## Global Constraints
 
+> **As built:** the three schema steps below were generated offline (see Global
+> Constraints) and then squashed into a single migration,
+> `20260823000000_dashboard_rework_cleanup`, since none had been applied to any
+> database. The `migrate dev` commands in the tasks are superseded.
+
+
 - Run `npm run verify` (lint + typecheck + test) before every commit. It must pass.
 - Prisma client is generated to `src/generated/prisma` and is **not** committed. After any schema change run `npx prisma generate` before typechecking.
 - **Never run `prisma migrate dev`.** There is no `DIRECT_DATABASE_URL` in `.env.local`, so `prisma.config.ts` falls back to the pooled `DATABASE_URL`, which cannot run migrations — and `migrate dev` can offer to reset the live database when it detects drift. Generate migrations offline instead:
