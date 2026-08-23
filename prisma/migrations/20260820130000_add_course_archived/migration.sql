@@ -1,2 +1,0 @@
--- AlterTable
-ALTER TABLE "courses" ADD COLUMN IF NOT EXISTS "archived" BOOLEAN NOT NULL DEFAULT false;
