@@ -50,10 +50,17 @@ function shiftDate(dateStr: string, days: number): string {
  * Everything the dashboard renders, in one payload.
  *
  * Calendar events come from the local `calendar_events` mirror, never the Google API: the
- * mirror spans -7 to +90 days (see calendar-sync.ts) and the cron refreshes it every ~4
- * minutes, so a seven-day window is always well inside it. That is what lets the dashboard
- * render server-side with no token refresh, no network round-trip and no streaming promise —
- * and it is why the dashboard can show events at all, which it never could before.
+ * mirror spans -7 to +90 days (see calendar-sync.ts), so a seven-day window is always well
+ * inside it. That is what lets the dashboard render server-side with no token refresh, no
+ * network round-trip and no streaming promise — and it is why the dashboard can show events
+ * at all, which it never could before.
+ *
+ * The mirror has two writers. The sync cron pulls down whatever changed on Google, which is
+ * the only way changes made *outside* the app arrive, and its cadence is set by the external
+ * scheduler — `RESYNC_THRESHOLD_MS` is a floor between passes, not a promise about how often
+ * one happens. Writes the app makes itself are mirrored at the point of the write instead
+ * (`mirrorEvent`/`unmirrorEvent`), because waiting for a pull meant the bot could confirm an
+ * event to the user that their own dashboard could not yet see.
  *
  * All seven days ship at once. It is tens of rows, so day-switching is pure client state
  * rather than a server round-trip per tap.

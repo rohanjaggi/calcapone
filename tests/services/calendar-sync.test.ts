@@ -29,7 +29,7 @@ vi.mock("@/lib/services/calendar", () => ({
   CalendarAuthError: mockCalendar.CalendarAuthError,
 }));
 
-import { syncUserCalendar, MIRROR_PAST_MS, MIRROR_FUTURE_MS } from "@/lib/services/calendar-sync";
+import { syncUserCalendar, mirrorEvent, unmirrorEvent, MIRROR_PAST_MS, MIRROR_FUTURE_MS } from "@/lib/services/calendar-sync";
 import { CalendarAuthError } from "@/lib/services/calendar";
 import type { SyncedEvent } from "@/lib/services/calendar";
 
@@ -305,5 +305,74 @@ describe("syncUserCalendar", () => {
 
     await expect(syncUserCalendar(baseUser, NOW)).rejects.toBeInstanceOf(CalendarAuthError);
     expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Write-through: the app records its own Google writes in the mirror instead of waiting for
+ * the next sync pass to discover them. Without it the dashboard — which reads the mirror and
+ * never Google — cannot see an event the bot just created until the cron catches up.
+ */
+describe("mirrorEvent", () => {
+  const created = {
+    googleEventId: "evt-new",
+    title: "Dinner",
+    description: null,
+    startsAt: new Date("2026-08-20T12:00:00.000Z"),
+    endsAt: new Date("2026-08-20T14:00:00.000Z"),
+    googleUpdatedAt: new Date("2026-08-20T10:00:00.000Z"),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.calendarEvent.findUnique.mockResolvedValue(null);
+  });
+
+  it("upserts the event so the dashboard sees it without waiting for a sync", async () => {
+    await mirrorEvent("user-1", "primary", created, NOW);
+
+    expect(mockPrisma.calendarEvent.upsert).toHaveBeenCalledTimes(1);
+    const call = mockPrisma.calendarEvent.upsert.mock.calls[0][0];
+    expect(call.where).toEqual({ userId_googleEventId: { userId: "user-1", googleEventId: "evt-new" } });
+    expect(call.create).toMatchObject({
+      userId: "user-1",
+      googleEventId: "evt-new",
+      calendarId: "primary",
+      title: "Dinner",
+      startsAt: created.startsAt,
+      endsAt: created.endsAt,
+      allDay: false,
+    });
+  });
+
+  it("does not mirror an event beyond the mirror's forward window", async () => {
+    await mirrorEvent(
+      "user-1",
+      "primary",
+      { ...created, startsAt: new Date(NOW.getTime() + MIRROR_FUTURE_MS + 86400000), endsAt: new Date(NOW.getTime() + MIRROR_FUTURE_MS + 90000000) },
+      NOW
+    );
+
+    expect(mockPrisma.calendarEvent.upsert).not.toHaveBeenCalled();
+  });
+
+  it("clears a sent reminder when the event moved, so the ping fires again for the new time", async () => {
+    mockPrisma.calendarEvent.findUnique.mockResolvedValue({ startsAt: new Date("2026-08-20T09:00:00.000Z") });
+
+    await mirrorEvent("user-1", "primary", created, NOW);
+
+    expect(mockPrisma.calendarEvent.upsert.mock.calls[0][0].update).toMatchObject({ reminderSentAt: null });
+  });
+});
+
+describe("unmirrorEvent", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("removes the row so a deleted event leaves the dashboard immediately", async () => {
+    await unmirrorEvent("user-1", "evt-gone");
+
+    expect(mockPrisma.calendarEvent.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "user-1", googleEventId: "evt-gone" },
+    });
   });
 });

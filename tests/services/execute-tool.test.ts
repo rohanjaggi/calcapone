@@ -16,6 +16,8 @@ const mockUpdateEvent = vi.hoisted(() => vi.fn());
 const mockDeleteEvent = vi.hoisted(() => vi.fn());
 const mockMarkDisconnected = vi.hoisted(() => vi.fn());
 const mockSearchItems = vi.hoisted(() => vi.fn());
+const mockMirrorEvent = vi.hoisted(() => vi.fn());
+const mockUnmirrorEvent = vi.hoisted(() => vi.fn());
 const MockCalendarAuthError = vi.hoisted(
   () =>
     class CalendarAuthError extends Error {
@@ -58,6 +60,11 @@ vi.mock("@/lib/services/calendar-link", () => ({
 
 vi.mock("@/lib/services/search", () => ({
   searchItems: mockSearchItems,
+}));
+
+vi.mock("@/lib/services/calendar-sync", () => ({
+  mirrorEvent: mockMirrorEvent,
+  unmirrorEvent: mockUnmirrorEvent,
 }));
 
 
@@ -726,6 +733,87 @@ describe("executeToolCall", () => {
       const result = await executeToolCall("create_calendar_event", { ...args, end_time: "2026-08-21T11:00:00+08:00" }, "u1", gcalUser);
       expect(result.text).toMatch(/end time must be after/);
       expect(result.failed).toBe(true);
+    });
+
+    // The dashboard reads the local mirror, never Google, so without this the user is told
+    // the event exists while their own dashboard still cannot see it.
+    it("mirrors the new event so the dashboard shows it before the next sync", async () => {
+      mockGetEvents.mockResolvedValue([]);
+      mockListItems.mockResolvedValue([]);
+      mockCreateEvent.mockResolvedValue({ id: "gcal-9", title: "Lunch", startTime: args.start_time, endTime: args.end_time });
+
+      await executeToolCall("create_calendar_event", args, "u1", gcalUser);
+
+      expect(mockMirrorEvent).toHaveBeenCalledTimes(1);
+      const [userId, calendarId, event] = mockMirrorEvent.mock.calls[0];
+      expect(userId).toBe("u1");
+      expect(calendarId).toBe("primary");
+      expect(event).toMatchObject({ googleEventId: "gcal-9", title: "Lunch" });
+      expect(event.startsAt.toISOString()).toBe("2026-08-21T04:00:00.000Z");
+      expect(event.endsAt.toISOString()).toBe("2026-08-21T05:00:00.000Z");
+    });
+
+    it("still reports success when the mirror write fails, since Google already has the event", async () => {
+      mockGetEvents.mockResolvedValue([]);
+      mockListItems.mockResolvedValue([]);
+      mockCreateEvent.mockResolvedValue({ id: "gcal-9", title: "Lunch", startTime: args.start_time, endTime: args.end_time });
+      mockMirrorEvent.mockRejectedValue(new Error("db down"));
+
+      const result = await executeToolCall("create_calendar_event", args, "u1", gcalUser);
+
+      expect(result.text).toContain("Created calendar event: <b>Lunch</b>");
+      expect(result.failed).toBeFalsy();
+    });
+  });
+
+  describe("update_calendar_event write-through", () => {
+    const gcalUser = { googleRefreshToken: "enc", googleCalendarId: "primary", timezone: "Asia/Singapore" };
+
+    it("mirrors the updated event so the dashboard stops showing the stale one", async () => {
+      mockListItems.mockResolvedValue([]);
+      mockGetEvents.mockResolvedValue([
+        { id: "g1", title: "Lunch", startTime: "2026-08-21T12:00:00+08:00", endTime: "2026-08-21T13:00:00+08:00", description: null, allDay: false, transparency: "opaque" },
+      ]);
+      mockUpdateEvent.mockResolvedValue({ id: "g1", title: "Brunch", startTime: "2026-08-21T11:00:00+08:00", endTime: "2026-08-21T12:00:00+08:00" });
+
+      await executeToolCall("update_calendar_event", { query: "lunch", title: "Brunch" }, "u1", gcalUser);
+
+      expect(mockMirrorEvent).toHaveBeenCalledTimes(1);
+      const [userId, calendarId, event] = mockMirrorEvent.mock.calls[0];
+      expect(userId).toBe("u1");
+      expect(calendarId).toBe("primary");
+      expect(event).toMatchObject({ googleEventId: "g1", title: "Brunch" });
+      expect(event.startsAt.toISOString()).toBe("2026-08-21T03:00:00.000Z");
+    });
+
+    // An all-day event comes back from Google with `date`, not `dateTime`, which updateEvent
+    // surfaces as "". Mirroring NaN dates would poison the row the dashboard reads.
+    it("skips the mirror write when Google returns no parseable window", async () => {
+      mockListItems.mockResolvedValue([]);
+      mockGetEvents.mockResolvedValue([
+        { id: "g1", title: "Lunch", startTime: "2026-08-21T12:00:00+08:00", endTime: "2026-08-21T13:00:00+08:00", description: null, allDay: false, transparency: "opaque" },
+      ]);
+      mockUpdateEvent.mockResolvedValue({ id: "g1", title: "Brunch", startTime: "", endTime: "" });
+
+      await executeToolCall("update_calendar_event", { query: "lunch", title: "Brunch" }, "u1", gcalUser);
+
+      expect(mockMirrorEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("delete_calendar_event write-through", () => {
+    const gcalUser = { googleRefreshToken: "enc", googleCalendarId: "primary", timezone: "Asia/Singapore" };
+
+    it("removes the event from the mirror so it leaves the dashboard immediately", async () => {
+      mockListItems.mockResolvedValue([]);
+      mockGetEvents.mockResolvedValue([
+        { id: "g1", title: "Lunch", startTime: "2026-08-21T12:00:00+08:00", endTime: "2026-08-21T13:00:00+08:00", description: null, allDay: false, transparency: "opaque" },
+      ]);
+      mockDeleteEvent.mockResolvedValue(undefined);
+
+      await executeToolCall("delete_calendar_event", { query: "lunch" }, "u1", gcalUser);
+
+      expect(mockUnmirrorEvent).toHaveBeenCalledWith("u1", "g1");
     });
   });
 

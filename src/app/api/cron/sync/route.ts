@@ -11,7 +11,8 @@ import {
   formatEventReminder,
 } from "@/lib/services/event-reminders";
 import { sendMessage, b, esc, TelegramBlockedError } from "@/lib/services/telegram";
-import { isQuietHours, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
+import { isQuietHours, isAuthorizedCronRequest, touchHeartbeat, STALE_TICK_MS } from "@/lib/services/cron-utils";
+import { notifyOwner } from "@/lib/services/alert";
 import { formatInTz } from "@/lib/tz";
 
 export const maxDuration = 60;
@@ -39,6 +40,18 @@ export async function POST(request: NextRequest) {
   }
 
   const now = new Date();
+
+  // Tracked separately from the reminders tick because this endpoint can stop on its own:
+  // it has its own 60s ceiling and sync budget, so a slow Google or one oversized calendar
+  // can time it out while the reminders call on the same tick keeps succeeding. A sync that
+  // quietly stops shows up as an event missing from the dashboard days later, not as an error.
+  if (await touchHeartbeat("sync", now)) {
+    await notifyOwner(
+      "cron:sync-heartbeat",
+      `No calendar sync tick for over ${STALE_TICK_MS / 60000} minutes — the scheduler may have stopped.`
+    );
+  }
+
   let synced = 0;
   let conflicts = 0;
   let reminded = 0;

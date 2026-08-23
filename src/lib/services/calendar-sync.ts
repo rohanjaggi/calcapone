@@ -203,3 +203,58 @@ export async function syncUserCalendar(user: SyncUser, now: Date = new Date()): 
 
   return { applied, removed, conflicts, fullResync };
 }
+
+/** What the app knows about an event it just wrote to Google, in mirror terms. */
+export type MirroredEvent = {
+  googleEventId: string;
+  title: string;
+  description?: string | null;
+  startsAt: Date;
+  endsAt: Date;
+  allDay?: boolean;
+  transparent?: boolean;
+  googleUpdatedAt?: Date | null;
+};
+
+/**
+ * Record an event the app itself just created or changed on Google, without waiting for the
+ * next sync pass to discover it.
+ *
+ * The dashboard reads the mirror and never Google (see agenda.ts), so until this ran, an
+ * event the bot had just confirmed to the user was invisible on their own dashboard for a
+ * full cron cycle — while the calendar page, which reads Google live, showed it instantly.
+ *
+ * Routed through `applyMirrorChange` rather than its own upsert so write-through and sync
+ * cannot drift: the mirror window, the reminder reset on a moved start, and the row shape
+ * are all decided in exactly one place. The next sync pass re-applies the same event
+ * idempotently and fills in anything Google normalised on its end.
+ */
+export async function mirrorEvent(
+  userId: string,
+  calendarId: string,
+  event: MirroredEvent,
+  now: Date = new Date()
+): Promise<void> {
+  await applyMirrorChange(
+    userId,
+    calendarId,
+    {
+      googleEventId: event.googleEventId,
+      title: event.title,
+      description: event.description ?? null,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+      allDay: event.allDay ?? false,
+      allDayDate: null,
+      transparent: event.transparent ?? false,
+      googleUpdatedAt: event.googleUpdatedAt ?? null,
+      cancelled: false,
+    },
+    now
+  );
+}
+
+/** The delete half of write-through: drop an event the app just removed from Google. */
+export async function unmirrorEvent(userId: string, googleEventId: string): Promise<void> {
+  await prisma.calendarEvent.deleteMany({ where: { userId, googleEventId } });
+}

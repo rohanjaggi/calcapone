@@ -11,6 +11,7 @@ import {
 } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
 import { getEvents, createEvent, updateEvent, deleteEvent, CalendarAuthError } from "@/lib/services/calendar";
+import { mirrorEvent, unmirrorEvent } from "@/lib/services/calendar-sync";
 import { markCalendarDisconnected, CALENDAR_RECONNECT_MESSAGE } from "@/lib/services/calendar-link";
 import { searchItems } from "@/lib/services/search";
 import { paramsToRRule, getNextOccurrence, dueDateAnchor, type RecurrenceParams } from "@/lib/services/recurrence";
@@ -191,6 +192,54 @@ function inverseEventPatch(
   }
   if (Object.keys(fields).length === 0) return null;
   return { op: "patch_event", calendarId: user.googleCalendarId ?? "primary", eventId: before.googleEventId, fields };
+}
+
+/**
+ * Reflect a Google write the app just made into the local mirror.
+ *
+ * The dashboard reads the mirror and never Google (agenda.ts), so without this an event the
+ * bot has just confirmed to the user stays invisible — or stale — on their own dashboard
+ * until the next sync pass, while the calendar page, which reads Google live, already agrees
+ * with the user.
+ *
+ * Takes Google's own response rather than the values we sent, so the mirror records what the
+ * calendar actually stored. A response with no parseable window is skipped: an all-day event
+ * comes back carrying `date` instead of `dateTime`, which surfaces here as an empty string,
+ * and an Invalid Date would poison the row the dashboard reads. The next sync mirrors it
+ * properly.
+ *
+ * Best-effort on purpose: Google has already accepted the write, so a mirror failure must not
+ * turn a successful tool call into a reported failure.
+ */
+async function writeThroughEvent(
+  userId: string,
+  calendarId: string,
+  event: { id: string; title: string; startTime: string; endTime: string },
+  tool: string
+): Promise<void> {
+  const startsAt = new Date(event.startTime);
+  const endsAt = new Date(event.endTime);
+  if (isNaN(startsAt.getTime()) || isNaN(endsAt.getTime())) return;
+
+  try {
+    await mirrorEvent(userId, calendarId, {
+      googleEventId: event.id,
+      title: event.title,
+      startsAt,
+      endsAt,
+    });
+  } catch (error) {
+    console.error(`[tool:${tool}] mirror write failed:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/** The delete half of write-through, on the same best-effort terms. */
+async function writeThroughDelete(userId: string, googleEventId: string, tool: string): Promise<void> {
+  try {
+    await unmirrorEvent(userId, googleEventId);
+  } catch (error) {
+    console.error(`[tool:${tool}] mirror delete failed:`, error instanceof Error ? error.message : error);
+  }
 }
 
 /** Best-effort removal of the Google event behind an item being deleted. */
@@ -627,6 +676,8 @@ async function runTool(
         user.timezone
       );
 
+      await writeThroughEvent(userId, calendarId, event, "create_calendar_event");
+
       const warnings: string[] = [];
       const eventDate = formatDateInTz(startInstant, user.timezone);
       const items = await listItems(userId, { status: "pending" as ItemStatus });
@@ -716,7 +767,8 @@ async function runTool(
 
         await updateItem(linked.id, userId, updates);
         try {
-          await updateEvent(user.googleRefreshToken, calendarId, linked.googleEventId!, gcalFields, user.timezone);
+          const updated = await updateEvent(user.googleRefreshToken, calendarId, linked.googleEventId!, gcalFields, user.timezone);
+          await writeThroughEvent(userId, calendarId, updated, "update_calendar_event");
         } catch (error) {
           if (error instanceof CalendarAuthError) throw error;
           return echoOutcome(`Updated in-app event: ${b(args.title ?? linked.title)} (Google Calendar sync failed)`);
@@ -756,7 +808,8 @@ async function runTool(
       };
 
       try {
-        await updateEvent(user.googleRefreshToken, calendarId, gcalMatch.id, gcalFields, user.timezone);
+        const updated = await updateEvent(user.googleRefreshToken, calendarId, gcalMatch.id, gcalFields, user.timezone);
+        await writeThroughEvent(userId, calendarId, updated, "update_calendar_event");
       } catch (error) {
         if (error instanceof CalendarAuthError) throw error;
         return refuse(`Found "${esc(gcalMatch.title)}" but failed to update it in Google Calendar.`);
@@ -800,6 +853,7 @@ async function runTool(
             };
           }
           await deleteEvent(user.googleRefreshToken, calendarId, linked.googleEventId!);
+          await writeThroughDelete(userId, linked.googleEventId!, "delete_calendar_event");
         } catch (error) {
           if (error instanceof CalendarAuthError) throw error;
           console.error("[tool:delete_calendar_event] calendar delete failed:", error instanceof Error ? error.message : error);
@@ -829,6 +883,7 @@ async function runTool(
 
       try {
         await deleteEvent(user.googleRefreshToken, calendarId, gcalMatch.id);
+        await writeThroughDelete(userId, gcalMatch.id, "delete_calendar_event");
       } catch (error) {
         if (error instanceof CalendarAuthError) throw error;
         return refuse(`Found "${esc(gcalMatch.title)}" but failed to delete it from Google Calendar.`);
