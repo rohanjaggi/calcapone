@@ -1,6 +1,14 @@
 "use client";
 
-type Day = { date: string; taskCount: number; eventCount: number };
+import { SEVERITY_STYLES } from "@/lib/severity";
+
+type Day = {
+  date: string;
+  taskCount: number;
+  eventCount: number;
+  /** Worst deadline severity on the day, or null when nothing on it is pressing. */
+  severity: "overdue" | "urgent" | "soon" | "upcoming" | null;
+};
 
 /**
  * Weekday initial from a "YYYY-MM-DD".
@@ -45,7 +53,7 @@ export function WeekStrip({
             key={day.date}
             onClick={() => onSelect(day.date)}
             aria-pressed={isSelected}
-            aria-label={`${day.date}${isToday ? " (today)" : ""}, ${total} item${total === 1 ? "" : "s"}`}
+            aria-label={`${day.date}${isToday ? " (today)" : ""}, ${total} item${total === 1 ? "" : "s"}${day.severity === "overdue" ? ", overdue" : day.severity === "urgent" ? ", due soon" : ""}`}
             className={`relative flex-1 rounded-xl py-2 flex flex-col items-center gap-1 border transition-colors ${
               isSelected
                 ? "bg-primary/10 border-primary/40"
@@ -66,7 +74,13 @@ export function WeekStrip({
               {total > 0 && (
                 <span
                   className={`w-1 h-1 rounded-full ${
-                    isSelected ? "bg-primary" : "bg-muted-foreground/50"
+                    // A deadline colours the dot; a day that is merely busy stays neutral,
+                    // so colour means "something is due", not "something is on".
+                    day.severity
+                      ? SEVERITY_STYLES[day.severity].dot
+                      : isSelected
+                      ? "bg-primary"
+                      : "bg-muted-foreground/50"
                   }`}
                 />
               )}

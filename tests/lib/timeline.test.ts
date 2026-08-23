@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildTimeline } from "@/lib/timeline";
 import type { Item, AgendaEvent } from "@/lib/mock-data";
+import { combineDateTimeInTz } from "@/lib/tz";
 
 const SG = "Asia/Singapore";
 const TODAY = "2026-08-20";
@@ -43,8 +44,20 @@ describe("buildTimeline", () => {
     expect(timeline[0].isReminder).toBe(false);
   });
 
-  it("skips an item with a due date but no due time", () => {
-    const items = [item({ id: "dateless", dueDate: TODAY, dueTime: null })];
+  it("includes an item due today with no due time, at the head of the day", () => {
+    // It used to be dropped: "essay due Friday" showed in /list and escalated in Telegram
+    // but appeared on no day of the dashboard at all.
+    const items = [
+      item({ id: "untimed", dueDate: TODAY, dueTime: null }),
+      item({ id: "timed", dueDate: TODAY, dueTime: "08:00" }),
+    ];
+    const timeline = buildTimeline(items, [], SG, TODAY);
+    expect(timeline.map((t) => t.id)).toEqual(["untimed", "timed"]);
+    expect(timeline[0].allDay).toBe(true);
+  });
+
+  it("still excludes an untimed item due on another day", () => {
+    const items = [item({ id: "untimed", dueDate: "2026-10-01", dueTime: null })];
     expect(buildTimeline(items, [], SG, TODAY)).toEqual([]);
   });
 
@@ -142,5 +155,39 @@ describe("buildTimeline with events", () => {
   it("labels an all-day event in the subtitle", () => {
     const timeline = buildTimeline([], [event({ id: "e", allDay: true })], SG, TODAY);
     expect(timeline[0].subtitle).toBe("All day");
+  });
+});
+
+describe("buildTimeline urgency", () => {
+  const NOW = combineDateTimeInTz(TODAY, "10:00", SG);
+
+  it("badges a task with a countdown and a severity", () => {
+    const items = [item({ id: "t", dueDate: TODAY, dueTime: "12:00" })];
+    const [row] = buildTimeline(items, [], SG, TODAY, NOW);
+    expect(row.urgency).toEqual({ label: "in 2h", severity: "urgent" });
+  });
+
+  it("marks a task on a past day as overdue", () => {
+    const items = [item({ id: "t", dueDate: "2026-08-19", dueTime: "09:00" })];
+    const [row] = buildTimeline(items, [], SG, "2026-08-19", NOW);
+    expect(row.urgency).toMatchObject({ severity: "overdue" });
+  });
+
+  it("badges a day several days out with a day count", () => {
+    const items = [item({ id: "t", dueDate: "2026-08-27", dueTime: "12:00" })];
+    const [row] = buildTimeline(items, [], SG, "2026-08-27", NOW);
+    expect(row.urgency).toEqual({ label: "in 7 days", severity: "upcoming" });
+  });
+
+  it("does not badge a reminder — a reminder fires, it is not a deadline", () => {
+    const items = [item({ id: "r", remindAt: `${TODAY}T02:00:00.000Z` })];
+    const [row] = buildTimeline(items, [], SG, TODAY, NOW);
+    expect(row.urgency).toBeUndefined();
+  });
+
+  it("does not badge a calendar event", () => {
+    const events = [event({ id: "e" })];
+    const [row] = buildTimeline([], events, SG, TODAY, NOW);
+    expect(row.urgency).toBeUndefined();
   });
 });

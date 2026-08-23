@@ -5,6 +5,7 @@ import { Plus } from "lucide-react";
 import { Greeting } from "@/components/dashboard/greeting";
 import { StatsRow } from "@/components/dashboard/stats-row";
 import { WeekStrip } from "@/components/dashboard/week-strip";
+import { AheadStrip } from "@/components/dashboard/ahead-strip";
 import { DayTimeline } from "@/components/dashboard/day-timeline";
 import { CreateItemSheet } from "@/components/todos/create-item-sheet";
 import type { Agenda } from "@/lib/services/agenda";
@@ -27,6 +28,11 @@ export function DashboardClient({ userName, timezone, today, agenda }: Props) {
     <main className="safe-bottom pb-8">
       <Greeting name={userName} timezone={timezone} />
       <StatsRow counts={agenda.priorityCounts} />
+      <AheadStrip
+        items={agenda.ahead}
+        selectableDates={agenda.strip.map((d) => d.date)}
+        onSelect={setSelected}
+      />
       <WeekStrip days={agenda.strip} selected={selected} today={today} onSelect={setSelected} />
       <DayTimeline items={entries} isToday={selected === today} />
 

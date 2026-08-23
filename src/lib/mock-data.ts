@@ -34,8 +34,10 @@ export type TimelineItem = {
   subtitle: string;
   color: string;
   isReminder?: boolean;
-  /** All-day events have no meaningful time-of-day, so they sort ahead of every timed row. */
+  /** No meaningful time-of-day — an all-day event, or a task due on a date but at no hour. */
   allDay?: boolean;
+  /** Countdown badge for a deadline, settled on the server. Absent for events and undated rows. */
+  urgency?: { label: string; severity: "overdue" | "urgent" | "soon" | "upcoming" };
   status?: string;
 };
 

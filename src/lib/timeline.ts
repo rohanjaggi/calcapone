@@ -1,4 +1,5 @@
-import { formatDateInTz } from "@/lib/tz";
+import { formatDateInTz, todayInTz, combineDateTimeInTz } from "@/lib/tz";
+import { deadlineUrgency } from "@/lib/services/escalation";
 import type { Item, AgendaEvent, TimelineItem } from "@/lib/mock-data";
 
 /** Calendar events all share one colour — they aren't categorised the way items are. */
@@ -21,27 +22,38 @@ export function buildTimeline(
   items: Item[],
   events: AgendaEvent[],
   tz: string,
-  day: string
+  day: string,
+  now: Date = new Date()
 ): TimelineItem[] {
   const timelineItems: TimelineItem[] = [];
+  const todayStr = todayInTz(tz, now);
+  const urgencyOf = (dueDate: string | null, dueTime: string | null) =>
+    deadlineUrgency(dueDate, dueTime, todayStr, now, (d, t) => combineDateTimeInTz(d, t, tz));
 
   for (const item of items) {
     if (item.status === "done") continue;
 
     let time: string | null = null;
     let itemDay: string | null = null;
+    // A task due on a date but at no particular hour has no place on the clock. It used to be
+    // dropped entirely, so "essay due Friday" appeared on no day at all while still showing in
+    // /list and still escalating in Telegram. It now heads that day, like an all-day event.
+    let untimed = false;
 
     if (item.remindAt) {
       const instant = new Date(item.remindAt);
       if (isNaN(instant.getTime())) continue;
       time = item.remindAt;
       itemDay = formatDateInTz(instant, tz);
-    } else if (item.dueDate && item.dueTime) {
-      time = `${item.dueDate}T${item.dueTime}:00`;
+    } else if (item.dueDate) {
+      untimed = !item.dueTime;
+      time = `${item.dueDate}T${item.dueTime ?? "00:00"}:00`;
       itemDay = item.dueDate;
     }
 
     if (!time || itemDay !== day) continue;
+
+    const urgency = item.remindAt ? null : urgencyOf(item.dueDate, item.dueTime);
 
     timelineItems.push({
       id: item.id,
@@ -51,6 +63,8 @@ export function buildTimeline(
       subtitle: `${item.category.name} · ${item.priority}`,
       color: item.category.color,
       isReminder: !!item.remindAt,
+      ...(untimed ? { allDay: true } : {}),
+      ...(urgency ? { urgency } : {}),
       status: item.status,
     });
   }
