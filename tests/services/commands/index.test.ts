@@ -9,13 +9,10 @@ vi.mock("@/lib/services/commands/handlers", () => ({
   handleWeek: vi.fn(async () => ({ text: "week-reply" })),
   handleNote: vi.fn(async () => ({ text: "note-reply" })),
   handleSearch: vi.fn(async () => ({ text: "search-reply" })),
-  handleCourses: vi.fn(async () => ({ text: "courses-reply" })),
-  handleExams: vi.fn(async () => ({ text: "exams-reply" })),
-  handleDue: vi.fn(async () => ({ text: "due-reply" })),
 }));
 
 import { parseSlashCommand, isAiHintCommand, handleCommand, HELP_TEXT, type CommandContext } from "@/lib/services/commands";
-import { handleUndo, handleWeek, handleNote, handleSearch, handleCourses, handleExams, handleDue } from "@/lib/services/commands/handlers";
+import { handleUndo, handleWeek, handleNote, handleSearch } from "@/lib/services/commands/handlers";
 
 describe("parseSlashCommand", () => {
   it("parses /todo with body", () => {
@@ -117,24 +114,6 @@ describe("parseSlashCommand", () => {
     expect(parseSlashCommand("/search milk")).toEqual({ command: "search", body: "milk" });
   });
 
-  it("parses /courses with no body", () => {
-    expect(parseSlashCommand("/courses")).toEqual({ command: "courses", body: "" });
-  });
-
-  it("parses /courses add with body", () => {
-    expect(parseSlashCommand("/courses add CS2040 Data Structures")).toEqual({
-      command: "courses",
-      body: "add CS2040 Data Structures",
-    });
-  });
-
-  it("parses /exams with no body", () => {
-    expect(parseSlashCommand("/exams")).toEqual({ command: "exams", body: "" });
-  });
-
-  it("parses /due with body", () => {
-    expect(parseSlashCommand("/due CS2040")).toEqual({ command: "due", body: "CS2040" });
-  });
 });
 
 describe("isAiHintCommand", () => {
@@ -154,8 +133,6 @@ describe("isAiHintCommand", () => {
     expect(isAiHintCommand("week")).toBe(false);
     expect(isAiHintCommand("note")).toBe(false);
     expect(isAiHintCommand("search")).toBe(false);
-    expect(isAiHintCommand("courses")).toBe(false);
-    expect(isAiHintCommand("exams")).toBe(false);
     expect(isAiHintCommand("due")).toBe(false);
   });
 });
@@ -195,24 +172,6 @@ describe("handleCommand", () => {
     const result = await handleCommand({ command: "search", body: "milk" }, ctx);
     expect(handleSearch).toHaveBeenCalledWith("milk", ctx);
     expect(result).toEqual({ text: "search-reply" });
-  });
-
-  it("routes /courses to handleCourses with the body", async () => {
-    const result = await handleCommand({ command: "courses", body: "add CS2040 Data Structures" }, ctx);
-    expect(handleCourses).toHaveBeenCalledWith("add CS2040 Data Structures", ctx);
-    expect(result).toEqual({ text: "courses-reply" });
-  });
-
-  it("routes /exams to handleExams", async () => {
-    const result = await handleCommand({ command: "exams", body: "" }, ctx);
-    expect(handleExams).toHaveBeenCalledWith(ctx);
-    expect(result).toEqual({ text: "exams-reply" });
-  });
-
-  it("routes /due to handleDue with the body", async () => {
-    const result = await handleCommand({ command: "due", body: "CS2040" }, ctx);
-    expect(handleDue).toHaveBeenCalledWith("CS2040", ctx);
-    expect(result).toEqual({ text: "due-reply" });
   });
 
   it("returns the help text wrapped in a CommandReply for /help and /start", async () => {

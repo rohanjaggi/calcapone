@@ -14,14 +14,6 @@ vi.mock("@/lib/services/user", () => ({ updateUserSettings: mockUpdateUserSettin
 vi.mock("@/lib/services/message-ref", () => ({ latestListRef: vi.fn(), resolvePosition: vi.fn() }));
 vi.mock("@/lib/services/action-log", () => ({ undoLast: vi.fn() }));
 vi.mock("@/lib/services/search", () => ({ searchItems: vi.fn() }));
-vi.mock("@/lib/services/course", () => ({
-  createCourse: vi.fn(),
-  listCourses: vi.fn(),
-  findCourse: vi.fn(),
-  setCourseArchived: vi.fn(),
-  countCourseItems: vi.fn(),
-  deleteCourse: vi.fn(),
-}));
 
 import {
   handleDone,
@@ -32,9 +24,6 @@ import {
   handleSearch,
   handleUndo,
   handleTimezone,
-  handleCourses,
-  handleExams,
-  handleDue,
 } from "@/lib/services/commands/handlers";
 import type { CommandContext } from "@/lib/services/commands";
 import { listItems, updateItem, createItem } from "@/lib/services/item";
@@ -43,14 +32,6 @@ import { getEvents } from "@/lib/services/calendar";
 import { latestListRef, resolvePosition } from "@/lib/services/message-ref";
 import { undoLast } from "@/lib/services/action-log";
 import { searchItems } from "@/lib/services/search";
-import {
-  createCourse,
-  listCourses,
-  findCourse,
-  setCourseArchived,
-  countCourseItems,
-  deleteCourse,
-} from "@/lib/services/course";
 
 const mockListItems = vi.mocked(listItems);
 const mockUpdateItem = vi.mocked(updateItem);
@@ -61,12 +42,6 @@ const mockLatestListRef = vi.mocked(latestListRef);
 const mockResolvePosition = vi.mocked(resolvePosition);
 const mockUndoLast = vi.mocked(undoLast);
 const mockSearchItems = vi.mocked(searchItems);
-const mockCreateCourse = vi.mocked(createCourse);
-const mockListCourses = vi.mocked(listCourses);
-const mockFindCourse = vi.mocked(findCourse);
-const mockSetCourseArchived = vi.mocked(setCourseArchived);
-const mockCountCourseItems = vi.mocked(countCourseItems);
-const mockDeleteCourse = vi.mocked(deleteCourse);
 
 const ctx: CommandContext = {
   userId: "u1",
@@ -90,7 +65,6 @@ const makeItem = (
     dueTime: string | null;
     remindAt: Date | null;
     kind: "task" | "assignment" | "exam" | "class";
-    courseId: string | null;
     seriesId: string | null;
   }> = {}
 ) => ({
@@ -110,9 +84,7 @@ const makeItem = (
   googleEventId: null,
   parentId: null,
   subtasks: [],
-  // Added alongside course support — /exams and /due filter and group on these.
   kind: "task" as const,
-  courseId: null,
   seriesId: null,
   calendarSyncedAt: null,
   notificationStage: 0,
@@ -121,23 +93,6 @@ const makeItem = (
   category,
   ...overrides,
 });
-
-const makeCourse = (id: string, code: string, name: string, archived = false) => ({
-  id,
-  userId: "u1",
-  code,
-  name,
-  color: null,
-  archived,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-});
-
-/** Calendar-day offset from a YYYY-MM-DD string, mirroring the handler's own date arithmetic. */
-function addDaysToDate(dateStr: string, days: number): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
-}
 
 describe("handleDone", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -845,411 +800,5 @@ describe("handleTimezone", () => {
     const result = await handleTimezone("Asia/Singapore", ctx);
     expect(mockUpdateUserSettings).not.toHaveBeenCalled();
     expect(result.text).toContain("Already set");
-  });
-});
-
-describe("handleCourses", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("lists courses as CODE — Name", async () => {
-    mockListCourses.mockResolvedValue([
-      makeCourse("c1", "CS2040", "Data Structures"),
-      makeCourse("c2", "MA1521", "Calculus"),
-    ] as never);
-
-    const result = await handleCourses("", ctx);
-
-    expect(result.text).toContain("CS2040 — Data Structures");
-    expect(result.text).toContain("MA1521 — Calculus");
-    expect(mockCreateCourse).not.toHaveBeenCalled();
-  });
-
-  it("explains how to add a course when there are none", async () => {
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleCourses("", ctx);
-
-    expect(result.text).toContain("add course CS2040 Data Structures");
-  });
-
-  it("rejects 'add' with no code or name at all", async () => {
-    const result = await handleCourses("add", ctx);
-
-    expect(result.text).toContain("Usage");
-    expect(mockCreateCourse).not.toHaveBeenCalled();
-  });
-
-  it("rejects a code with no name", async () => {
-    const result = await handleCourses("add CS2040", ctx);
-
-    expect(result.text).toContain("Usage");
-    expect(mockCreateCourse).not.toHaveBeenCalled();
-  });
-
-  it("parses a multi-word name", async () => {
-    mockCreateCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures and Algorithms") as never);
-
-    const result = await handleCourses("add CS2040 Data Structures and Algorithms", ctx);
-
-    expect(mockCreateCourse).toHaveBeenCalledWith({
-      userId: "u1",
-      code: "CS2040",
-      name: "Data Structures and Algorithms",
-    });
-    expect(result.text).toContain("Data Structures and Algorithms");
-  });
-
-  it("uppercases a lowercase code", async () => {
-    mockCreateCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-
-    await handleCourses("add cs2040 Data Structures", ctx);
-
-    expect(mockCreateCourse).toHaveBeenCalledWith({ userId: "u1", code: "CS2040", name: "Data Structures" });
-  });
-
-  it("reports a duplicate code as a friendly message instead of throwing", async () => {
-    mockCreateCourse.mockRejectedValue({ code: "P2002" });
-
-    const result = await handleCourses("add CS2040 Data Structures", ctx);
-
-    expect(result.text).toContain("CS2040");
-    expect(result.text).toContain("already exists");
-  });
-
-  it("rethrows errors that aren't a duplicate-code collision", async () => {
-    mockCreateCourse.mockRejectedValue(new Error("db down"));
-
-    await expect(handleCourses("add CS2040 Data Structures", ctx)).rejects.toThrow("db down");
-  });
-
-  it("HTML-escapes a course name containing < and &", async () => {
-    mockListCourses.mockResolvedValue([makeCourse("c1", "CS2040", "Data <Structures> & Algorithms")] as never);
-
-    const result = await handleCourses("", ctx);
-
-    expect(result.text).toContain("Data &lt;Structures&gt; &amp; Algorithms");
-    expect(result.text).not.toContain("<Structures>");
-  });
-});
-
-describe("handleExams", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore" }).format(new Date());
-
-  it("returns the empty message when there are no exams", async () => {
-    mockListItems.mockResolvedValue([]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toBe("No exams scheduled. 🎉");
-    expect(result.itemIds).toBeUndefined();
-  });
-
-  it("orders soonest first and returns itemIds matching printed order", async () => {
-    mockListItems.mockResolvedValue([
-      makeItem("i1", "Later exam", { kind: "exam", dueDate: addDaysToDate(todayStr, 5) }),
-      makeItem("i2", "Sooner exam", { kind: "exam", dueDate: addDaysToDate(todayStr, 2) }),
-    ]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.itemIds).toEqual(["i2", "i1"]);
-    expect(result.text.indexOf("Sooner exam")).toBeLessThan(result.text.indexOf("Later exam"));
-  });
-
-  it("labels an exam due today as 'today'", async () => {
-    mockListItems.mockResolvedValue([makeItem("i1", "Midterm", { kind: "exam", dueDate: todayStr })]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toContain("(today)");
-  });
-
-  it("labels an exam due tomorrow as 'tomorrow'", async () => {
-    mockListItems.mockResolvedValue([
-      makeItem("i1", "Midterm", { kind: "exam", dueDate: addDaysToDate(todayStr, 1) }),
-    ]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toContain("(tomorrow)");
-  });
-
-  it("labels an exam further out as 'in N days'", async () => {
-    mockListItems.mockResolvedValue([
-      makeItem("i1", "Final", { kind: "exam", dueDate: addDaysToDate(todayStr, 12) }),
-    ]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toContain("(in 12 days)");
-  });
-
-  it("shows the course code when the exam is tied to a course", async () => {
-    mockListItems.mockResolvedValue([
-      makeItem("i1", "Midterm", { kind: "exam", dueDate: todayStr, courseId: "c1" }),
-    ]);
-    mockListCourses.mockResolvedValue([makeCourse("c1", "CS2040", "Data Structures")] as never);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toContain("CS2040 — Midterm");
-  });
-
-  it("omits a course prefix when the exam has no course", async () => {
-    mockListItems.mockResolvedValue([makeItem("i1", "Midterm", { kind: "exam", dueDate: todayStr })]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toContain("1. Midterm (today)");
-  });
-
-  it("excludes exams without a due date", async () => {
-    mockListItems.mockResolvedValue([makeItem("i1", "Undated exam", { kind: "exam", dueDate: null })]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toBe("No exams scheduled. 🎉");
-  });
-
-  it("excludes exams already in the past", async () => {
-    mockListItems.mockResolvedValue([
-      makeItem("i1", "Past exam", { kind: "exam", dueDate: addDaysToDate(todayStr, -1) }),
-    ]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toBe("No exams scheduled. 🎉");
-  });
-
-  it("excludes non-exam items even with a due date", async () => {
-    mockListItems.mockResolvedValue([makeItem("i1", "Homework", { kind: "assignment", dueDate: todayStr })]);
-    mockListCourses.mockResolvedValue([]);
-
-    const result = await handleExams(ctx);
-
-    expect(result.text).toBe("No exams scheduled. 🎉");
-  });
-});
-
-describe("handleDue", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("returns a usage line when given no argument", async () => {
-    const result = await handleDue("", ctx);
-
-    expect(result.text).toContain("Usage");
-    expect(mockFindCourse).not.toHaveBeenCalled();
-  });
-
-  it("reports an unknown course", async () => {
-    mockFindCourse.mockResolvedValue(null);
-
-    const result = await handleDue("PHYS999", ctx);
-
-    expect(result.text).toContain("PHYS999");
-    expect(result.text).toContain("/courses");
-    expect(mockListItems).not.toHaveBeenCalled();
-  });
-
-  it("groups assignments and exams ahead of everything else, each showing its due date", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-    mockListItems.mockResolvedValue([
-      makeItem("i1", "Read chapter 3", { kind: "class", courseId: "c1", dueDate: "2026-09-01" }),
-      makeItem("i2", "Assignment 2", { kind: "assignment", courseId: "c1", dueDate: "2026-08-25" }),
-      makeItem("i3", "Other course item", { kind: "assignment", courseId: "other", dueDate: "2026-08-20" }),
-      makeItem("i4", "Final exam", { kind: "exam", courseId: "c1", dueDate: "2026-12-01" }),
-    ]);
-
-    const result = await handleDue("cs2040", ctx);
-
-    expect(mockFindCourse).toHaveBeenCalledWith("u1", "cs2040");
-    expect(result.itemIds).toEqual(["i2", "i4", "i1"]);
-    expect(result.text).toContain("Assignment 2 — due 2026-08-25");
-    expect(result.text).toContain("Final exam — due 2026-12-01");
-    expect(result.text).toContain("Read chapter 3 — due 2026-09-01");
-    expect(result.text).not.toContain("Other course item");
-    expect(result.text.indexOf("Assignment 2")).toBeLessThan(result.text.indexOf("Read chapter 3"));
-  });
-
-  it("sorts within each group by due date, soonest first", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-    mockListItems.mockResolvedValue([
-      makeItem("i1", "Final exam", { kind: "exam", courseId: "c1", dueDate: "2026-12-01" }),
-      makeItem("i2", "Assignment 1", { kind: "assignment", courseId: "c1", dueDate: "2026-08-25" }),
-      makeItem("i3", "Read chapter 9", { kind: "class", courseId: "c1", dueDate: "2026-11-01" }),
-      makeItem("i4", "Read chapter 3", { kind: "class", courseId: "c1", dueDate: "2026-09-01" }),
-    ]);
-
-    const result = await handleDue("CS2040", ctx);
-
-    expect(result.itemIds).toEqual(["i2", "i1", "i4", "i3"]);
-  });
-
-  it("reports no open items for the course", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-    mockListItems.mockResolvedValue([]);
-
-    const result = await handleDue("CS2040", ctx);
-
-    expect(result.text).toContain("CS2040");
-    expect(result.itemIds).toBeUndefined();
-  });
-});
-
-describe("handleCourses archiving", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("lists active courses only, and says how many are archived", async () => {
-    mockListCourses.mockResolvedValue([
-      makeCourse("c1", "CS2030", "Programming Methodology II"),
-      makeCourse("c2", "CS2040", "Data Structures", true),
-    ] as never);
-
-    const result = await handleCourses("", ctx);
-
-    // One query, partitioned in memory — a user has a handful of courses, not a page of them.
-    expect(mockListCourses).toHaveBeenCalledTimes(1);
-    expect(result.text).toContain("CS2030");
-    expect(result.text).not.toContain("CS2040");
-    expect(result.text).toContain("1 archived");
-  });
-
-  it("omits the archived footer when nothing is archived", async () => {
-    mockListCourses.mockResolvedValue([makeCourse("c1", "CS2030", "Programming Methodology II")] as never);
-
-    const result = await handleCourses("", ctx);
-
-    expect(result.text).not.toContain("archived");
-  });
-
-  it("/courses all shows archived courses marked as such", async () => {
-    mockListCourses.mockResolvedValue([
-      makeCourse("c1", "CS2030", "Programming Methodology II"),
-      makeCourse("c2", "CS2040", "Data Structures", true),
-    ] as never);
-
-    const result = await handleCourses("all", ctx);
-
-    expect(mockListCourses).toHaveBeenCalledWith("u1", { includeArchived: true });
-    expect(result.text).toContain("CS2040");
-    expect(result.text).toContain("archived");
-  });
-
-  it("archives a course and reports how many items kept their tag", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-    mockCountCourseItems.mockResolvedValue(12);
-    mockSetCourseArchived.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", true) as never);
-
-    const result = await handleCourses("archive CS2040", ctx);
-
-    expect(mockSetCourseArchived).toHaveBeenCalledWith("c1", "u1", true);
-    expect(result.text).toContain("CS2040");
-    expect(result.text).toContain("12");
-  });
-
-  it("unarchives a course", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", true) as never);
-    mockSetCourseArchived.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-
-    const result = await handleCourses("unarchive CS2040", ctx);
-
-    expect(mockSetCourseArchived).toHaveBeenCalledWith("c1", "u1", false);
-    expect(result.text).toContain("CS2040");
-  });
-
-  it("says so when archiving a course that is already archived", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures", true) as never);
-
-    const result = await handleCourses("archive CS2040", ctx);
-
-    expect(mockSetCourseArchived).not.toHaveBeenCalled();
-    expect(result.text).toContain("already archived");
-  });
-
-  it("refuses to archive a course it cannot resolve", async () => {
-    mockFindCourse.mockResolvedValue(null);
-
-    const result = await handleCourses("archive PHYSICS", ctx);
-
-    expect(mockSetCourseArchived).not.toHaveBeenCalled();
-    expect(result.text).toContain("PHYSICS");
-  });
-
-  it("refuses a hard delete while items still reference the course, and points at archive", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-    mockCountCourseItems.mockResolvedValue(12);
-
-    const result = await handleCourses("remove CS2040", ctx);
-
-    expect(mockDeleteCourse).not.toHaveBeenCalled();
-    expect(result.text).toContain("12");
-    expect(result.text).toContain("archive");
-  });
-
-  it("hard deletes an empty course", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2O40", "Typo Course") as never);
-    mockCountCourseItems.mockResolvedValue(0);
-    mockDeleteCourse.mockResolvedValue(undefined);
-
-    const result = await handleCourses("remove CS2O40", ctx);
-
-    expect(mockDeleteCourse).toHaveBeenCalledWith("c1", "u1");
-    expect(result.text).toContain("Deleted");
-  });
-
-  it("treats a vanished course on delete as a message, not a crash", async () => {
-    mockFindCourse.mockResolvedValue(makeCourse("c1", "CS2040", "Data Structures") as never);
-    mockCountCourseItems.mockResolvedValue(0);
-    mockDeleteCourse.mockRejectedValue({ code: "P2025" });
-
-    const result = await handleCourses("remove CS2040", ctx);
-
-    expect(result.text).toContain("CS2040");
-  });
-
-  it("rejects archive with no code", async () => {
-    const result = await handleCourses("archive", ctx);
-
-    expect(result.text).toContain("Usage");
-    expect(mockFindCourse).not.toHaveBeenCalled();
-  });
-});
-
-describe("handleExams with archived courses", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("still labels an exam whose course has been archived", async () => {
-    // Archiving retires the course but keeps its work readable — the code prefix is how you
-    // tell last semester's finals apart in the list, so it must survive the archive.
-    mockListItems.mockResolvedValue([
-      {
-        id: "i1",
-        title: "Final",
-        kind: "exam",
-        dueDate: "2026-08-25",
-        dueTime: null,
-        courseId: "c2",
-        status: "pending",
-        priority: "medium",
-        category: { name: "School" },
-        subtasks: [],
-      },
-    ] as never);
-    mockListCourses.mockResolvedValue([makeCourse("c2", "CS2040", "Data Structures", true)] as never);
-
-    const result = await handleExams(ctx);
-
-    expect(mockListCourses).toHaveBeenCalledWith("u1", { includeArchived: true });
-    expect(result.text).toContain("CS2040");
   });
 });

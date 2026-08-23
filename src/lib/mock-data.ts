@@ -34,5 +34,22 @@ export type TimelineItem = {
   subtitle: string;
   color: string;
   isReminder?: boolean;
+  /** No meaningful time-of-day — an all-day event, or a task due on a date but at no hour. */
+  allDay?: boolean;
+  /** Countdown badge for a deadline, settled on the server. Absent for events and undated rows. */
+  urgency?: { label: string; severity: "overdue" | "urgent" | "soon" | "upcoming" };
   status?: string;
+};
+
+/**
+ * A calendar event as the dashboard consumes it — read from the local `calendar_events`
+ * mirror, not the Google API. Declared here rather than in `agenda.ts` because `timeline.ts`
+ * needs it and `agenda.ts` imports `buildTimeline`; the other direction would be a cycle.
+ */
+export type AgendaEvent = {
+  id: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  allDay: boolean;
 };

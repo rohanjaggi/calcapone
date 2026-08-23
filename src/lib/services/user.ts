@@ -47,7 +47,6 @@ export async function updateUserSettings(
     briefingEnabled?: boolean;
     briefingTime?: string | null;
     weeklyDigestEnabled?: boolean;
-    aiSuggestionEnabled?: boolean;
     aiProvider?: AiProvider | null;
     aiApiKey?: string | null;
     aiModel?: string | null;

@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listItems } from "@/lib/services/item";
+import { listItemsForBoard } from "@/lib/services/item";
 import { listCategories } from "@/lib/services/category";
 import { TodosClient } from "@/components/todos/todos-client";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function TodosPage() {
   const user = await requireUser();
   const [items, categories] = await Promise.all([
-    listItems(user.id),
+    listItemsForBoard(user.id, { days: 14, take: 50 }),
     listCategories(user.id),
   ]);
 

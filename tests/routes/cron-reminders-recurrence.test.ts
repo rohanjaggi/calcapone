@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // HIGH 07: the cron used to build the next occurrence of a reminder-driven recurring item
-// itself, and dropped kind/courseId/seriesId while doing it — all three of which
-// rollForwardDatedSeries (the due-date rollover path) carries over correctly. This file is
-// narrowly about that one regression; tests/routes/cron-reminders.test.ts covers the rest of
-// the route.
+// itself, and dropped seriesId while doing it — which rollForwardDatedSeries (the due-date
+// rollover path) carries over correctly. Without it occurrence two comes back detached from
+// its run and "stop the daily meds reminder" can no longer reach it. This file is narrowly
+// about that one regression; tests/routes/cron-reminders.test.ts covers the rest of the route.
 
 const mockGetDueItems = vi.hoisted(() => vi.fn());
 const mockClaimDueReminder = vi.hoisted(() => vi.fn());
@@ -39,6 +39,8 @@ vi.mock("@/lib/prisma", () => ({
     actionLog: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     messageRef: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     pendingAction: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    // A first-ever tick has no previous heartbeat, so these routes never alert here.
+    cronHeartbeat: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({}) },
   },
 }));
 
@@ -66,7 +68,6 @@ const dueItem = (over = {}) => ({
   id: "i1",
   userId: "u1",
   categoryId: "c1",
-  courseId: "course-1",
   seriesId: "series-1",
   title: "CS2040 lecture",
   description: null,
@@ -78,7 +79,6 @@ const dueItem = (over = {}) => ({
   recurrenceRule: "FREQ=WEEKLY",
   recurrenceEnd: null,
   notificationStage: 0,
-  kind: "class",
   user: user(),
   ...over,
 });
@@ -99,16 +99,12 @@ beforeEach(() => {
 });
 
 describe("POST /api/cron/reminders: recurring reminder fields", () => {
-  it("carries kind, courseId and seriesId into the next occurrence", async () => {
+  it("carries seriesId into the next occurrence", async () => {
     mockGetDueItems.mockResolvedValue([dueItem()]);
     await POST(request());
 
     expect(mockCreateItem).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "class",
-        courseId: "course-1",
-        seriesId: "series-1",
-      })
+      expect.objectContaining({ seriesId: "series-1" })
     );
   });
 
@@ -119,14 +115,4 @@ describe("POST /api/cron/reminders: recurring reminder fields", () => {
     expect(mockCreateItem).toHaveBeenCalledWith(expect.objectContaining({ seriesId: "i1" }));
   });
 
-  it("carries a null courseId through for a plain recurring task", async () => {
-    mockGetDueItems.mockResolvedValue([
-      dueItem({ kind: "task", courseId: null, seriesId: null, title: "Take meds" }),
-    ]);
-    await POST(request());
-
-    expect(mockCreateItem).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "task", courseId: null, seriesId: "i1" })
-    );
-  });
 });

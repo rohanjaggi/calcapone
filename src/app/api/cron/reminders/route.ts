@@ -11,8 +11,8 @@ import {
 } from "@/lib/services/item";
 import { sendMessage, b, TelegramBlockedError } from "@/lib/services/telegram";
 import { reminderKeyboard, doneOnlyKeyboard } from "@/lib/services/callbacks";
-import { shouldNotify, isQuietHours, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
-import { ladderFor, nextEscalation, type Rung } from "@/lib/services/escalation";
+import { shouldNotify, isQuietHours, isAuthorizedCronRequest, touchHeartbeat, STALE_TICK_MS } from "@/lib/services/cron-utils";
+import { LADDER, nextEscalation, type Rung } from "@/lib/services/escalation";
 import { pruneOldMessages } from "@/lib/services/conversation";
 import { pruneActionLog } from "@/lib/services/action-log";
 import { pruneMessageRefs, rememberMessageRef } from "@/lib/services/message-ref";
@@ -37,6 +37,16 @@ export async function POST(request: NextRequest) {
   }
 
   const now = new Date();
+
+  // Reminders are the product's core promise, and a scheduler that stops fails silently.
+  // Noticing our own gap is what turns "reminders stopped three days ago" into a ping.
+  if (await touchHeartbeat("reminders", now)) {
+    await notifyOwner(
+      "cron:heartbeat",
+      `No reminders tick for over ${STALE_TICK_MS / 60000} minutes — the scheduler may have stopped.`
+    );
+  }
+
   const dueItems = await getDueItems(now);
   let sent = 0;
   let skipped = 0;
@@ -109,11 +119,9 @@ export async function POST(request: NextRequest) {
             title: item.title,
             description: item.description,
             priority: item.priority,
-            // kind/courseId/seriesId have to ride along too, same as rollForwardDatedSeries's
-            // due-date path — otherwise occurrence two of a weekly exam/class silently
-            // degrades to a plain, course-less task and drops off its own escalation ladder.
-            kind: item.kind,
-            courseId: item.courseId,
+            // seriesId has to ride along, same as rollForwardDatedSeries's due-date path —
+            // otherwise occurrence two comes back detached from its run and "stop the daily
+            // meds reminder" can no longer reach it.
             seriesId: item.seriesId ?? item.id,
             dueDate: item.dueDate ? formatDateInTz(nextRemindAt, item.user.timezone) : null,
             dueTime: item.dueTime,
@@ -159,7 +167,7 @@ export async function POST(request: NextRequest) {
 
       // The ladder is per-kind (an exam wants a week's notice, a task doesn't) — see
       // src/lib/services/escalation.ts. This just turns the picked rung into a message.
-      const next = nextEscalation(item.kind, hoursUntilDue, item.notificationStage);
+      const next = nextEscalation(hoursUntilDue, item.notificationStage);
 
       if (next) {
         // Ticks are ~60s apart while maxDuration is 60s, so two runs can overlap. Claiming
@@ -169,7 +177,7 @@ export async function POST(request: NextRequest) {
           skipped++;
           continue;
         }
-        const rung = ladderFor(item.kind)[next.stage - 1];
+        const rung = LADDER[next.stage - 1];
         const message = formatEscalationMessage(next.label, item.title, rung, minutesUntilDue, item.dueDate);
         try {
           const chatId = Number(item.user.telegramId);

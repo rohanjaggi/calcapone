@@ -460,20 +460,22 @@ function toTurns(history: PlainHistory | undefined, userMessage: string, images?
   ];
 }
 
-type ChatOptions = { tools?: boolean };
-
 type PromptUser = { telegramUsername: string; timezone: string; categories?: string[] };
 
 /**
- * One model call, no tool loop. For callers that want a single response and will handle any
- * tool calls themselves (the dashboard's quick-add) or want none at all (briefings).
+ * One model call, no tools, no tool loop — just prose. The morning briefing is the only
+ * caller: it hands the model a summary and wants a few friendly lines back.
+ *
+ * Anything that needs to *act* goes through `runAgent` instead, which is the only path that
+ * journals undo, disambiguates an ambiguous title, and lets the model see what a tool
+ * returned. A second half-featured tool-calling path is how the dashboard ended up able to
+ * create items it could not then reverse.
  */
 export async function chatWithAi(
   userMessage: string,
   user: PromptUser,
   config: AiConfig,
-  history?: PlainHistory,
-  options: ChatOptions = {}
+  history?: PlainHistory
 ): Promise<{ text: string; toolCalls: ToolCall[] }> {
   const { provider, apiKey, model } = resolveAiClient(config);
   return adapterFor(provider)({
@@ -481,7 +483,7 @@ export async function chatWithAi(
     model,
     system: buildSystemPrompt(user),
     turns: toTurns(history, userMessage),
-    tools: options.tools !== false,
+    tools: false,
   });
 }
 

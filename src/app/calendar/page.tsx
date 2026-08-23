@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listItems } from "@/lib/services/item";
+import { listItemsForBoard } from "@/lib/services/item";
 import { getEvents, CalendarAuthError } from "@/lib/services/calendar";
 import { markCalendarDisconnected } from "@/lib/services/calendar-link";
 import { listCategories } from "@/lib/services/category";
@@ -44,7 +44,7 @@ export default async function CalendarPage() {
 
   const googleFeedPromise = monthEvents(user, monthStart, monthEnd);
 
-  const [items, categories] = await Promise.all([listItems(user.id), listCategories(user.id)]);
+  const [items, categories] = await Promise.all([listItemsForBoard(user.id, { days: 14, take: 50 }), listCategories(user.id)]);
 
   const serializedCategories = categories.map((c) => ({
     id: c.id,

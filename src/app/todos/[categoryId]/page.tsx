@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listItems } from "@/lib/services/item";
+import { listItemsForBoard } from "@/lib/services/item";
 import { prisma } from "@/lib/prisma";
 import { CategoryDetailClient } from "@/components/category-detail/category-detail-client";
 import { notFound } from "next/navigation";
@@ -15,7 +15,7 @@ export default async function CategoryDetailPage({ params }: { params: Promise<{
   });
   if (!category) notFound();
 
-  const items = await listItems(user.id, { categoryId });
+  const items = await listItemsForBoard(user.id, { days: 14, take: 50, categoryId });
 
   const serializedItems = items.map((item) => ({
     id: item.id,

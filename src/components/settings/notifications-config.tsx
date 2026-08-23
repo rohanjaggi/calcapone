@@ -8,7 +8,6 @@ type Props = {
   briefingEnabled: boolean;
   briefingTime: string | null;
   weeklyDigestEnabled: boolean;
-  aiSuggestionEnabled: boolean;
   quietStart: string | null;
   quietEnd: string | null;
   notifyMinPriority: string;
@@ -18,7 +17,6 @@ type Props = {
     briefingEnabled: boolean;
     briefingTime: string | null;
     weeklyDigestEnabled: boolean;
-    aiSuggestionEnabled: boolean;
     quietStart: string | null;
     quietEnd: string | null;
     notifyMinPriority: string;
@@ -60,7 +58,6 @@ export function NotificationsConfig({
   briefingEnabled,
   briefingTime,
   weeklyDigestEnabled,
-  aiSuggestionEnabled,
   quietStart,
   quietEnd,
   notifyMinPriority,
@@ -72,7 +69,6 @@ export function NotificationsConfig({
   const [isEnabled, setIsEnabled] = useState(briefingEnabled);
   const [localTime, setLocalTime] = useState(briefingTime ?? "08:00");
   const [digestEnabled, setDigestEnabled] = useState(weeklyDigestEnabled);
-  const [aiEnabled, setAiEnabled] = useState(aiSuggestionEnabled);
   const [localQuietStart, setLocalQuietStart] = useState(quietStart ?? "");
   const [localQuietEnd, setLocalQuietEnd] = useState(quietEnd ?? "");
   const [quietEnabled, setQuietEnabled] = useState(!!quietStart && !!quietEnd);
@@ -86,7 +82,6 @@ export function NotificationsConfig({
     isEnabled !== briefingEnabled ||
     localTime !== (briefingTime ?? "08:00") ||
     digestEnabled !== weeklyDigestEnabled ||
-    aiEnabled !== aiSuggestionEnabled ||
     (quietEnabled ? localQuietStart : null) !== quietStart ||
     (quietEnabled ? localQuietEnd : null) !== quietEnd ||
     localPriority !== notifyMinPriority ||
@@ -99,7 +94,6 @@ export function NotificationsConfig({
       briefingEnabled: isEnabled,
       briefingTime: isEnabled ? localTime : null,
       weeklyDigestEnabled: digestEnabled,
-      aiSuggestionEnabled: aiEnabled,
       quietStart: quietEnabled ? (localQuietStart || "23:00") : null,
       quietEnd: quietEnabled ? (localQuietEnd || "07:00") : null,
       notifyMinPriority: localPriority,
@@ -257,17 +251,6 @@ export function NotificationsConfig({
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <div className="border-t border-border/20" />
-
-              {/* AI suggestion */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-sm text-foreground">Dashboard AI suggestion</span>
-                  <p className="text-xs text-muted-foreground mt-0.5">AI recommendation card on dashboard</p>
-                </div>
-                <Toggle on={aiEnabled} onToggle={() => setAiEnabled(!aiEnabled)} />
               </div>
 
               {/* Save button */}

@@ -26,6 +26,6 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Everything except: API routes, the login page, Next internals, and static assets.
-    "/((?!api/|login|how-to-use|google/done|_next/|icon\\.png|logo\\.png|favicon\\.ico|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico|txt|xml|woff2?)$).*)",
+    "/((?!api/|login|google/done|_next/|icon\\.png|logo\\.png|favicon\\.ico|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico|txt|xml|woff2?)$).*)",
   ],
 };

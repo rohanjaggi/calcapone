@@ -27,7 +27,6 @@ const baseItem = (over: Record<string, unknown> = {}) => ({
   id: "i1",
   userId: "u1",
   categoryId: "c1",
-  courseId: null,
   seriesId: null,
   title: "Take vitamins",
   description: null,

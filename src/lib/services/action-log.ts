@@ -152,17 +152,6 @@ async function applyUndo(op: UndoOp, user: UndoUser): Promise<UndoTally | void> 
       await prisma.category.deleteMany({ where: { id: op.categoryId, userId: user.id } });
       return;
 
-    case "delete_course":
-      await prisma.course.deleteMany({ where: { id: op.courseId, userId: user.id } });
-      return;
-
-    case "set_course_archived":
-      await prisma.course.updateMany({
-        where: { id: op.courseId, userId: user.id },
-        data: { archived: op.archived },
-      });
-      return;
-
     case "sequence": {
       // One user-visible action can be several writes (decomposing a task creates N
       // subtasks), and reversing it has to be a single `/undo`. Best-effort in order: a

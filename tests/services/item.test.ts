@@ -22,6 +22,7 @@ vi.mock("@/lib/services/embeddings", () => ({
 import {
   createItem,
   listItems,
+  listItemsForBoard,
   updateItem,
   deleteItem,
   getDueItems,
@@ -35,20 +36,18 @@ import {
 
 /**
  * A full item row as `prisma.item.findUnique`/`findMany` would return it, including the
- * newer columns (`kind`, `courseId`, `seriesId`, `calendarSyncedAt`). Used wherever a test
+ * newer columns (`seriesId`, `calendarSyncedAt`). Used wherever a test
  * needs a realistic "before" row rather than a hand-picked handful of fields.
  */
 const baseItem = (over: Record<string, unknown> = {}) => ({
   id: "i1",
   userId: "u1",
   categoryId: "c1",
-  courseId: null,
   seriesId: null,
   title: "Take vitamins",
   description: null,
   status: "pending",
   priority: "medium",
-  kind: "task",
   dueDate: "2026-06-01",
   dueTime: null,
   remindAt: null,
@@ -112,6 +111,42 @@ describe("ItemService", () => {
         where: { userId: "u1", parentId: null, status: { in: ["pending", "in_progress"] } },
       })
     );
+  });
+
+  describe("listItemsForBoard", () => {
+    it("asks for open items in full and done items only inside the window", async () => {
+      mockPrisma.item.findMany.mockResolvedValue([]);
+      await listItemsForBoard("u1", { days: 14, take: 50 });
+
+      expect(mockPrisma.item.findMany).toHaveBeenCalledTimes(2);
+      const [openCall, doneCall] = mockPrisma.item.findMany.mock.calls.map((c) => c[0]);
+
+      // Everything still open, however old -- an overdue task from last year still matters.
+      expect(openCall.where.status).toEqual({ in: ["pending", "in_progress"] });
+      expect(openCall.take).toBeUndefined();
+
+      // Completed work is history: recent only, and capped.
+      expect(doneCall.where.status).toBe("done");
+      expect(doneCall.take).toBe(50);
+      expect(doneCall.orderBy).toEqual({ updatedAt: "desc" });
+      expect(doneCall.where.updatedAt.gte).toBeInstanceOf(Date);
+    });
+
+    it("concatenates both result sets", async () => {
+      mockPrisma.item.findMany
+        .mockResolvedValueOnce([{ id: "open" }])
+        .mockResolvedValueOnce([{ id: "done" }]);
+      const rows = await listItemsForBoard("u1", { days: 14, take: 50 });
+      expect(rows.map((r: { id: string }) => r.id)).toEqual(["open", "done"]);
+    });
+
+    it("computes the cutoff from the days argument", async () => {
+      mockPrisma.item.findMany.mockResolvedValue([]);
+      const now = new Date("2026-08-20T00:00:00.000Z");
+      await listItemsForBoard("u1", { days: 14, take: 50 }, now);
+      const doneCall = mockPrisma.item.findMany.mock.calls[1][0];
+      expect(doneCall.where.updatedAt.gte).toEqual(new Date("2026-08-06T00:00:00.000Z"));
+    });
   });
 
   describe("notificationStage reset", () => {
@@ -291,12 +326,10 @@ describe("ItemService", () => {
         id: "i1",
         userId: "u1",
         categoryId: "cat-1",
-        courseId: "course-1",
         seriesId: "series-1",
         title: "Water the plants",
         description: null,
         priority: "high",
-        kind: "task",
         dueDate: "2026-06-01",
         dueTime: "08:00",
         remindAt: null,
@@ -315,12 +348,10 @@ describe("ItemService", () => {
         data: {
           userId: "u1",
           categoryId: "cat-1",
-          courseId: "course-1",
           seriesId: "series-1",
           title: "Water the plants",
           description: null,
           priority: "high",
-          kind: "task",
           dueDate: "2026-06-08",
           dueTime: "08:00",
           recurring: "none",
@@ -336,12 +367,10 @@ describe("ItemService", () => {
         id: "i1",
         userId: "u1",
         categoryId: "cat-1",
-        courseId: null,
         seriesId: null,
         title: "Water the plants",
         description: null,
         priority: "medium",
-        kind: "task",
         dueDate: "2026-06-01",
         dueTime: null,
         remindAt: null,
@@ -360,12 +389,10 @@ describe("ItemService", () => {
         data: {
           userId: "u1",
           categoryId: "cat-1",
-          courseId: null,
           seriesId: "i1",
           title: "Water the plants",
           description: null,
           priority: "medium",
-          kind: "task",
           dueDate: "2026-06-08",
           dueTime: null,
           recurring: "none",
@@ -456,12 +483,10 @@ describe("ItemService", () => {
         id: "i1",
         userId: "u1",
         categoryId: "cat-1",
-        courseId: null,
         seriesId: null,
         title: "Take out the trash",
         description: null,
         priority: "medium",
-        kind: "task",
         dueDate: "2026-06-01",
         dueTime: null,
         remindAt: null,
@@ -480,12 +505,10 @@ describe("ItemService", () => {
         data: {
           userId: "u1",
           categoryId: "cat-1",
-          courseId: null,
           seriesId: "i1",
           title: "Take out the trash",
           description: null,
           priority: "medium",
-          kind: "task",
           dueDate: "2026-06-08",
           dueTime: null,
           recurring: "weekly",

@@ -72,8 +72,6 @@ export async function POST(request: NextRequest) {
           prompt,
           { telegramUsername: user.telegramUsername, timezone: user.timezone },
           aiConfig,
-          undefined,
-          { tools: false }
         );
         message = text ? esc(text) : fallbackBriefing(todayStr, todayItems.length, overdue.length, calendarSummary);
       } catch (error) {

@@ -8,7 +8,7 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 - **Natural language input** — type freely in Telegram, AI parses intent and takes action
 - **Agentic tool loop** — the model sees what each tool returned and can chain up to 3 rounds, so "find the dentist task and push it to Friday" works in one sentence and "what's on this week?" gets a real summary instead of a raw dump
 - **Voice notes** — transcribed, echoed back as `🎤 Heard: …` before the model runs, then processed
-- **Photos & screenshots** — send a poster, timetable or syllabus screenshot and it becomes events or assignments (needs a vision-capable model)
+- **Photos & screenshots** — send a poster, timetable or syllabus screenshot and it becomes events or tasks (needs a vision-capable model)
 - **Forwarded messages** — become tasks, with a `Forwarded from …` source line (and a `t.me` link where one exists) in the description
 - **Slash commands** — `/todo`, `/remind`, `/event`, `/note`, `/done`, `/today`, `/week`, `/list`, `/search`, `/undo`, `/timezone`, plus the school commands below
 - **Subtasks** — break tasks into smaller pieces manually or via AI decomposition
@@ -20,12 +20,6 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 - **Disambiguation** — when a title matches several tasks the bot offers buttons instead of guessing, then re-runs the original call against the exact item you picked
 - **Positional and reply targeting** — `/done 3` uses the numbering `/list` printed, and replying "done" or "move it to Friday" to any bot message targets whatever that message was about
 
-### School
-- **Courses** — `/courses`, `/courses add CS2040 Data Structures`, `/due CS2040`
-- **Assignments and exams** — first-class item kinds, so "CS2040 midterm week 8" files correctly
-- **Kind-aware escalation** — an exam warns at 7 days / 3 days / 1 day / morning-of; an assignment at 72h / 24h / 2h / overdue; a plain task keeps 24h / 2h / overdue
-- **`/exams`** — everything upcoming, soonest first, with the days remaining
-
 ### Calendar
 - **Google Calendar sync** — create, update, delete events; conflict detection; agenda view
 - **Two-way sync** — incremental `syncToken` polling pulls Google's edits back; when both sides changed since they last agreed you get *Keep mine / Take Google's* buttons rather than a silent overwrite
@@ -36,7 +30,7 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 - **Recurring reminders** — daily, weekly, monthly or any RRULE, with automatic rescheduling
 - **Recurring tasks** — due-date-only repeats roll forward when you complete them, not just when a reminder fires
 - **Series editing** — "stop the daily meds reminder" (`scope: series`) and "skip this week" (`skip_next`)
-- **Deadline escalation** — progressive alerts on a ladder chosen by item kind (see School above)
+- **Deadline escalation** — progressive alerts at 24h, 2h, and overdue
 - **Morning briefing** — AI-generated daily summary at your chosen time
 - **Weekly digest** — configurable day/time recap of completed, overdue, and upcoming work
 - **Quiet hours** — suppress notifications during a time window (e.g., 23:00–07:00)
@@ -45,8 +39,24 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 ### AI
 - **Conversation memory** — multi-turn context (last 10 messages, 4h window) for natural follow-ups
 - **Task decomposition** — "break down my presentation prep" creates subtasks automatically
-- **Smart recommendations** — dashboard suggests your top 3 priority tasks
 - **Multi-provider** — OpenAI, Anthropic, Gemini, or OpenRouter with your own key. One provider-neutral thread type with a thin adapter each, so the tool loop behaves identically on all four
+
+There is deliberately no AI on the web dashboard. The agent lives in Telegram,
+where the tool loop, the undo journal and the disambiguation buttons all are; a
+second, half-featured entry point could create items that nothing could reverse.
+
+### Web dashboard
+The Mini App is for seeing and touching your tasks — the things a chat window is
+bad at. Everything below is direct manipulation, no model involved.
+
+- **Dashboard** — a seven-day strip drives a timeline that merges tasks, reminders **and**
+  calendar events for the chosen day; today's view marks where "now" falls
+- **Tasks** — categories are colored cards; tap a card's header to open it
+- **Complete** — tap the circle icon on any task
+- **Edit / delete** — swipe a task left to reveal both
+- **Reorder** — enter edit mode from the header to drag categories, or drag a task between categories
+- **Calendar** — a month grid with dots on days that have something; tap a day to see it
+- **Search** — the icon on the home screen, or `Cmd+K` / `Ctrl+K`; results filter as you type
 
 ## Stack
 
@@ -150,16 +160,44 @@ Telegram update
                        → numbered output remembered in message_refs (/done 3, replies)
 
 Web dashboard
+  → Dashboard → getAgenda (agenda.ts): 7 days of items + calendar events in one payload.
+                Events are read from the local calendar_events mirror, never the Google API —
+                the mirror spans -7/+90 days and the cron refreshes it every ~4 min, so the
+                page renders server-side with no token refresh. Day switching is client-only.
   → Server actions → same service layer
   → Cmd+K search dialog → searchItems service
 
-Cron (one GitHub Actions run per 5 min; ticks may be late, every endpoint is idempotent):
-  t=0        → /api/cron/briefing       — AI morning summary (once/day, within 2h of target)
-  t=0        → /api/cron/weekly-digest  — weekly recap (once/day on the chosen weekday)
-  t=0,1,…,4  → /api/cron/sync           — Google syncToken pull (≤1 per user per 4 min)
-                                          + event-start reminders (every tick)
-  t=0,1,…,4  → /api/cron/reminders      — due reminders + deadline escalation + housekeeping
+Cron (cron-job.org primary, GitHub Actions backstop; every endpoint is idempotent):
+  every 1 min → /api/cron/reminders      — due reminders + deadline escalation + housekeeping
+  every 1 min → /api/cron/sync           — Google syncToken pull (≤1 per user per 4 min)
+                                           + event-start reminders
+  every 5 min → /api/cron/briefing       — AI morning summary (once/day, within 2h of target)
+  every 5 min → /api/cron/weekly-digest  — weekly recap (once/day on the chosen weekday)
 ```
+
+### Scheduling the cron
+
+Create four jobs at [cron-job.org](https://cron-job.org) (free, 1-minute granularity,
+execution history, email alerts on failure). Each is a **POST** to
+`$NEXT_PUBLIC_APP_URL/api/cron/<name>` with the header
+`Authorization: Bearer $CRON_SECRET`:
+
+| Endpoint | Interval |
+|----------|----------|
+| `/api/cron/reminders` | 1 minute |
+| `/api/cron/sync` | 1 minute |
+| `/api/cron/briefing` | 5 minutes |
+| `/api/cron/weekly-digest` | 5 minutes |
+
+`.github/workflows/cron-reminders.yml` fires the same four every 15 minutes as a backstop.
+Running both is safe: every endpoint claims before it sends, so a double tick cannot
+double-send. GitHub is the backstop rather than the primary because it throttles and drops
+scheduled runs under load, and **disables scheduled workflows entirely after 60 days without
+a commit** — if reminders stop, check the Actions tab for a disabled workflow first.
+
+`/api/cron/reminders` also self-monitors: a tick that finds the previous one was more than 15
+minutes ago DMs the owner (`TELEGRAM_USER_ID`), so a dead scheduler announces itself instead
+of failing silently.
 
 ## Telegram Commands
 
@@ -177,9 +215,6 @@ Cron (one GitHub Actions run per 5 min; ticks may be late, every endpoint is ide
 | `/search milk` | Finds items by keyword or meaning |
 | `/undo` | Reverses your last change; repeat to walk back further (24h) |
 | `/alerts 15` | Ping 15 min before a calendar event starts; `/alerts off` disables |
-| `/courses` | Lists your courses; `/courses add CS2040 Data Structures` adds one |
-| `/exams` | Upcoming exams, soonest first, with days remaining |
-| `/due CS2040` | What's outstanding for one course |
 | `/timezone` | Shows your timezone; `/timezone Europe/London` changes it |
 | `/help` | Shows available commands |
 
@@ -191,7 +226,7 @@ You can also just type naturally — "move my dentist appointment to 3pm", "brea
 
 The model sees the result of every tool it calls and may chain up to 3 rounds per message, so it can look something up and then act on what it found. Read-only results go to the model only (you get its summary); changes print their own receipt with an ↩️ Undo button.
 
-The 16 tools:
+The 14 tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -209,7 +244,5 @@ The 16 tools:
 | `list_categories` | List categories |
 | `search_items` | Search tasks by keyword or meaning |
 | `decompose_task` | Break task into subtasks |
-| `create_course` | Register a school course/module |
-| `list_courses` | List registered courses |
 
-`create_item` and `update_item` also take `kind` (`task` / `assignment` / `exam` / `class`) and `course`; `update_item` and `delete_item` take `scope` (`this` / `series`) and `update_item` takes `skip_next`, which is how "stop the daily meds reminder" and "skip this week" are expressed.
+`update_item` and `delete_item` take `scope` (`this` / `series`) and `update_item` takes `skip_next`, which is how "stop the daily meds reminder" and "skip this week" are expressed.

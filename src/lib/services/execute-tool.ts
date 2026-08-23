@@ -10,7 +10,6 @@ import {
   OPEN_STATUSES,
 } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
-import { createCourse, listCourses, findCourse, setCourseArchived } from "@/lib/services/course";
 import { getEvents, createEvent, updateEvent, deleteEvent, CalendarAuthError } from "@/lib/services/calendar";
 import { markCalendarDisconnected, CALENDAR_RECONNECT_MESSAGE } from "@/lib/services/calendar-link";
 import { searchItems } from "@/lib/services/search";
@@ -22,7 +21,7 @@ import { esc, b } from "@/lib/services/telegram";
 import { parseInTz, todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
 import { normalizeDueDate, normalizeDueTime } from "@/lib/due-format";
 import { readOutcome, echoOutcome, type ToolOutcome, type ItemSnapshot, type EventSnapshot, type UndoOp } from "@/lib/services/tool-outcome";
-import type { Priority, RecurringType, ItemStatus, ItemKind } from "@/generated/prisma/enums";
+import type { Priority, RecurringType, ItemStatus } from "@/generated/prisma/enums";
 
 function fuzzyMatch(title: string, query: string): boolean {
   const t = title.toLowerCase();
@@ -69,12 +68,6 @@ function refuse(text: string): ToolOutcome {
   return { text, echo: true, failed: true };
 }
 
-const ITEM_KINDS: ItemKind[] = ["task", "assignment", "exam", "class"];
-
-function asKind(value: unknown): ItemKind | undefined {
-  return typeof value === "string" && (ITEM_KINDS as string[]).includes(value) ? (value as ItemKind) : undefined;
-}
-
 /**
  * "Every occurrence" or "just this one".
  *
@@ -101,8 +94,6 @@ type ItemRow = {
   googleEventId: string | null;
   parentId: string | null;
   notificationStage: number;
-  kind: ItemKind;
-  courseId: string | null;
   seriesId: string | null;
 };
 
@@ -128,8 +119,6 @@ function snapshot(item: ItemRow): ItemSnapshot & { title: string; categoryId: st
     googleEventId: item.googleEventId,
     parentId: item.parentId,
     notificationStage: item.notificationStage,
-    kind: item.kind,
-    courseId: item.courseId,
     // Without this an undone occurrence comes back detached from its run, and no tool can
     // re-attach it — "delete the whole series" would then miss the row it just restored.
     seriesId: item.seriesId,
@@ -213,54 +202,6 @@ async function deleteLinkedEvent(user: UserContext, googleEventId: string | null
     if (error instanceof CalendarAuthError) throw error;
     console.error(`[tool:${tool}] calendar delete failed:`, error instanceof Error ? error.message : error);
   }
-}
-
-const KIND_LABELS: Record<ItemKind, string> = {
-  task: "Task",
-  assignment: "Assignment",
-  exam: "Exam",
-  class: "Class",
-};
-
-type CourseResolution =
-  | { kind: "ok"; courseId: string | null; code: string | null }
-  | { kind: "stop"; outcome: ToolOutcome };
-
-/**
- * Resolve an optional `course` argument.
- *
- * A course the user has not registered is refused rather than created on the fly: a typo
- * would otherwise quietly become a second module, and "what's due for CS2040" would then
- * miss half of it.
- */
-async function resolveCourse(
-  userId: string,
-  args: Record<string, unknown>,
-  opts: { forWrite?: boolean } = {}
-): Promise<CourseResolution> {
-  const query = requireStr(args, "course");
-  if (!query) return { kind: "ok", courseId: null, code: null };
-  const course = await findCourse(userId, query);
-  // Reads must still reach archived courses — that history is the point of archiving. Writes
-  // must not: silently filing new work under a retired course hides it from every list the
-  // user looks at, and unarchiving is one command away.
-  if (course?.archived && opts.forWrite) {
-    return {
-      kind: "stop",
-      outcome: refuse(
-        `${b(course.code)} is archived. Bring it back with ${b(`/courses unarchive ${course.code}`)} before filing new work under it.`
-      ),
-    };
-  }
-  if (!course) {
-    return {
-      kind: "stop",
-      outcome: refuse(
-        `I don't have a course matching "${esc(query)}". Add it first with create_course, or drop the course argument.`
-      ),
-    };
-  }
-  return { kind: "ok", courseId: course.id, code: course.code };
 }
 
 type Resolution<T> = { kind: "one"; item: T } | { kind: "stop"; outcome: ToolOutcome };
@@ -360,9 +301,6 @@ async function runTool(
         if (!dueTime) return refuse("I couldn't understand that due time — could you give it as a 24-hour time, like 14:30?");
       }
 
-      const course = await resolveCourse(userId, args, { forWrite: true });
-      if (course.kind === "stop") return course.outcome;
-
       const remindAt = args.remind_at ? parseInTz(args.remind_at as string, user.timezone) : null;
       let recurrenceRule: string | null = null;
       let recurrenceEnd: Date | null = null;
@@ -376,13 +314,9 @@ async function runTool(
         recurring = legacyRecurring(params.frequency);
       }
 
-      const kind = asKind(args.kind) ?? "task";
-
       const item = await createItem({
         userId,
         categoryId: cat.id,
-        courseId: course.courseId,
-        kind,
         title,
         description: (args.description as string) ?? null,
         priority: (args.priority as Priority) ?? "medium",
@@ -394,8 +328,8 @@ async function runTool(
         recurrenceEnd,
       });
 
-      const label = item.remindAt ? "Reminder" : KIND_LABELS[kind];
-      const where = course.code ? `${esc(course.code)}` : esc(cat.name);
+      const label = item.remindAt ? "Reminder" : "Task";
+      const where = esc(cat.name);
       const when = item.remindAt
         ? ` — ${formatDateInTz(item.remindAt, user.timezone)} ${formatHHmmInTz(item.remindAt, user.timezone)}`
         : item.dueDate
@@ -423,14 +357,10 @@ async function runTool(
         requested && (["pending", "in_progress", "done"] as string[]).includes(requested)
           ? (requested as ItemStatus)
           : undefined;
-      const course = await resolveCourse(userId, args);
-      if (course.kind === "stop") return course.outcome;
 
       const items = await listItems(userId, {
         status,
         categoryId,
-        ...(asKind(args.kind) ? { kind: asKind(args.kind)! } : {}),
-        ...(course.courseId ? { courseId: course.courseId } : {}),
       });
       if (items.length === 0) return readOutcome("No items found.");
 
@@ -538,8 +468,6 @@ async function runTool(
 
       if (args.skip_next === true) return skipNextOccurrence(item, userId);
 
-      const course = await resolveCourse(userId, args, { forWrite: true });
-      if (course.kind === "stop") return course.outcome;
 
       const updates: {
         title?: string;
@@ -551,12 +479,8 @@ async function runTool(
         recurring?: RecurringType;
         recurrenceRule?: string | null;
         recurrenceEnd?: Date | null;
-        kind?: ItemKind;
-        courseId?: string | null;
       } = {};
       if (args.title !== undefined) updates.title = args.title as string;
-      if (asKind(args.kind)) updates.kind = asKind(args.kind);
-      if (course.courseId) updates.courseId = course.courseId;
       if (args.due_date !== undefined) {
         if (args.due_date === null) {
           updates.dueDate = null;
@@ -736,59 +660,6 @@ async function runTool(
         kind: "create_category",
         summary: `created the ${b(cat.name)} category`,
         inverse: { op: "delete_category", categoryId: cat.id },
-      });
-    }
-
-    case "create_course": {
-      const code = requireStr(args, "code");
-      const name = requireStr(args, "name");
-      if (!code) return missing("course code");
-      if (!name) return missing("course name");
-      try {
-        const created = await createCourse({ userId, code: code.toUpperCase(), name, color: (args.color as string) ?? null });
-        return echoOutcome(`Added course: ${b(created.code)} — ${esc(created.name)}`, {
-          kind: "create_course",
-          summary: `added the ${b(created.code)} course`,
-          inverse: { op: "delete_course", courseId: created.id },
-        });
-      } catch (error) {
-        if ((error as { code?: string })?.code === "P2002") {
-          return refuse(`You already have a course called ${esc(code.toUpperCase())}.`);
-        }
-        throw error;
-      }
-    }
-
-    case "list_courses": {
-      const includeArchived = args.include_archived === true;
-      const courses = await listCourses(userId, { includeArchived });
-      if (courses.length === 0) return readOutcome("No courses yet.");
-      return readOutcome(
-        courses
-          .map((c) => `- ${esc(c.code)} — ${esc(c.name)}${c.archived ? " (archived)" : ""}`)
-          .join("\n")
-      );
-    }
-
-    case "archive_course": {
-      const query = requireStr(args, "course");
-      if (!query) return missing("course");
-      const archived = args.archived === true;
-
-      const course = await findCourse(userId, query);
-      if (!course) {
-        return refuse(`I don't have a course matching "${esc(query)}". ${b("/courses all")} lists them.`);
-      }
-      if (course.archived === archived) {
-        return echoOutcome(`${b(course.code)} is already ${archived ? "archived" : "active"}.`);
-      }
-
-      await setCourseArchived(course.id, userId, archived);
-      const verb = archived ? "Archived" : "Unarchived";
-      return echoOutcome(`${verb} ${b(course.code)} — ${esc(course.name)}`, {
-        kind: "archive_course",
-        summary: `${archived ? "archived" : "unarchived"} ${b(course.code)}`,
-        inverse: { op: "set_course_archived", courseId: course.id, archived: !archived },
       });
     }
 
