@@ -195,6 +195,35 @@ function inverseEventPatch(
 }
 
 /**
+ * Fill in the end Google needs when a patch moves only the start.
+ *
+ * Google keeps the stored `end` on a partial patch, so moving an event forward without moving
+ * its end asks for a window that ends before it begins — a 400, "The specified time range is
+ * empty". `dueWindowToGcal` already encodes this lesson for task-linked events, but
+ * `update_calendar_event` hands the model's arguments to Google directly, and `start_time` and
+ * `end_time` are independently optional there — so "shift my dinner to next week", which names
+ * a start and no end, reached Google as an empty range and failed outright.
+ *
+ * Carries the event's current duration onto the new start, which is what shifting means.
+ */
+function preserveEventDuration(
+  fields: GcalFields,
+  current: { startTime: string; endTime: string },
+  tz: string
+): void {
+  if (fields.startTime === undefined || fields.endTime !== undefined) return;
+
+  const newStart = parseInTz(fields.startTime, tz);
+  const prevStart = parseInTz(current.startTime, tz);
+  const prevEnd = parseInTz(current.endTime, tz);
+  if (!newStart || !prevStart || !prevEnd) return;
+
+  const durationMs = prevEnd.getTime() - prevStart.getTime();
+  if (durationMs <= 0) return;
+  fields.endTime = new Date(newStart.getTime() + durationMs).toISOString();
+}
+
+/**
  * Reflect a Google write the app just made into the local mirror.
  *
  * The dashboard reads the mirror and never Google (agenda.ts), so without this an event the
@@ -765,6 +794,12 @@ async function runTool(
           Object.assign(priorEvent, dueWindowToGcal(linked.dueDate, linked.dueTime));
         }
 
+        // Same partial-patch hazard as the Google-only branch below; here the app's own
+        // one-hour window convention is the event's duration.
+        if (linked.dueDate && linked.dueTime) {
+          preserveEventDuration(gcalFields, dueWindowToGcal(linked.dueDate, linked.dueTime), user.timezone);
+        }
+
         await updateItem(linked.id, userId, updates);
         try {
           const updated = await updateEvent(user.googleRefreshToken, calendarId, linked.googleEventId!, gcalFields, user.timezone);
@@ -792,6 +827,8 @@ async function runTool(
       const events = await getEvents(user.googleRefreshToken, calendarId, now, searchEnd, user.timezone);
       const gcalMatch = events.find((e) => fuzzyMatch(e.title, query));
       if (!gcalMatch) return refuse(`Couldn't find a calendar event matching "${esc(queryRaw)}"`);
+
+      preserveEventDuration(gcalFields, gcalMatch, user.timezone);
 
       const previous: UndoOp = {
         op: "patch_event",

@@ -766,6 +766,73 @@ describe("executeToolCall", () => {
     });
   });
 
+  /**
+   * "Shift it to next week" moves the start and says nothing about the end. Google keeps the
+   * stored end on a partial patch, so the event would be asked to end before it begins and
+   * the whole call 400s with "The specified time range is empty".
+   */
+  describe("update_calendar_event duration", () => {
+    const gcalUser = { googleRefreshToken: "enc", googleCalendarId: "primary", timezone: "Asia/Singapore" };
+    const dinner = {
+      id: "g1",
+      title: "Dinner",
+      startTime: "2026-08-25T20:00:00+08:00",
+      endTime: "2026-08-25T22:00:00+08:00",
+      description: null,
+      allDay: false,
+      transparency: "opaque" as const,
+    };
+
+    beforeEach(() => {
+      mockListItems.mockResolvedValue([]);
+      mockGetEvents.mockResolvedValue([dinner]);
+      mockUpdateEvent.mockResolvedValue({ id: "g1", title: "Dinner", startTime: "", endTime: "" });
+    });
+
+    it("carries the existing duration onto a new start when no end is given", async () => {
+      await executeToolCall("update_calendar_event", { query: "dinner", start_time: "2026-09-01T20:00:00+08:00" }, "u1", gcalUser);
+
+      const fields = mockUpdateEvent.mock.calls[0][3];
+      expect(new Date(fields.startTime).toISOString()).toBe("2026-09-01T12:00:00.000Z");
+      expect(new Date(fields.endTime).toISOString()).toBe("2026-09-01T14:00:00.000Z");
+    });
+
+    it("leaves an explicit end alone", async () => {
+      await executeToolCall(
+        "update_calendar_event",
+        { query: "dinner", start_time: "2026-09-01T20:00:00+08:00", end_time: "2026-09-01T21:00:00+08:00" },
+        "u1",
+        gcalUser
+      );
+
+      const fields = mockUpdateEvent.mock.calls[0][3];
+      expect(new Date(fields.endTime).toISOString()).toBe("2026-09-01T13:00:00.000Z");
+    });
+
+    // The same partial-patch hazard on the branch that goes through a linked task, where the
+    // app's own window convention (dueWindowToGcal) supplies the duration.
+    it("carries a linked task's window onto a new start when no end is given", async () => {
+      mockListItems.mockResolvedValue([
+        makeItem({ id: "i1", title: "Dinner", googleEventId: "g1", dueDate: "2026-08-25", dueTime: "20:00" }),
+      ]);
+      mockUpdateItem.mockResolvedValue(makeItem({ id: "i1", title: "Dinner", googleEventId: "g1" }));
+
+      await executeToolCall("update_calendar_event", { query: "dinner", start_time: "2026-09-01T20:00:00+08:00" }, "u1", gcalUser);
+
+      const fields = mockUpdateEvent.mock.calls[0][3];
+      expect(new Date(fields.startTime).toISOString()).toBe("2026-09-01T12:00:00.000Z");
+      expect(new Date(fields.endTime).toISOString()).toBe("2026-09-01T13:00:00.000Z");
+    });
+
+    it("does not invent an end when only the title changes", async () => {
+      await executeToolCall("update_calendar_event", { query: "dinner", title: "Supper" }, "u1", gcalUser);
+
+      const fields = mockUpdateEvent.mock.calls[0][3];
+      expect(fields.endTime).toBeUndefined();
+      expect(fields.startTime).toBeUndefined();
+    });
+  });
+
   describe("update_calendar_event write-through", () => {
     const gcalUser = { googleRefreshToken: "enc", googleCalendarId: "primary", timezone: "Asia/Singapore" };
 
