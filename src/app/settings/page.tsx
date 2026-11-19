@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { SettingsClient } from "@/components/settings/settings-client";
+import { SkyStyle } from "@/components/sky/sky-style";
 
 export const dynamic = "force-dynamic";
 
@@ -7,23 +8,27 @@ export default async function SettingsPage() {
   const user = await requireUser();
 
   return (
-    <SettingsClient
-      settings={{
-        timezone: user.timezone,
-        briefingEnabled: user.briefingEnabled,
-        briefingTime: user.briefingTime,
-        weeklyDigestEnabled: user.weeklyDigestEnabled,
-        aiProvider: user.aiProvider,
-        aiModel: user.aiModel,
-        hasAiApiKey: !!user.aiApiKey,
-        hasGoogleCalendar: !!user.googleRefreshToken,
-        googleCalendarId: user.googleCalendarId,
-        quietStart: user.quietStart,
-        quietEnd: user.quietEnd,
-        notifyMinPriority: user.notifyMinPriority,
-        digestDay: user.digestDay,
-        digestTime: user.digestTime,
-      }}
-    />
+    <>
+      <SkyStyle timezone={user.timezone} />
+      <SettingsClient
+        settings={{
+          timezone: user.timezone,
+          briefingEnabled: user.briefingEnabled,
+          briefingTime: user.briefingTime,
+          weeklyDigestEnabled: user.weeklyDigestEnabled,
+          aiProvider: user.aiProvider,
+          aiModel: user.aiModel,
+          hasAiApiKey: !!user.aiApiKey,
+          hasGoogleCalendar: !!user.googleRefreshToken,
+          googleCalendarId: user.googleCalendarId,
+          eventReminderMinutes: user.eventReminderMinutes,
+          quietStart: user.quietStart,
+          quietEnd: user.quietEnd,
+          notifyMinPriority: user.notifyMinPriority,
+          digestDay: user.digestDay,
+          digestTime: user.digestTime,
+        }}
+      />
+    </>
   );
 }

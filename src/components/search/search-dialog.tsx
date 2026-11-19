@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
 import { Search, X, Bell } from "lucide-react";
 import { searchAction } from "@/app/actions";
+import { listColor } from "@/lib/list-colors";
+import { formatDueDate } from "@/lib/task-constants";
 
 type SearchResult = {
   id: string;
@@ -25,19 +27,25 @@ export function SearchDialog() {
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Monotonic id so a slow earlier request can't overwrite a newer result set. */
   const requestRef = useRef(0);
 
-  /** Close and reset. Doing this here rather than in an effect keeps it one render. */
-  const close = useCallback(() => {
-    setOpen(false);
+  /** Empty the box and abandon anything queued or in flight. */
+  const clear = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    requestRef.current++;
     setQuery("");
     setResults([]);
     setActive(0);
     setLoading(false);
-    requestRef.current++; // abandon anything still in flight
   }, []);
+
+  /** Close and reset. Doing this here rather than in an effect keeps it one render. */
+  const close = useCallback(() => {
+    setOpen(false);
+    clear();
+  }, [clear]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -53,7 +61,7 @@ export function SearchDialog() {
 
   useEffect(() => {
     if (!open) return;
-    const id = setTimeout(() => inputRef.current?.focus(), 50);
+    const id = setTimeout(() => inputRef.current?.focus(), 60);
     return () => clearTimeout(id);
   }, [open]);
 
@@ -106,10 +114,10 @@ export function SearchDialog() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
-        aria-label="Search"
+        className="w-11 h-11 rounded-full flex items-center justify-center text-foreground/90 active:bg-foreground/10 transition-colors"
+        aria-label="Search tasks"
       >
-        <Search className="w-4 h-4" />
+        <Search className="w-5 h-5" />
       </button>
 
       <AnimatePresence>
@@ -119,73 +127,77 @@ export function SearchDialog() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[70]"
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-[2px] z-[70]"
               onClick={close}
             />
             <motion.div
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Search"
+              initial={{ opacity: 0, y: -12, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-              className="fixed top-[10%] left-4 right-4 max-w-lg mx-auto z-[75] bg-card border border-border/50 rounded-2xl shadow-2xl overflow-hidden"
+              exit={{ opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.15 } }}
+              transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+              className="fixed top-[calc(env(safe-area-inset-top,0px)+0.75rem)] left-3 right-3 max-w-lg mx-auto z-[75] bg-raised border border-border rounded-[1.5rem] shadow-[0_24px_60px_-16px_rgba(0,0,0,0.85)] overflow-hidden"
             >
-              <div className="flex items-center gap-3 px-4 h-14 border-b border-border/40">
-                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+              <div className="flex items-center gap-3 pl-4 pr-1.5 h-14 border-b border-border">
+                <Search className="w-5 h-5 text-muted-foreground shrink-0" aria-hidden="true" />
                 <input
                   ref={inputRef}
-                  type="text"
+                  type="search"
                   value={query}
                   onChange={(e) => handleInput(e.target.value)}
                   onKeyDown={handleInputKeyDown}
-                  placeholder="Search tasks and reminders..."
-                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                  placeholder="Search tasks and reminders"
+                  aria-label="Search tasks and reminders"
+                  className="flex-1 bg-transparent text-[17px] text-foreground placeholder:text-faint focus:outline-none [&::-webkit-search-cancel-button]:hidden"
                 />
-                {query && (
-                  <button onClick={() => { setQuery(""); setResults([]); }} className="text-muted-foreground/50 hover:text-muted-foreground">
-                    <X className="w-3.5 h-3.5" />
+                {query ? (
+                  <button onClick={clear} aria-label="Clear search" className="w-11 h-11 rounded-full flex items-center justify-center text-muted-foreground active:bg-foreground/10">
+                    <X className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <button onClick={close} className="h-11 px-3 rounded-full text-[15px] text-muted-foreground active:bg-foreground/10">
+                    Cancel
                   </button>
                 )}
               </div>
 
-              <div className="max-h-[60vh] overflow-y-auto">
+              <div className="max-h-[60dvh] overflow-y-auto">
                 {loading ? (
-                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">Searching...</div>
+                  <p className="px-5 py-8 text-center text-[15px] text-muted-foreground">Searching…</p>
                 ) : results.length > 0 ? (
-                  <div className="py-2">
+                  <ul className="py-1.5">
                     {results.map((item, i) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => openResult(item)}
-                        onMouseEnter={() => setActive(i)}
-                        className={`w-full min-h-11 px-4 py-2.5 text-left transition-colors active:scale-[0.99] ${
-                          i === active ? "bg-muted/40" : "hover:bg-muted/30"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          {item.type === "reminder" && <Bell className="w-3 h-3 text-muted-foreground/60 shrink-0" />}
-                          <span className={`text-sm truncate ${item.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>
-                            {item.title}
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          onClick={() => openResult(item)}
+                          onMouseEnter={() => setActive(i)}
+                          className={`w-full min-h-14 px-5 py-2.5 text-left transition-colors ${i === active ? "bg-foreground/[0.06]" : ""}`}
+                        >
+                          <span className="flex items-center gap-2">
+                            {item.type === "reminder" && <Bell className="w-3.5 h-3.5 text-muted-foreground shrink-0" aria-label="Reminder" />}
+                            <span className={`text-base truncate ${item.status === "done" ? "line-through text-faint" : "text-foreground"}`}>
+                              {item.title}
+                            </span>
                           </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5 ml-5">
-                          <span
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{ backgroundColor: item.category.color }}
-                          />
-                          <span className="text-[11px] text-muted-foreground">
-                            {item.category.name}{item.dueDate ? ` · ${item.dueDate}` : ""}
+                          <span className="flex items-center gap-2 mt-1">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: listColor(item.category.color) }} aria-hidden="true" />
+                            <span className="text-[13px] text-muted-foreground">
+                              {item.category.name}
+                              {item.dueDate ? ` · ${formatDueDate(item.dueDate, { day: "numeric", month: "short" })}` : ""}
+                            </span>
                           </span>
-                        </div>
-                      </button>
+                        </button>
+                      </li>
                     ))}
-                  </div>
-                ) : query.length >= 2 ? (
-                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">No results found</div>
+                  </ul>
+                ) : query.trim().length >= 2 ? (
+                  <p className="px-5 py-8 text-center text-[15px] text-muted-foreground">Nothing matches “{query.trim()}”.</p>
                 ) : (
-                  <div className="px-4 py-8 text-center text-sm text-muted-foreground/50">
-                    Type to search · ⌘K to toggle
-                  </div>
+                  <p className="px-5 py-8 text-center text-[15px] text-muted-foreground">Search by title or meaning — “dentist”, “exam next week”.</p>
                 )}
               </div>
             </motion.div>

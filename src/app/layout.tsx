@@ -1,20 +1,25 @@
 import type { Metadata, Viewport } from "next";
-import { DM_Sans, Geist_Mono } from "next/font/google";
+import { Brygada_1918, Mona_Sans } from "next/font/google";
+import Script from "next/script";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 import { NavBar } from "@/components/nav-bar";
+import { TelegramBridge, INK } from "@/components/telegram-bridge";
 import { ToastProvider } from "@/components/ui/toast";
 
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
+const mona = Mona_Sans({
+  variable: "--font-mona",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  axes: ["wdth"],
   display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+/** The display voice: the date, page titles and sheet titles. */
+const brygada = Brygada_1918({
+  variable: "--font-display",
   subsets: ["latin"],
+  style: ["normal", "italic"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -25,9 +30,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   viewportFit: "cover",
+  themeColor: INK,
 };
 
 export default function RootLayout({
@@ -36,11 +40,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${dmSans.variable} ${geistMono.variable}`}
-    >
-      <body className="noise-overlay min-h-dvh antialiased">
+    // telegram-web-app.js writes its viewport variables onto <html> before React hydrates.
+    <html lang="en" className={`${mona.variable} ${brygada.variable}`} suppressHydrationWarning>
+      <body className="min-h-dvh antialiased">
+        {/* Every page needs the Telegram bridge (openLink, showConfirm), not just /login. */}
+        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
+        <TelegramBridge />
         <ToastProvider>
           {children}
           <NavBar />

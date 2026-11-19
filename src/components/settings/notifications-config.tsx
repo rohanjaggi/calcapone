@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Bell, Check, ChevronDown } from "lucide-react";
+import { Bell } from "lucide-react";
+import { SettingsCard, SaveButton } from "@/components/settings/settings-card";
+import { Switch } from "@/components/ui/switch";
+import { fieldClass, optionClass } from "@/components/ui/bottom-sheet";
+import { formatTime } from "@/lib/task-constants";
+import { useToast } from "@/components/ui/toast";
 
 type Props = {
   briefingEnabled: boolean;
@@ -36,23 +41,53 @@ const DAY_OPTIONS = [
 ];
 
 const PRIORITY_OPTIONS = [
-  { value: "low", label: "All (low+)" },
-  { value: "medium", label: "Medium+" },
+  { value: "low", label: "Everything" },
+  { value: "medium", label: "Medium and up" },
   { value: "high", label: "High only" },
 ];
 
-function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+const reveal = {
+  initial: { opacity: 0, height: 0 },
+  animate: { opacity: 1, height: "auto" },
+  exit: { opacity: 0, height: 0 },
+  transition: { duration: 0.28, ease: [0.16, 1, 0.3, 1] },
+} as const;
+
+function ToggleRow({
+  title,
+  detail,
+  on,
+  onChange,
+  children,
+}: {
+  title: string;
+  detail: string;
+  on: boolean;
+  onChange: (next: boolean) => void;
+  children?: React.ReactNode;
+}) {
+  const id = useId();
   return (
-    <button
-      onClick={onToggle}
-      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${on ? "bg-primary" : "bg-muted"}`}
-    >
-      <div
-        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${on ? "translate-x-5" : ""}`}
-      />
-    </button>
+    <div>
+      <div className="flex items-center justify-between gap-4">
+        <div id={id}>
+          <span className="block text-base text-foreground">{title}</span>
+          <span className="block text-[13px] text-muted-foreground mt-0.5">{detail}</span>
+        </div>
+        <Switch checked={on} onChange={onChange} labelledBy={id} />
+      </div>
+      <AnimatePresence initial={false}>
+        {on && children && (
+          <motion.div {...reveal} className="overflow-hidden">
+            <div className="pt-3">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
+
+const small = "text-[13px] font-medium text-muted-foreground block mb-1.5";
 
 export function NotificationsConfig({
   briefingEnabled,
@@ -65,7 +100,6 @@ export function NotificationsConfig({
   digestTime,
   onSave,
 }: Props) {
-  const [open, setOpen] = useState(false);
   const [isEnabled, setIsEnabled] = useState(briefingEnabled);
   const [localTime, setLocalTime] = useState(briefingTime ?? "08:00");
   const [digestEnabled, setDigestEnabled] = useState(weeklyDigestEnabled);
@@ -76,6 +110,7 @@ export function NotificationsConfig({
   const [localDigestDay, setLocalDigestDay] = useState(digestDay);
   const [localDigestTime, setLocalDigestTime] = useState(digestTime);
   const [saving, setSaving] = useState(false);
+  const { notify } = useToast();
   const [saved, setSaved] = useState(false);
 
   const changed =
@@ -90,189 +125,97 @@ export function NotificationsConfig({
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave({
-      briefingEnabled: isEnabled,
-      briefingTime: isEnabled ? localTime : null,
-      weeklyDigestEnabled: digestEnabled,
-      quietStart: quietEnabled ? (localQuietStart || "23:00") : null,
-      quietEnd: quietEnabled ? (localQuietEnd || "07:00") : null,
-      notifyMinPriority: localPriority,
-      digestDay: localDigestDay,
-      digestTime: localDigestTime,
-    });
-    setSaving(false);
+    try {
+      await onSave({
+        briefingEnabled: isEnabled,
+        // A cleared time picker gives "", which the server rejects; fall back to the default.
+        briefingTime: isEnabled ? localTime || "08:00" : null,
+        weeklyDigestEnabled: digestEnabled,
+        quietStart: quietEnabled ? (localQuietStart || "23:00") : null,
+        quietEnd: quietEnabled ? (localQuietEnd || "07:00") : null,
+        notifyMinPriority: localPriority,
+        digestDay: localDigestDay,
+        digestTime: localDigestTime || "19:00",
+      });
+    } catch {
+      notify("Couldn't save your notification settings — please try again.");
+      return;
+    } finally {
+      setSaving(false);
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const summary =
+    [
+      briefingEnabled && briefingTime ? `Briefing ${formatTime(briefingTime)}` : null,
+      weeklyDigestEnabled ? `Digest ${DAY_OPTIONS[digestDay]?.label ?? ""}` : null,
+      quietStart && quietEnd ? "Quiet hours on" : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Reminders only";
+
   return (
-    <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-      <button
-        onClick={() => setOpen(!open)}
-        className={`w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-muted/30 ${open ? "border-b border-border/40" : ""}`}
-      >
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-terracotta-light flex items-center justify-center">
-            <Bell className="w-3.5 h-3.5 text-terracotta" />
-          </div>
-          <h3 className="text-sm font-medium text-foreground">Notifications & Automation</h3>
+    <SettingsCard icon={Bell} title="Notifications" value={summary}>
+      <ToggleRow title="Morning briefing" detail="A summary of your day, sent in Telegram" on={isEnabled} onChange={setIsEnabled}>
+        <label className="block">
+          <span className={small}>Send at</span>
+          <input type="time" value={localTime} onChange={(e) => setLocalTime(e.target.value)} className={fieldClass} />
+        </label>
+      </ToggleRow>
+
+      <ToggleRow title="Weekly digest" detail="What you finished, missed and have coming" on={digestEnabled} onChange={setDigestEnabled}>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className={small}>Day</span>
+            <select value={localDigestDay} onChange={(e) => setLocalDigestDay(Number(e.target.value))} className={fieldClass}>
+              {DAY_OPTIONS.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className={small}>Time</span>
+            <input type="time" value={localDigestTime} onChange={(e) => setLocalDigestTime(e.target.value)} className={fieldClass} />
+          </label>
         </div>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
-      </button>
+      </ToggleRow>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="p-4 space-y-3">
-              {/* Morning briefing */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-foreground">Morning briefing</span>
-                    <p className="text-xs text-muted-foreground mt-0.5">Daily summary via Telegram</p>
-                  </div>
-                  <Toggle on={isEnabled} onToggle={() => setIsEnabled(!isEnabled)} />
-                </div>
-                {isEnabled && (
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Briefing time</label>
-                    <input
-                      type="time"
-                      value={localTime}
-                      onChange={(e) => setLocalTime(e.target.value)}
-                      className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                    />
-                  </div>
-                )}
-              </div>
+      <ToggleRow title="Quiet hours" detail="Hold notifications during this window" on={quietEnabled} onChange={setQuietEnabled}>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className={small}>From</span>
+            <input type="time" value={localQuietStart || "23:00"} onChange={(e) => setLocalQuietStart(e.target.value)} className={fieldClass} />
+          </label>
+          <label className="block">
+            <span className={small}>Until</span>
+            <input type="time" value={localQuietEnd || "07:00"} onChange={(e) => setLocalQuietEnd(e.target.value)} className={fieldClass} />
+          </label>
+        </div>
+      </ToggleRow>
 
-              <div className="border-t border-border/20" />
+      <div role="group" aria-label="Which tasks notify you">
+        <span className="block text-base text-foreground">Which tasks notify you</span>
+        <span className="block text-[13px] text-muted-foreground mt-0.5">For deadline alerts (a day before, 2 hours before, overdue). Reminders you set always ring.</span>
+        <div className="grid grid-cols-3 gap-2 mt-3">
+          {PRIORITY_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              aria-pressed={localPriority === opt.value}
+              onClick={() => setLocalPriority(opt.value)}
+              className={`${optionClass(localPriority === opt.value)} px-2 text-[13px] leading-tight text-center`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-              {/* Weekly digest */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-foreground">Weekly digest</span>
-                    <p className="text-xs text-muted-foreground mt-0.5">Recap via Telegram</p>
-                  </div>
-                  <Toggle on={digestEnabled} onToggle={() => setDigestEnabled(!digestEnabled)} />
-                </div>
-                {digestEnabled && (
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">Day</label>
-                      <select
-                        value={localDigestDay}
-                        onChange={(e) => setLocalDigestDay(Number(e.target.value))}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      >
-                        {DAY_OPTIONS.map((d) => (
-                          <option key={d.value} value={d.value}>{d.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">Time</label>
-                      <input
-                        type="time"
-                        value={localDigestTime}
-                        onChange={(e) => setLocalDigestTime(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="border-t border-border/20" />
-
-              {/* Quiet hours */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-foreground">Quiet hours</span>
-                    <p className="text-xs text-muted-foreground mt-0.5">Suppress notifications during this window</p>
-                  </div>
-                  <Toggle on={quietEnabled} onToggle={() => setQuietEnabled(!quietEnabled)} />
-                </div>
-                {quietEnabled && (
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">From</label>
-                      <input
-                        type="time"
-                        value={localQuietStart || "23:00"}
-                        onChange={(e) => setLocalQuietStart(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                    <span className="text-xs text-muted-foreground mt-5">to</span>
-                    <div className="flex-1">
-                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">Until</label>
-                      <input
-                        type="time"
-                        value={localQuietEnd || "07:00"}
-                        onChange={(e) => setLocalQuietEnd(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="border-t border-border/20" />
-
-              {/* Priority filter */}
-              <div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-foreground">Notification priority</span>
-                    <p className="text-xs text-muted-foreground mt-0.5">Minimum priority to notify</p>
-                  </div>
-                </div>
-                <div className="flex gap-1.5 mt-2">
-                  {PRIORITY_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setLocalPriority(opt.value)}
-                      className={`flex-1 h-8 rounded-lg text-xs font-medium transition-all ${
-                        localPriority === opt.value
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted/50 text-muted-foreground hover:bg-muted"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Save button */}
-              {changed && (
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="w-full h-9 rounded-lg bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] flex items-center justify-center gap-2"
-                >
-                  {saved ? (
-                    <><Check className="w-4 h-4" /> Saved</>
-                  ) : saving ? (
-                    "Saving..."
-                  ) : (
-                    "Save"
-                  )}
-                </button>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+      {(changed || saved) && <SaveButton onClick={handleSave} saving={saving} saved={saved} />}
+    </SettingsCard>
   );
 }

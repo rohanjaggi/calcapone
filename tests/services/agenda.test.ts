@@ -31,8 +31,6 @@ function row(o: Record<string, unknown>) {
     dueDate: null,
     dueTime: null,
     remindAt: null,
-    recurring: "none",
-    googleEventId: null,
     ...o,
   };
 }
@@ -145,6 +143,8 @@ describe("getAgenda ahead list", () => {
     // Nothing in the strip, but it is still the next thing due.
     expect(Object.values(agenda.byDay).flat()).toEqual([]);
     expect(agenda.ahead.map((a) => a.id)).toEqual(["far"]);
+    // Outside the week strip, so the row needs its list to link to.
+    expect(agenda.ahead[0].categoryId).toBe("c1");
   });
 
   it("excludes undated items and reminders", async () => {

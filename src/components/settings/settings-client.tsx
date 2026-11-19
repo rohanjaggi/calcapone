@@ -1,9 +1,6 @@
 "use client";
 
-import { Children, type ReactNode } from "react";
-import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { LogOut, Settings } from "lucide-react";
 import { AiProviderForm } from "@/components/settings/ai-provider-form";
 import { TimezoneSelect } from "@/components/settings/timezone-select";
 import { NotificationsConfig } from "@/components/settings/notifications-config";
@@ -28,6 +25,7 @@ type Props = {
     hasAiApiKey: boolean;
     hasGoogleCalendar: boolean;
     googleCalendarId: string | null;
+    eventReminderMinutes: number | null;
     quietStart: string | null;
     quietEnd: string | null;
     notifyMinPriority: string;
@@ -35,31 +33,6 @@ type Props = {
     digestTime: string;
   };
 };
-
-/**
- * Entry choreography for the settings list. Each row fades and rises on the same curve, offset
- * by its position, so the page assembles top-down.
- *
- * The stagger is derived from child order rather than written onto each row: rows used to carry
- * their own `delay`, and the cards animated themselves on top of that, so every addition was a
- * chance to pick a number that didn't match. Anything dropped into the list below is now animated
- * by virtue of being in it — which is also why the cards themselves are plain, unanimated divs.
- */
-function StaggeredRows({ children }: { children: ReactNode }) {
-  return (
-    <div className="px-5 mt-5 space-y-4">
-      {Children.map(children, (row, i) => (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.06 + i * 0.06 }}
-        >
-          {row}
-        </motion.div>
-      ))}
-    </div>
-  );
-}
 
 export function SettingsClient({ settings }: Props) {
   const router = useRouter();
@@ -100,63 +73,43 @@ export function SettingsClient({ settings }: Props) {
   };
 
   return (
-    <main className="safe-bottom pb-8">
-      <motion.header
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-        className="px-5 pt-6 pb-2"
-      >
-        <div className="flex items-center gap-2.5">
-          <Settings className="w-6 h-6 text-primary shrink-0" />
-          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
-            Settings
-          </h1>
+    <main className="safe-bottom sky-wash">
+      <header className="rise px-6 pt-7">
+        <h1 className="font-serif text-[2.5rem] leading-none font-semibold text-foreground">Settings</h1>
+        <p className="mt-2.5 font-serif italic text-[17px] text-muted-foreground">How Calcapone keeps time for you</p>
+      </header>
+
+      <div className="rise-late px-4 mt-6">
+        {/* One page, ruled into sections, rather than a stack of separate boxes. */}
+        <div className="bg-card rounded-[1.5rem] overflow-hidden divide-y divide-border">
+          <TimezoneSelect currentTimezone={settings.timezone} onSave={handleSaveTimezone} />
+          <NotificationsConfig
+            briefingEnabled={settings.briefingEnabled}
+            briefingTime={settings.briefingTime}
+            weeklyDigestEnabled={settings.weeklyDigestEnabled}
+            quietStart={settings.quietStart}
+            quietEnd={settings.quietEnd}
+            notifyMinPriority={settings.notifyMinPriority}
+            digestDay={settings.digestDay}
+            digestTime={settings.digestTime}
+            onSave={handleSaveNotifications}
+          />
+          <GoogleCalendarCard
+            isConnected={settings.hasGoogleCalendar}
+            calendarId={settings.googleCalendarId}
+            eventAlertMinutes={settings.eventReminderMinutes}
+            onConnect={handleConnectGoogle}
+            onDisconnect={handleDisconnectGoogle}
+          />
+          <AiProviderForm
+            currentProvider={settings.aiProvider}
+            currentModel={settings.aiModel}
+            hasApiKey={settings.hasAiApiKey}
+            onSave={handleSaveAi}
+          />
         </div>
-      </motion.header>
-      <StaggeredRows>
-        <AiProviderForm
-          currentProvider={settings.aiProvider}
-          currentModel={settings.aiModel}
-          hasApiKey={settings.hasAiApiKey}
-          onSave={handleSaveAi}
-        />
-        <TimezoneSelect
-          currentTimezone={settings.timezone}
-          onSave={handleSaveTimezone}
-        />
-        <NotificationsConfig
-          briefingEnabled={settings.briefingEnabled}
-          briefingTime={settings.briefingTime}
-          weeklyDigestEnabled={settings.weeklyDigestEnabled}
-          quietStart={settings.quietStart}
-          quietEnd={settings.quietEnd}
-          notifyMinPriority={settings.notifyMinPriority}
-          digestDay={settings.digestDay}
-          digestTime={settings.digestTime}
-          onSave={handleSaveNotifications}
-        />
-        <GoogleCalendarCard
-          isConnected={settings.hasGoogleCalendar}
-          calendarId={settings.googleCalendarId}
-          onConnect={handleConnectGoogle}
-          onDisconnect={handleDisconnectGoogle}
-        />
-        <form action="/api/auth/logout" method="post">
-          <button
-            type="submit"
-            className="w-full flex items-center gap-2 bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] px-4 py-3 text-left transition-colors hover:bg-secondary/30"
-          >
-            <div className="w-7 h-7 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
-              <LogOut className="w-3.5 h-3.5 text-destructive" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground">Log out</p>
-              <p className="text-[11px] text-muted-foreground">Sign out of this device</p>
-            </div>
-          </button>
-        </form>
-      </StaggeredRows>
+
+      </div>
     </main>
   );
 }

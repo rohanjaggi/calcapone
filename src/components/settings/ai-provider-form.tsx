@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Key, Eye, EyeOff, Check, Cpu, ChevronDown } from "lucide-react";
+import { Key, Eye, EyeOff, Cpu } from "lucide-react";
 import { AI_MODELS } from "@/lib/models";
+import { SettingsCard, SaveButton } from "@/components/settings/settings-card";
+import { optionClass } from "@/components/ui/bottom-sheet";
+import { useToast } from "@/components/ui/toast";
 
 const PROVIDERS = [
   { value: "openai",      label: "OpenAI",      models: AI_MODELS.openai },
@@ -11,6 +13,9 @@ const PROVIDERS = [
   { value: "gemini",      label: "Gemini",      models: AI_MODELS.gemini },
   { value: "openrouter",  label: "OpenRouter",  models: AI_MODELS.openrouter },
 ];
+
+const inputClass =
+  "w-full h-12 rounded-xl border border-input bg-background/70 text-base text-foreground placeholder:text-faint focus:outline-none focus:border-hour/70 transition-colors";
 
 type Props = {
   currentProvider: string | null;
@@ -20,7 +25,6 @@ type Props = {
 };
 
 export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSave }: Props) {
-  const [open, setOpen] = useState(false);
   const [provider, setProvider] = useState(currentProvider ?? "openai");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -48,80 +52,80 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
     }
   };
 
+  const { notify } = useToast();
   const handleSave = async () => {
     setSaving(true);
-    await onSave({ aiProvider: provider, ...(apiKey && { aiApiKey: apiKey }), aiModel: model.trim() });
-    setSaving(false);
+    try {
+      await onSave({ aiProvider: provider, ...(apiKey && { aiApiKey: apiKey }), aiModel: model.trim() });
+    } catch {
+      notify("Couldn't save your AI settings — please try again.");
+      return;
+    } finally {
+      setSaving(false);
+    }
     setSaved(true);
     setApiKey("");
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const currentLabel = PROVIDERS.find((p) => p.value === currentProvider)?.label;
+  const summary = hasApiKey && currentLabel ? `${currentLabel} · ${currentModel ?? "default model"}` : "Using the shared trial key";
+
   return (
-    <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-      <button
-        onClick={() => setOpen(!open)}
-        className={`w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-muted/30 ${open ? "border-b border-border/40" : ""}`}
-      >
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-brass-light flex items-center justify-center">
-            <Cpu className="w-3.5 h-3.5 text-brass" />
-          </div>
-          <div>
-            <h3 className="text-sm font-medium text-foreground">AI Provider</h3>
-            <p className="text-[11px] text-muted-foreground">Bring your own API key</p>
-          </div>
+    <SettingsCard icon={Cpu} title="AI provider" value={summary}>
+      <div role="group" aria-label="Provider">
+        <span className="text-[13px] font-medium text-muted-foreground block mb-2">Provider</span>
+        <div className="grid grid-cols-2 gap-2">
+          {PROVIDERS.map((p) => (
+            <button key={p.value} type="button" aria-pressed={provider === p.value} onClick={() => handleProviderChange(p.value)} className={optionClass(provider === p.value)}>
+              {p.label}
+            </button>
+          ))}
         </div>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
+      </div>
+      <label className="block">
+        <span className="text-[13px] font-medium text-muted-foreground block mb-2">
+          API key{hasApiKey && !apiKey && <span className="ml-1.5 text-done">· saved</span>}
+        </span>
+        <span className="relative block">
+          <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
+          <input
+            type={showKey ? "text" : "password"}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={hasApiKey ? "Enter a new key to replace it" : "sk-…"}
+            autoComplete="off"
+            className={`${inputClass} pl-11 pr-12`}
+          />
+          <button
+            type="button"
+            onClick={() => setShowKey(!showKey)}
+            aria-label={showKey ? "Hide key" : "Show key"}
+            className="absolute right-0.5 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-muted-foreground"
           >
-      <div className="p-4 space-y-4">
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Provider</label>
-          <div className="grid grid-cols-2 gap-2">
-            {PROVIDERS.map((p) => (
-              <button key={p.value} onClick={() => handleProviderChange(p.value)} className={`px-3 py-2 rounded-lg text-sm border transition-all duration-150 ${provider === p.value ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-            API Key{hasApiKey && !apiKey && <span className="ml-1.5 text-sage">· Configured</span>}
-          </label>
-          <div className="relative">
-            <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <input type={showKey ? "text" : "password"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={hasApiKey ? "Enter new key to replace" : "sk-..."} className="w-full h-10 pl-9 pr-10 rounded-lg border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all" />
-            <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </span>
+      </label>
+      <div role="group" aria-label="Model">
+        <span className="text-[13px] font-medium text-muted-foreground block mb-2">Model</span>
+        <div className="flex flex-wrap gap-2">
+          {selectedProvider.models.map((m) => (
+            <button key={m.id} type="button" aria-pressed={!custom && model === m.id} onClick={() => { setModel(m.id); setCustom(false); }} className={`${optionClass(!custom && model === m.id)} px-3.5`}>
+              {m.label}
             </button>
-          </div>
+          ))}
+          <button
+            type="button"
+            aria-pressed={custom}
+            onClick={() => { setCustom(true); setModel(""); }}
+            className={`${optionClass(custom)} px-3.5`}
+          >
+            Custom…
+          </button>
         </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Model</label>
-          <div className="flex flex-wrap gap-1.5">
-            {selectedProvider.models.map((m) => (
-              <button key={m.id} onClick={() => { setModel(m.id); setCustom(false); }} className={`px-2.5 py-1 rounded-md text-xs border transition-all duration-150 ${!custom && model === m.id ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}>
-                {m.label}
-              </button>
-            ))}
-            <button
-              onClick={() => { setCustom(true); setModel(""); }}
-              className={`px-2.5 py-1 rounded-md text-xs border transition-all duration-150 ${custom ? "border-primary bg-primary/5 text-foreground font-medium" : "border-border/50 text-muted-foreground hover:border-border"}`}
-            >
-              Custom…
-            </button>
-          </div>
-          {custom && (
+        {custom && (
+          <>
             <input
               type="text"
               value={model}
@@ -130,22 +134,21 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
               autoComplete="off"
               spellCheck={false}
               aria-label="Custom model id"
-              className="mt-2 w-full h-9 rounded-lg border border-border/60 bg-background px-3 text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50"
+              className={`${inputClass} mt-3 px-4`}
             />
-          )}
-          {custom && (
-            <p className="mt-1.5 text-[11px] text-muted-foreground">
+            <p className="mt-2 text-[13px] text-muted-foreground">
               Exactly as the provider spells it — e.g. {selectedProvider.models[0].id}
             </p>
-          )}
-        </div>
-        <button onClick={handleSave} disabled={saving || !model.trim() || (!apiKey && !hasApiKey)} className="w-full h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-          {saved ? <><Check className="w-4 h-4" />Saved</> : saving ? "Saving..." : "Save AI Configuration"}
-        </button>
-      </div>
-          </motion.div>
+          </>
         )}
-      </AnimatePresence>
-    </div>
+      </div>
+      <SaveButton
+        onClick={handleSave}
+        saving={saving}
+        saved={saved}
+        disabled={!model.trim() || (!apiKey && !hasApiKey)}
+        label="Save AI settings"
+      />
+    </SettingsCard>
   );
 }

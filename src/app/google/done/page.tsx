@@ -50,13 +50,13 @@ export default async function GoogleDonePage({
   const message = MESSAGES[status ?? ""] ?? MESSAGES.failed;
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-6 bg-background">
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
-        <Image src="/logo.png" alt="Calcapone" width={64} height={64} className="mx-auto mb-4 rounded-xl" priority />
-        <h1 className={`text-lg font-semibold tracking-tight ${message.ok ? "text-foreground" : "text-destructive"}`}>
+    <main className="min-h-dvh flex items-center justify-center px-8 py-10 bg-background">
+      <div className="w-full max-w-xs text-center">
+        <Image src="/logo.png" alt="" width={72} height={72} className="mx-auto rounded-full sepia-[0.2] brightness-[0.96]" priority />
+        <h1 className={`mt-6 font-serif text-[2rem] leading-tight font-semibold ${message.ok ? "text-foreground" : "text-alarm"}`}>
           {message.title}
         </h1>
-        <p className="mt-3 text-sm text-muted-foreground">{message.detail}</p>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">{message.detail}</p>
       </div>
     </main>
   );

@@ -1,44 +1,71 @@
 "use client";
 import { useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { CalendarDays, Unlink, ExternalLink, ChevronDown } from "lucide-react";
+import { CalendarDays, Unlink, ExternalLink } from "lucide-react";
+import { SettingsCard } from "@/components/settings/settings-card";
 
-type Props = { isConnected: boolean; calendarId: string | null; onConnect: () => Promise<void>; onDisconnect: () => Promise<void> };
+type Props = {
+  isConnected: boolean;
+  calendarId: string | null;
+  /** Minutes before an event starts that the bot pings; null when off. Set with /alerts in chat. */
+  eventAlertMinutes: number | null;
+  onConnect: () => Promise<void>;
+  onDisconnect: () => Promise<void>;
+};
 
-export function GoogleCalendarCard({ isConnected, calendarId, onConnect, onDisconnect }: Props) {
-  const [open, setOpen] = useState(false);
+export function GoogleCalendarCard({ isConnected, calendarId, eventAlertMinutes, onConnect, onDisconnect }: Props) {
   const [loading, setLoading] = useState(false);
-  const handleAction = async () => { setLoading(true); if (isConnected) await onDisconnect(); else await onConnect(); setLoading(false); };
+  const handleAction = async () => {
+    setLoading(true);
+    try {
+      if (isConnected) await onDisconnect();
+      else await onConnect();
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+    <SettingsCard
+      icon={CalendarDays}
+      title="Google Calendar"
+      value={isConnected ? `Connected · ${calendarId ?? "primary"}` : "Not connected"}
+    >
+      <p className="text-[15px] text-muted-foreground">
+        {isConnected
+          ? "Events show on Home and in Calendar, and you can change them here or in chat."
+          : "Sign-in opens in your browser — Google doesn't allow it inside Telegram. Come back here when it's done."}
+      </p>
+      {/* The only switch for event alerts lives in chat; without this nobody learned it existed. */}
+      {isConnected && (
+        <p className="text-[15px] text-muted-foreground">
+          {eventAlertMinutes == null ? (
+            <>Event alerts are off. Send <code>/alerts 15</code> to the bot to get a ping 15 minutes before each event.</>
+          ) : (
+            <>The bot pings you {eventAlertMinutes} min before each event. Change it with <code>/alerts</code>.</>
+          )}
+        </p>
+      )}
       <button
-        onClick={() => setOpen(!open)}
-        className={`w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-muted/30 ${open ? "border-b border-border/40" : ""}`}
+        onClick={handleAction}
+        disabled={loading}
+        className={`w-full h-12 rounded-2xl text-[15px] font-semibold transition-[transform,opacity] active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2 ${
+          isConnected ? "border border-alarm/40 text-alarm" : "bg-primary text-primary-foreground"
+        }`}
       >
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-sage-light flex items-center justify-center"><CalendarDays className="w-3.5 h-3.5 text-sage" /></div>
-          <div><h3 className="text-sm font-medium text-foreground">Google Calendar</h3><p className="text-[11px] text-muted-foreground">{isConnected ? `Connected · ${calendarId ?? "primary"}` : "Not connected"}</p></div>
-        </div>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="p-4">
-              <button onClick={handleAction} disabled={loading} className={`w-full h-10 rounded-lg text-sm font-medium transition-all duration-200 active:scale-[0.98] flex items-center justify-center gap-2 ${isConnected ? "border border-destructive/30 text-destructive hover:bg-destructive/5" : "bg-primary text-primary-foreground hover:opacity-90"}`}>
-                {loading ? "Loading..." : isConnected ? <><Unlink className="w-4 h-4" />Disconnect</> : <><ExternalLink className="w-4 h-4" />Connect Google Calendar</>}
-              </button>
-            </div>
-          </motion.div>
+        {loading ? (
+          "Working…"
+        ) : isConnected ? (
+          <>
+            <Unlink className="w-4 h-4" aria-hidden="true" />
+            Disconnect
+          </>
+        ) : (
+          <>
+            <ExternalLink className="w-4 h-4" aria-hidden="true" />
+            Connect Google Calendar
+          </>
         )}
-      </AnimatePresence>
-    </div>
+      </button>
+    </SettingsCard>
   );
 }

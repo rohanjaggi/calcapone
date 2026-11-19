@@ -1,9 +1,13 @@
 import { Circle, Loader2, CheckCircle2 } from "lucide-react";
 
+/**
+ * Priority is shown as brightness, not hue: hue is spoken for by deadlines (overdue, urgent),
+ * lists and the hour, and a red "high" read as "overdue".
+ */
 export const priorityColors: Record<string, string> = {
-  high: "#B85C5C",
-  medium: "#92785C",
-  low: "#A8A29E",
+  high: "#F3EEE6",
+  medium: "#A9A7B8",
+  low: "#6B6A80",
 };
 
 export const priorityLabels: Record<string, string> = {

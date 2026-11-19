@@ -1,12 +1,3 @@
-export type CalendarEvent = {
-  id: string;
-  title: string;
-  startTime: string;
-  endTime: string;
-  category: string;
-  color: string;
-};
-
 export type Category = { id: string; name: string; color: string };
 
 export type Item = {
@@ -19,9 +10,10 @@ export type Item = {
   dueDate: string | null;
   dueTime: string | null;
   remindAt: string | null;
-  recurring: "none" | "daily" | "weekly" | "monthly";
-  googleEventId: string | null;
-  parentId?: string | null;
+  /** The reminder as wall-clock "YYYY-MM-DDTHH:mm" in the user's zone, for display and the form. */
+  remindLocal: string | null;
+  /** How the item repeats, in words ("every week"), or null for a one-off. */
+  repeat: string | null;
   subtasks?: Item[];
 };
 
