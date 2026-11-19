@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Calendar, ArrowRight, Plus } from "lucide-react";
-import Link from "next/link";
+import { Calendar, Plus } from "lucide-react";
 import { toggleItemStatus } from "@/app/actions";
 import { TaskCheck } from "@/components/todos/task-row";
 import { UNDO_MS } from "@/components/todos/use-optimistic-items";
@@ -174,13 +173,7 @@ export function DayTimeline({
 
   return (
     <section className="mx-4 mt-2 bg-card rounded-[1.5rem] px-5 pt-5 pb-3" aria-label={title}>
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="font-serif text-[1.75rem] leading-tight font-semibold text-foreground">{title}</h2>
-        <Link href="/calendar" className="min-h-11 -mr-2 px-2 shrink-0 flex items-center gap-1 text-sm text-muted-foreground active:text-foreground">
-          Calendar
-          <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-        </Link>
-      </div>
+      <h2 className="font-serif text-[1.75rem] leading-tight font-semibold text-foreground">{title}</h2>
 
       {items.length === 0 ? (
         <div className="pt-1 pb-2">

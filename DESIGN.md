@@ -313,7 +313,7 @@ Soft, rounded diary pages. Page cards round at 1.5rem, sheets at 1.75rem on thei
 - **Shape:** Generous pill-ish rectangles (1.575rem radius).
 - **Primary:** Full-width ivory fill with night-ink text, 600 weight, 3.25rem tall in sheets, 48px in settings. Presses scale to 0.98. Disabled turns to the input-edge fill with faint text.
 - **Hour outline:** The Add button on an empty day: 48px, 1px border in the hour at 50%, hour text, pressed fill at 10%.
-- **Quiet:** Text-only, muted ivory, 44px tall ("Add a task", "Calendar →", Edit/Done); press brightens to ivory or adds a 10% ivory wash.
+- **Quiet:** Text-only, muted ivory, 44px tall ("Add a task", Edit/Done); press brightens to ivory or adds a 10% ivory wash.
 - **Focus:** Everywhere a 2px outline in the hour, offset 2px.
 
 ### Chips (options)

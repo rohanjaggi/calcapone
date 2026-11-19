@@ -27,7 +27,8 @@ export type Agenda = {
   /**
    * The nearest deadlines regardless of which day is selected, overdue first. The timeline
    * answers "what is on this day"; without this the dashboard could not answer "what is
-   * coming that I should worry about" without hunting day by day.
+   * coming that I should worry about" without hunting day by day. Only the first may be due
+   * today, since the Today card already lists the rest.
    */
   ahead: AheadItem[];
 };
@@ -134,6 +135,9 @@ export async function getAgenda(
     }))
     // Soonest first, overdue at the top — the ordering someone scanning for trouble expects.
     .sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))
+    // Home shows the first as its "most pressing" card. Past that, today's deadlines are left
+    // out: the Today card already lists them, and repeats pushed later ones off the screen.
+    .filter((item, i) => i === 0 || item.dueDate !== todayStr)
     .slice(0, AHEAD_LIMIT);
 
   const categories = categoryRows.map((c) => ({
