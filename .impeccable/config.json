@@ -1,0 +1,44 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/assigned.html"
+        ],
+        "createdAt": "2026-11-18T19:03:14.160Z",
+        "reason": "decision-round sketch of an alternate direction (spent hand, not shipping UI); fonts predate DESIGN.md"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-11-18T19:03:14.177Z",
+        "reason": "decision-round sketch of an alternate direction (spent hand, not shipping UI); fonts predate DESIGN.md"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-transit.html"
+        ],
+        "createdAt": "2026-11-18T19:03:14.193Z",
+        "reason": "decision-round sketch of an alternate direction (spent hand, not shipping UI); fonts predate DESIGN.md"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-console.html"
+        ],
+        "createdAt": "2026-11-18T19:03:14.209Z",
+        "reason": "decision-round sketch of an alternate direction (spent hand, not shipping UI); fonts predate DESIGN.md"
+      }
+    ]
+  }
+}
