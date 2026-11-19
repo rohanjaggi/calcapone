@@ -48,6 +48,9 @@ async function keywordSearch(userId: string, query: string): Promise<SearchResul
   }));
 }
 
+/** How far below the best semantic match a result may score and still be shown. */
+const SEMANTIC_MARGIN = 0.05;
+
 function recencyDecay(updatedAt: Date): number {
   const daysSince = (Date.now() - updatedAt.getTime()) / (1000 * 60 * 60 * 24);
   return Math.max(0, 1 - daysSince / 30);
@@ -80,20 +83,25 @@ async function semanticSearch(userId: string, query: string): Promise<SearchResu
       WHERE user_id = ${userId}::uuid
         AND parent_id IS NULL
         AND embedding IS NOT NULL
-        AND 1 - (embedding <=> ${vectorStr}::vector) > 0.3
+        AND 1 - (embedding <=> ${vectorStr}::vector) > 0.25
       ORDER BY embedding <=> ${vectorStr}::vector
       LIMIT 20
     `;
 
     if (matches.length === 0) return [];
 
-    const ids = matches.map((m) => m.id);
+    // Short titles score in a tight band, so a fixed bar either lets noise in or drops real
+    // matches. Keeping only what sits close to the best match halved the noise on a test set.
+    const best = Number(matches[0].similarity);
+    const close = matches.filter((m) => Number(m.similarity) >= best - SEMANTIC_MARGIN);
+
+    const ids = close.map((m) => m.id);
     const items = await prisma.item.findMany({
       where: { id: { in: ids } },
       include: { category: true },
     });
 
-    const similarityMap = new Map(matches.map((m) => [m.id, m.similarity]));
+    const similarityMap = new Map(close.map((m) => [m.id, Number(m.similarity)]));
     items.sort((a, b) => {
       const scoreA = hybridScore(similarityMap.get(a.id) ?? 0, a.updatedAt, a.status);
       const scoreB = hybridScore(similarityMap.get(b.id) ?? 0, b.updatedAt, b.status);

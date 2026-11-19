@@ -99,6 +99,19 @@ describe("searchItems", () => {
     expect(results.map((r) => r.id)).toEqual(["1", "2"]);
   });
 
+  // A fixed 0.3 bar let "groceries" pull in "Pay rent" (0.35) beside "Buy milk" (0.42).
+  it("keeps only semantic hits close to the best match", async () => {
+    mockFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([groceries, clientPrep]);
+    mockQueryRaw.mockResolvedValue([
+      { id: "1", similarity: 0.42 },
+      { id: "2", similarity: 0.39 },
+      { id: "3", similarity: 0.35 },
+    ]);
+
+    await searchItems("user-1", "shopping");
+    expect(mockFindMany.mock.calls[1][0].where).toEqual({ id: { in: ["1", "2"] } });
+  });
+
   it("does not duplicate an item found by both passes", async () => {
     mockFindMany.mockResolvedValueOnce([groceries]).mockResolvedValueOnce([groceries]);
     mockQueryRaw.mockResolvedValue([{ id: "1", similarity: 0.9 }]);
