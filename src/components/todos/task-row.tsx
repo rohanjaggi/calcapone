@@ -58,26 +58,29 @@ export function TaskCheck({
   );
 }
 
-function Meta({ item, showDue, today }: { item: Item; showDue: boolean; today?: string }) {
+function Meta({ item, today }: { item: Item; today?: string }) {
   const bits: React.ReactNode[] = [];
   if (item.remindLocal) {
     const [day, time] = item.remindLocal.split("T");
     bits.push(
       <span key="r" className="inline-flex items-center gap-1">
         <Bell className="w-3 h-3" aria-label="Reminder" />
-        {day !== item.dueDate ? `${formatDueDate(day)} ${formatTime(time)}` : formatTime(time)}
+        {day !== item.dueDate ? `${formatDueDate(day)}, ${formatTime(time)}` : formatTime(time)}
       </span>
     );
   }
-  if (item.dueTime) bits.push(<span key="t">{formatTime(item.dueTime)}</span>);
   // "YYYY-MM-DD" strings in the same zone compare correctly as text.
   const overdue = !!today && !!item.dueDate && item.dueDate < today;
-  if (showDue && item.dueDate)
+  const dueTime = item.dueTime ? formatTime(item.dueTime) : null;
+  // Labelled and date-first: beside a reminder, a bare "5:00 PM Nov 21" read as a second reminder.
+  if (item.dueDate) {
+    const when = dueTime ? `${formatDueDate(item.dueDate)}, ${dueTime}` : formatDueDate(item.dueDate);
     bits.push(
       <span key="d" className={overdue ? "text-alarm font-medium" : undefined}>
-        {overdue ? `Overdue · ${formatDueDate(item.dueDate)}` : formatDueDate(item.dueDate)}
+        {overdue ? `Overdue · ${when}` : `Due ${when}`}
       </span>
     );
+  } else if (dueTime) bits.push(<span key="d">Due {dueTime}</span>);
   if (item.repeat) bits.push(<span key="p" className="inline-flex items-center gap-1"><Repeat className="w-3 h-3" aria-hidden="true" />{item.repeat}</span>);
   if (item.priority === "high" && item.status !== "done") bits.push(<span key="h" className="text-foreground font-medium">High</span>);
   if (bits.length === 0) return null;
@@ -93,7 +96,6 @@ export function TaskRow({
   item,
   first,
   editMode = false,
-  showDue = true,
   showDescription = false,
   today,
   onToggle,
@@ -103,7 +105,6 @@ export function TaskRow({
   item: Item;
   first: boolean;
   editMode?: boolean;
-  showDue?: boolean;
   showDescription?: boolean;
   /** The user's today, "YYYY-MM-DD"; with it, a past due date reads as overdue. */
   today?: string;
@@ -199,7 +200,7 @@ export function TaskRow({
           {showDescription && item.description && !isDone && (
             <span className="block mt-0.5 text-[13px] text-muted-foreground line-clamp-2">{item.description}</span>
           )}
-          {!isDone && <Meta item={item} showDue={showDue} today={today} />}
+          {!isDone && <Meta item={item} today={today} />}
         </span>
       </motion.div>
 
