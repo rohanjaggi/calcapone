@@ -174,9 +174,16 @@ describe("handleCommand", () => {
     expect(result).toEqual({ text: "search-reply" });
   });
 
-  it("returns the help text wrapped in a CommandReply for /help and /start", async () => {
+  it("returns the help text wrapped in a CommandReply for /help", async () => {
     expect(await handleCommand({ command: "help", body: "" }, ctx)).toEqual({ text: HELP_TEXT });
-    expect(await handleCommand({ command: "start", body: "" }, ctx)).toEqual({ text: HELP_TEXT });
+  });
+
+  // Everyone starts on the default zone; /start is where a new user learns that, and how to fix it.
+  it("greets a new user on /start with the timezone it assumed and how to change it", async () => {
+    const { text } = await handleCommand({ command: "start", body: "" }, ctx);
+    expect(text).toContain(ctx.user.timezone);
+    expect(text).toContain("/timezone");
+    expect(text).toContain(HELP_TEXT);
   });
 
   it("returns an unknown-command reply for unregistered commands", async () => {

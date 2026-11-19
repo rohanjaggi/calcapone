@@ -10,9 +10,10 @@ vi.mock("@/lib/services/item", () => ({
 }));
 vi.mock("@/lib/services/category", () => ({ listCategories: vi.fn(), createCategory: vi.fn() }));
 vi.mock("@/lib/services/calendar", () => ({ createEvent: vi.fn(), getEvents: vi.fn() }));
-vi.mock("@/lib/services/user", () => ({ updateUserSettings: mockUpdateUserSettings }));
+const mockChangeTimezone = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock("@/lib/services/user", () => ({ updateUserSettings: mockUpdateUserSettings, changeTimezone: mockChangeTimezone }));
 vi.mock("@/lib/services/message-ref", () => ({ latestListRef: vi.fn(), resolvePosition: vi.fn() }));
-vi.mock("@/lib/services/action-log", () => ({ undoLast: vi.fn() }));
+vi.mock("@/lib/services/action-log", () => ({ undoLast: vi.fn(), recordAction: vi.fn() }));
 vi.mock("@/lib/services/search", () => ({ searchItems: vi.fn() }));
 
 import {
@@ -30,7 +31,7 @@ import { listItems, updateItem, createItem } from "@/lib/services/item";
 import { listCategories } from "@/lib/services/category";
 import { getEvents } from "@/lib/services/calendar";
 import { latestListRef, resolvePosition } from "@/lib/services/message-ref";
-import { undoLast } from "@/lib/services/action-log";
+import { undoLast, recordAction } from "@/lib/services/action-log";
 import { searchItems } from "@/lib/services/search";
 
 const mockListItems = vi.mocked(listItems);
@@ -41,6 +42,7 @@ const mockGetEvents = vi.mocked(getEvents);
 const mockLatestListRef = vi.mocked(latestListRef);
 const mockResolvePosition = vi.mocked(resolvePosition);
 const mockUndoLast = vi.mocked(undoLast);
+const mockRecordAction = vi.mocked(recordAction);
 const mockSearchItems = vi.mocked(searchItems);
 
 const ctx: CommandContext = {
@@ -64,7 +66,6 @@ const makeItem = (
     dueDate: string | null;
     dueTime: string | null;
     remindAt: Date | null;
-    kind: "task" | "assignment" | "exam" | "class";
     seriesId: string | null;
   }> = {}
 ) => ({
@@ -78,15 +79,11 @@ const makeItem = (
   dueDate: null,
   dueTime: null,
   remindAt: null,
-  recurring: "none" as const,
   recurrenceRule: null,
   recurrenceEnd: null,
-  googleEventId: null,
   parentId: null,
   subtasks: [],
-  kind: "task" as const,
   seriesId: null,
-  calendarSyncedAt: null,
   notificationStage: 0,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -112,6 +109,22 @@ describe("handleDone", () => {
     expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { status: "done" });
     expect(result.text).toContain("Buy groceries");
     expect(result.text).toContain("Completed");
+  });
+
+  // Unjournalled, a /done left /undo reversing whatever the bot did before it.
+  it("journals the completion so /undo reverses this one", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Buy groceries")]);
+
+    await handleDone("groceries", ctx);
+
+    expect(mockRecordAction).toHaveBeenCalledWith(
+      "u1",
+      42,
+      expect.objectContaining({
+        kind: "complete_item",
+        inverse: { op: "restore_item", itemId: "i1", fields: { status: "pending" } },
+      })
+    );
   });
 
   it("returns not-found message when no match", async () => {
@@ -166,15 +179,35 @@ describe("handleDone", () => {
     expect(mockUpdateItem).not.toHaveBeenCalled();
   });
 
-  it("falls through to title matching when the number doesn't resolve to an open item", async () => {
-    mockListItems.mockResolvedValue([makeItem("i1", "Buy milk")]);
+  // Matching a bare number as a title completed "Dinner at 7pm" for "/done 7" on a 5-item list.
+  it("never matches a number as a title when it's past the end of the list", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Dinner at 9pm")]);
     mockLatestListRef.mockResolvedValue({ itemIds: ["i1"] });
     mockResolvePosition.mockReturnValue(null);
 
     const result = await handleDone("9", ctx);
 
-    expect(result.text).toContain("No open task");
+    expect(result.text).toBe("There's no #9 in your last list — it has 1.");
     expect(mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("numbers an ambiguous match and remembers it, so /done 2 can pick one", async () => {
+    mockListItems.mockResolvedValue([makeItem("i1", "Call mom"), makeItem("i2", "Call dentist")]);
+
+    const result = await handleDone("call", ctx);
+
+    expect(result.text).toContain("1. Call mom");
+    expect(result.text).toContain("2. Call dentist");
+    expect(result.itemIds).toEqual(["i1", "i2"]);
+    expect(mockUpdateItem).not.toHaveBeenCalled();
+  });
+
+  it("can complete an open subtask, which only lives under its parent", async () => {
+    mockListItems.mockResolvedValue([{ ...makeItem("p1", "Presentation prep"), subtasks: [makeItem("s1", "Make slides")] }] as never);
+
+    await handleDone("make slides", ctx);
+
+    expect(mockUpdateItem).toHaveBeenCalledWith("s1", "u1", { status: "done" });
   });
 
   it("HTML-escapes a title containing <, & and _", async () => {
@@ -659,6 +692,16 @@ describe("handleList", () => {
 describe("handleNote", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  // Unjournalled, /undo straight after a /note reversed whatever the bot had done before it.
+  it("journals the note so /undo removes it", async () => {
+    mockListCategories.mockResolvedValue([{ ...category, id: "cat-first" }] as never);
+    mockCreateItem.mockResolvedValue(makeItem("n1", "Buy stamps") as never);
+
+    await handleNote("Buy stamps", ctx);
+
+    expect(mockRecordAction).toHaveBeenCalledWith("u1", 42, expect.objectContaining({ inverse: { op: "delete_item", itemId: "n1" } }));
+  });
+
   it("rejects an empty body", async () => {
     const result = await handleNote("", ctx);
 
@@ -790,15 +833,17 @@ describe("handleTimezone", () => {
     expect(mockUpdateUserSettings).not.toHaveBeenCalled();
   });
 
-  it("saves a valid zone", async () => {
+  it("saves a valid zone, keeping pending reminders at their clock times", async () => {
+    mockChangeTimezone.mockResolvedValueOnce(2);
     const result = await handleTimezone("Europe/London", ctx);
-    expect(mockUpdateUserSettings).toHaveBeenCalledWith("u1", { timezone: "Europe/London" });
+    expect(mockChangeTimezone).toHaveBeenCalledWith("u1", "Asia/Singapore", "Europe/London");
     expect(result.text).toContain("Europe/London");
+    expect(result.text).toContain("2 pending reminders keep their clock times");
   });
 
   it("skips the write when the zone is unchanged", async () => {
     const result = await handleTimezone("Asia/Singapore", ctx);
-    expect(mockUpdateUserSettings).not.toHaveBeenCalled();
+    expect(mockChangeTimezone).not.toHaveBeenCalled();
     expect(result.text).toContain("Already set");
   });
 });

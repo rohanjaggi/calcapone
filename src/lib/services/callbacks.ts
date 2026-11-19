@@ -1,5 +1,6 @@
 import { updateItem, snoozeReminder, getItem } from "@/lib/services/item";
-import { undoById } from "@/lib/services/action-log";
+import { undoById, recordAction } from "@/lib/services/action-log";
+import { completionRecord } from "@/lib/services/tool-outcome";
 import { esc, b, type InlineKeyboard } from "@/lib/services/telegram";
 import { formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
 import type { ItemStatus } from "@/generated/prisma/enums";
@@ -160,7 +161,9 @@ export async function handleCallback(
 
   if (parsed.action === "done") {
     await updateItem(item.id, user.id, { status: "done" as ItemStatus });
-    return { text: `✅ ${b(item.title)} — done`, toast: "Marked done" };
+    // Journalled so /undo reaches it, with its own ↩️ like every other single change.
+    const actionId = item.status === "done" ? null : await recordAction(user.id, null, completionRecord(item));
+    return { text: `✅ ${b(item.title)} — done`, toast: "Marked done", ...(actionId ? { keyboard: undoKeyboard(actionId) } : {}) };
   }
 
   const remindAt =
@@ -169,11 +172,25 @@ export async function handleCallback(
       : new Date(now.getTime() + parsed.minutes * 60_000);
 
   await snoozeReminder(item.id, user.id, remindAt);
+  // Journalled like every other change, so /undo after a snooze reverses the snooze.
+  const actionId = await recordAction(user.id, null, {
+    kind: "snooze",
+    summary: `the snooze on ${b(item.title)}`,
+    inverse: {
+      op: "restore_item",
+      itemId: item.id,
+      fields: { remindAt: item.remindAt ? item.remindAt.toISOString() : null, status: item.status },
+    },
+  });
 
   const when =
     formatDateInTz(remindAt, user.timezone) === formatDateInTz(now, user.timezone)
       ? formatHHmmInTz(remindAt, user.timezone)
       : `${formatDateInTz(remindAt, user.timezone)} ${formatHHmmInTz(remindAt, user.timezone)}`;
 
-  return { text: `😴 ${b(item.title)} — back at ${esc(when)}`, toast: `Snoozed until ${when}` };
+  return {
+    text: `😴 ${b(item.title)} — back at ${esc(when)}`,
+    toast: `Snoozed until ${when}`,
+    ...(actionId ? { keyboard: undoKeyboard(actionId) } : {}),
+  };
 }

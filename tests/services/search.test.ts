@@ -65,6 +65,15 @@ describe("searchItems", () => {
     expect(results.find((r) => r.title === "Client meeting prep")?.type).toBe("reminder");
   });
 
+  // ORing the words made "pay the rent" match anything containing "the".
+  it("requires every word of the query to appear", async () => {
+    mockFindMany.mockResolvedValue(threeKeywordHits);
+    await searchItems("user-1", "pay rent");
+    const where = mockFindMany.mock.calls[0][0].where;
+    expect(where.AND).toHaveLength(2);
+    expect(where.AND[0].OR[0]).toEqual({ title: { contains: "pay", mode: "insensitive" } });
+  });
+
   it("returns empty for an empty query", async () => {
     const results = await searchItems("user-1", "");
     expect(results).toEqual([]);

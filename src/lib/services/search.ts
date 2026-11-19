@@ -9,6 +9,7 @@ type SearchResult = {
   priority: string;
   category: { id: string; name: string; color: string };
   dueDate: string | null;
+  updatedAt: Date;
   type: "task" | "reminder";
 };
 
@@ -20,10 +21,14 @@ async function keywordSearch(userId: string, query: string): Promise<SearchResul
     where: {
       userId,
       parentId: null,
-      OR: terms.flatMap((term) => [
-        { title: { contains: term, mode: "insensitive" as const } },
-        { description: { contains: term, mode: "insensitive" as const } },
-      ]),
+      // Every word must appear (in the title or the description): ORing them made "pay the
+      // rent" match anything containing "the".
+      AND: terms.map((term) => ({
+        OR: [
+          { title: { contains: term, mode: "insensitive" as const } },
+          { description: { contains: term, mode: "insensitive" as const } },
+        ],
+      })),
     },
     include: { category: true },
     orderBy: [{ status: "asc" }, { updatedAt: "desc" }],
@@ -38,6 +43,7 @@ async function keywordSearch(userId: string, query: string): Promise<SearchResul
     priority: item.priority,
     category: { id: item.category.id, name: item.category.name, color: item.category.color ?? "#A8A29E" },
     dueDate: item.dueDate,
+    updatedAt: item.updatedAt,
     type: item.remindAt ? ("reminder" as const) : ("task" as const),
   }));
 }
@@ -102,6 +108,7 @@ async function semanticSearch(userId: string, query: string): Promise<SearchResu
       priority: item.priority,
       category: { id: item.category.id, name: item.category.name, color: item.category.color ?? "#A8A29E" },
       dueDate: item.dueDate,
+      updatedAt: item.updatedAt,
       type: item.remindAt ? ("reminder" as const) : ("task" as const),
     }));
   } catch (error) {

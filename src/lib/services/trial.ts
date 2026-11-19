@@ -87,5 +87,5 @@ export async function chargeExtraTrialCalls(
 export const IMAGE_CALL_SURCHARGE = 2;
 
 export function trialLimitMessage(limit: number): string {
-  return `You've used today's ${limit} free trial messages. Add your own API key in Settings to keep going, or try again tomorrow.`;
+  return `You've used today's free AI allowance (${limit} requests — longer chats and photos use more than one). /note, /list, /today and /done still work. Add your own API key in Open Calcapone → Settings to keep going, or try again tomorrow.`;
 }

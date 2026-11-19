@@ -369,13 +369,6 @@ export async function setChatMenuButton(webAppUrl: string) {
   return res.result;
 }
 
-/** Webhook health — `last_error_message` is the fastest way to see why updates stopped. */
-export async function getWebhookInfo() {
-  const res = await callTelegram("getWebhookInfo", {});
-  if (!res.ok) throw new Error(`Telegram getWebhookInfo failed: ${res.status} ${res.body}`);
-  return res.result;
-}
-
 export async function getFileUrl(fileId: string): Promise<string> {
   const res = await callTelegram("getFile", { file_id: fileId });
   if (!res.ok) throw new Error(`getFile failed: ${res.status} ${res.body}`);

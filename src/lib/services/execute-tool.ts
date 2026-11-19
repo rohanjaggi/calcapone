@@ -7,28 +7,28 @@ import {
   deleteSeries,
   listSeries,
   nextDueDate,
+  getItem,
   OPEN_STATUSES,
 } from "@/lib/services/item";
 import { createCategory, listCategories } from "@/lib/services/category";
-import { getEvents, createEvent, updateEvent, deleteEvent, CalendarAuthError } from "@/lib/services/calendar";
+import { getEvents, createEvent, updateEvent, deleteEvent, CalendarAuthError, type CalendarEvent } from "@/lib/services/calendar";
 import { mirrorEvent, unmirrorEvent } from "@/lib/services/calendar-sync";
 import { markCalendarDisconnected, CALENDAR_RECONNECT_MESSAGE } from "@/lib/services/calendar-link";
 import { searchItems } from "@/lib/services/search";
-import { paramsToRRule, getNextOccurrence, dueDateAnchor, type RecurrenceParams } from "@/lib/services/recurrence";
+import { paramsToRRule, getNextOccurrence, dueDateAnchor, reanchorRule, type RecurrenceParams } from "@/lib/services/recurrence";
 import { matchByTitle } from "@/lib/services/match-items";
 import { renderFlatList } from "@/lib/services/commands/format";
-import { dueWindowToGcal } from "@/lib/services/gcal-window";
 import { esc, b } from "@/lib/services/telegram";
-import { parseInTz, todayInTz, formatDateInTz, formatHHmmInTz, startOfDayInTz } from "@/lib/tz";
+import { parseInTz, formatDateInTz, formatHHmmInTz, toRfc3339InTz } from "@/lib/tz";
 import { normalizeDueDate, normalizeDueTime } from "@/lib/due-format";
-import { readOutcome, echoOutcome, type ToolOutcome, type ItemSnapshot, type EventSnapshot, type UndoOp } from "@/lib/services/tool-outcome";
-import type { Priority, RecurringType, ItemStatus } from "@/generated/prisma/enums";
+import { readOutcome, echoOutcome, completionRecord, type ToolOutcome, type ItemSnapshot, type UndoOp } from "@/lib/services/tool-outcome";
+import type { Priority, ItemStatus } from "@/generated/prisma/enums";
 
-function fuzzyMatch(title: string, query: string): boolean {
-  const t = title.toLowerCase();
-  const q = query.toLowerCase();
-  return t.includes(q) || q.includes(t);
-}
+const PAST_REMIND_AT = "That time has already passed today — did you mean tomorrow?";
+const isPast = (at: Date) => at.getTime() < Date.now() - 60_000;
+
+const BAD_REMIND_AT =
+  "I couldn't understand that reminder time — could you give it as a date and time, like 2026-08-25T09:00?";
 
 /**
  * Set by the disambiguation buttons, never by the model.
@@ -89,10 +89,8 @@ type ItemRow = {
   dueDate: string | null;
   dueTime: string | null;
   remindAt: Date | null;
-  recurring: RecurringType;
   recurrenceRule: string | null;
   recurrenceEnd: Date | null;
-  googleEventId: string | null;
   parentId: string | null;
   notificationStage: number;
   seriesId: string | null;
@@ -114,10 +112,8 @@ function snapshot(item: ItemRow): ItemSnapshot & { title: string; categoryId: st
     dueDate: item.dueDate,
     dueTime: item.dueTime,
     remindAt: item.remindAt ? item.remindAt.toISOString() : null,
-    recurring: item.recurring,
     recurrenceRule: item.recurrenceRule,
     recurrenceEnd: item.recurrenceEnd ? item.recurrenceEnd.toISOString() : null,
-    googleEventId: item.googleEventId,
     parentId: item.parentId,
     notificationStage: item.notificationStage,
     // Without this an undone occurrence comes back detached from its run, and no tool can
@@ -126,85 +122,12 @@ function snapshot(item: ItemRow): ItemSnapshot & { title: string; categoryId: st
   };
 }
 
-/**
- * The legacy `recurring` column for a rich rule.
- *
- * Reminders read `recurrenceRule`, but the dashboard badge still reads this enum, so leaving
- * it at "none" shows a repeating item as one-off. Yearly has no legacy equivalent.
- */
-function legacyRecurring(frequency: RecurrenceParams["frequency"]): RecurringType {
-  return frequency === "daily" || frequency === "weekly" || frequency === "monthly" ? frequency : "none";
-}
-
-type ItemEditFields = { title?: string; dueDate?: string | null; dueTime?: string | null };
 type GcalFields = { title?: string; startTime?: string; endTime?: string; description?: string };
 
 /**
- * Push an item edit to the Google event it is linked to, returning what was actually sent.
- *
- * The window is rebuilt from the item's own date and time merged with the change, because a
- * series member carries its own date — and because a time-only edit still has to move the
- * event. Returns null when nothing was pushed, which is what tells the caller whether the
- * undo needs a calendar half at all.
- */
-async function syncLinkedEvent(
-  user: UserContext,
-  item: { googleEventId: string | null; dueDate: string | null; dueTime: string | null },
-  updates: ItemEditFields
-): Promise<GcalFields | null> {
-  if (!item.googleEventId || !user.googleRefreshToken) return null;
-
-  const fields: GcalFields = {};
-  if (updates.title) fields.title = updates.title;
-  if (updates.dueDate !== undefined || updates.dueTime !== undefined) {
-    const dueDate = updates.dueDate !== undefined ? updates.dueDate : item.dueDate;
-    const dueTime = updates.dueTime !== undefined ? updates.dueTime : item.dueTime;
-    if (dueDate && dueTime) Object.assign(fields, dueWindowToGcal(dueDate, dueTime));
-  }
-  if (Object.keys(fields).length === 0) return null;
-
-  try {
-    await updateEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", item.googleEventId, fields, user.timezone);
-  } catch (error) {
-    if (error instanceof CalendarAuthError) throw error;
-    console.error("[tool:update_item] calendar sync failed:", error instanceof Error ? error.message : error);
-    return null;
-  }
-  return fields;
-}
-
-/**
- * The calendar half of an undo: put back exactly the fields the forward call pushed.
- *
- * Without it, undoing a synced reschedule reverts the row and leaves the Google event at the
- * new time — for good, since nothing re-syncs until the date changes again.
- */
-function inverseEventPatch(
-  user: UserContext,
-  before: { googleEventId: string | null; title: string; dueDate: string | null; dueTime: string | null },
-  pushed: GcalFields | null
-): UndoOp | null {
-  if (!pushed || !before.googleEventId) return null;
-  const fields: Partial<EventSnapshot> = {};
-  if (pushed.title !== undefined) fields.title = before.title;
-  if (pushed.startTime !== undefined && before.dueDate && before.dueTime) {
-    Object.assign(fields, dueWindowToGcal(before.dueDate, before.dueTime));
-  }
-  if (Object.keys(fields).length === 0) return null;
-  return { op: "patch_event", calendarId: user.googleCalendarId ?? "primary", eventId: before.googleEventId, fields };
-}
-
-/**
- * Fill in the end Google needs when a patch moves only the start.
- *
- * Google keeps the stored `end` on a partial patch, so moving an event forward without moving
- * its end asks for a window that ends before it begins — a 400, "The specified time range is
- * empty". `dueWindowToGcal` already encodes this lesson for task-linked events, but
- * `update_calendar_event` hands the model's arguments to Google directly, and `start_time` and
- * `end_time` are independently optional there — so "shift my dinner to next week", which names
- * a start and no end, reached Google as an empty range and failed outright.
- *
- * Carries the event's current duration onto the new start, which is what shifting means.
+ * Fill in the end Google needs when a patch moves only the start. Google keeps the stored `end`
+ * on a partial patch, so "shift my dinner to next week" would otherwise ask for an empty range
+ * (a 400). Carries the event's current duration onto the new start.
  */
 function preserveEventDuration(
   fields: GcalFields,
@@ -223,65 +146,6 @@ function preserveEventDuration(
   fields.endTime = new Date(newStart.getTime() + durationMs).toISOString();
 }
 
-/**
- * Reflect a Google write the app just made into the local mirror.
- *
- * The dashboard reads the mirror and never Google (agenda.ts), so without this an event the
- * bot has just confirmed to the user stays invisible — or stale — on their own dashboard
- * until the next sync pass, while the calendar page, which reads Google live, already agrees
- * with the user.
- *
- * Takes Google's own response rather than the values we sent, so the mirror records what the
- * calendar actually stored. A response with no parseable window is skipped: an all-day event
- * comes back carrying `date` instead of `dateTime`, which surfaces here as an empty string,
- * and an Invalid Date would poison the row the dashboard reads. The next sync mirrors it
- * properly.
- *
- * Best-effort on purpose: Google has already accepted the write, so a mirror failure must not
- * turn a successful tool call into a reported failure.
- */
-async function writeThroughEvent(
-  userId: string,
-  calendarId: string,
-  event: { id: string; title: string; startTime: string; endTime: string },
-  tool: string
-): Promise<void> {
-  const startsAt = new Date(event.startTime);
-  const endsAt = new Date(event.endTime);
-  if (isNaN(startsAt.getTime()) || isNaN(endsAt.getTime())) return;
-
-  try {
-    await mirrorEvent(userId, calendarId, {
-      googleEventId: event.id,
-      title: event.title,
-      startsAt,
-      endsAt,
-    });
-  } catch (error) {
-    console.error(`[tool:${tool}] mirror write failed:`, error instanceof Error ? error.message : error);
-  }
-}
-
-/** The delete half of write-through, on the same best-effort terms. */
-async function writeThroughDelete(userId: string, googleEventId: string, tool: string): Promise<void> {
-  try {
-    await unmirrorEvent(userId, googleEventId);
-  } catch (error) {
-    console.error(`[tool:${tool}] mirror delete failed:`, error instanceof Error ? error.message : error);
-  }
-}
-
-/** Best-effort removal of the Google event behind an item being deleted. */
-async function deleteLinkedEvent(user: UserContext, googleEventId: string | null, tool: string): Promise<void> {
-  if (!googleEventId || !user.googleRefreshToken) return;
-  try {
-    await deleteEvent(user.googleRefreshToken, user.googleCalendarId ?? "primary", googleEventId);
-  } catch (error) {
-    if (error instanceof CalendarAuthError) throw error;
-    console.error(`[tool:${tool}] calendar delete failed:`, error instanceof Error ? error.message : error);
-  }
-}
-
 type Resolution<T> = { kind: "one"; item: T } | { kind: "stop"; outcome: ToolOutcome };
 
 /**
@@ -291,26 +155,36 @@ type Resolution<T> = { kind: "one"; item: T } | { kind: "stop"; outcome: ToolOut
  * ambiguous title is returned as a set of candidates for the caller to turn into buttons
  * rather than resolved by guesswork.
  */
-function resolveItem<T extends { id: string; title: string }>(
-  items: T[],
+async function resolveItem(
+  userId: string,
   args: Record<string, unknown>,
   query: string,
-  tool: string,
-  verb: string,
-  notFound: string
-): Resolution<T> {
+  { tool, verb, notFound, tz, closedToo = false }: { tool: string; verb: string; notFound: string; tz: string; closedToo?: boolean }
+): Promise<Resolution<ItemRow>> {
+  // A forced id (a choice button, or the message being replied to) names one exact row, and
+  // may name a closed one: "move it to Friday" in reply to a reminder that already rang.
   const forced = typeof args[FORCED_ITEM_ID] === "string" ? (args[FORCED_ITEM_ID] as string) : null;
   if (forced) {
-    const item = items.find((candidate) => candidate.id === forced);
-    return item
-      ? { kind: "one", item }
-      : { kind: "stop", outcome: echoOutcome("That item no longer exists.") };
+    const item = await getItem(forced, userId);
+    return item ? { kind: "one", item } : { kind: "stop", outcome: echoOutcome("That item no longer exists.") };
   }
 
-  const match = matchByTitle(items, query);
+  // Open tasks and their open subtasks; deleting falls back to closed ones, so "delete the
+  // dentist task" still works after it was ticked off.
+  const pool = async (status?: typeof OPEN_STATUSES) => {
+    const top = await listItems(userId, status ? { status } : {});
+    return [...top, ...top.flatMap((item) => item.subtasks.filter((sub) => !status || sub.status !== "done"))];
+  };
+  let match = matchByTitle(await pool(OPEN_STATUSES), query);
+  if (match.kind === "none" && closedToo) match = matchByTitle(await pool(), query);
   if (match.kind === "none") return { kind: "stop", outcome: refuse(notFound) };
   if (match.kind === "one") return { kind: "one", item: match.item };
 
+  // Repeats share a title, so each button carries its date to be told apart.
+  const label = (item: ItemRow) => {
+    const when = item.dueDate ?? (item.remindAt ? formatDateInTz(item.remindAt, tz) : null);
+    return when ? `${item.title} · ${when}` : item.title;
+  };
   return {
     kind: "stop",
     outcome: {
@@ -319,9 +193,33 @@ function resolveItem<T extends { id: string; title: string }>(
       choose: {
         tool,
         args,
-        candidates: match.items.slice(0, 5).map((item) => ({ id: item.id, title: item.title })),
+        candidates: match.items.slice(0, 5).map((item) => ({ id: item.id, title: label(item) })),
       },
     },
+  };
+}
+
+/**
+ * Which upcoming Google event the user meant. Repeats of one title are expected (a series
+ * comes back expanded), so those act on the next occurrence; different titles are refused so
+ * the model asks instead of guessing — the same rule `resolveItem` applies to tasks.
+ */
+async function resolveEvent(
+  refreshToken: string,
+  calendarId: string,
+  query: string,
+  tz: string
+): Promise<Resolution<CalendarEvent>> {
+  const now = new Date();
+  const events = await getEvents(refreshToken, calendarId, now, new Date(now.getTime() + 90 * 86400000), tz);
+  const match = matchByTitle(events, query);
+  if (match.kind === "none") return { kind: "stop", outcome: refuse(`Couldn't find a calendar event matching "${esc(query)}"`) };
+  if (match.kind === "one") return { kind: "one", item: match.item };
+  const titles = [...new Set(match.items.map((e) => e.title))];
+  if (titles.length === 1) return { kind: "one", item: match.items[0] };
+  return {
+    kind: "stop",
+    outcome: refuse(`"${esc(query)}" matches ${titles.length} different events: ${titles.slice(0, 5).map(esc).join(", ")}. Which one?`),
   };
 }
 
@@ -361,7 +259,7 @@ async function runTool(
       // first: the model never learns the match failed, so it can't correct itself or ask.
       if (!cat && categoryName && cats.length > 0) {
         return refuse(
-          `I don't have a category called "${esc(categoryName)}". You have: ${cats.map((c) => esc(c.name)).join(", ")}. Pick one, or create it with create_category.`
+          `I don't have a category called "${esc(categoryName)}". You have: ${cats.map((c) => esc(c.name)).join(", ")}. Use one of those unless the user asked for a new one.`
         );
       }
       if (!cat) {
@@ -379,17 +277,18 @@ async function runTool(
         if (!dueTime) return refuse("I couldn't understand that due time — could you give it as a 24-hour time, like 14:30?");
       }
 
-      const remindAt = args.remind_at ? parseInTz(args.remind_at as string, user.timezone) : null;
+      // Unreadable is refused, not dropped: dropping it made a plain task and reported success.
+      const remindAt = args.remind_at ? parseInTz(String(args.remind_at), user.timezone) : null;
+      if (args.remind_at && !remindAt) return refuse(BAD_REMIND_AT);
+      if (remindAt && isPast(remindAt)) return refuse(PAST_REMIND_AT);
       let recurrenceRule: string | null = null;
       let recurrenceEnd: Date | null = null;
-      let recurring: RecurringType = (args.recurring as RecurringType) ?? "none";
       if (args.recurrence) {
         const params = args.recurrence as RecurrenceParams;
         // Anchored to the reminder, or failing that the due date: a rule with no DTSTART gets
         // re-anchored to every new occurrence, so a COUNT-bounded run never stops.
         recurrenceRule = paramsToRRule(params, remindAt ?? (dueDate ? dueDateAnchor(dueDate) : undefined));
         if (params.until) recurrenceEnd = parseInTz(params.until, user.timezone);
-        recurring = legacyRecurring(params.frequency);
       }
 
       const item = await createItem({
@@ -401,7 +300,6 @@ async function runTool(
         dueDate,
         dueTime,
         remindAt,
-        recurring,
         recurrenceRule,
         recurrenceEnd,
       });
@@ -428,13 +326,16 @@ async function runTool(
       if (categoryName) {
         const cats = await listCategories(userId);
         const cat = cats.find((c) => c.name.toLowerCase() === categoryName.toLowerCase());
-        if (cat) categoryId = cat.id;
+        if (!cat) return refuse(`There's no category called "${esc(categoryName)}". The user has: ${cats.map((c) => esc(c.name)).join(", ")}.`);
+        categoryId = cat.id;
       }
+      // Open by default: every rung of a daily reminder is a done row, so "what's on my list"
+      // otherwise fed the model hundreds of them.
       const requested = requireStr(args, "status");
       const status =
         requested && (["pending", "in_progress", "done"] as string[]).includes(requested)
           ? (requested as ItemStatus)
-          : undefined;
+          : OPEN_STATUSES;
 
       const items = await listItems(userId, {
         status,
@@ -452,100 +353,70 @@ async function runTool(
     case "complete_item": {
       const title = requireStr(args, "title");
       if (!title) return missing("title");
-      const open = await listItems(userId, { status: OPEN_STATUSES });
-      const resolved = resolveItem(
-        open,
-        args,
-        title,
-        "complete_item",
-        "complete",
-        `Couldn't find an open item matching "${esc(title)}"`
-      );
+      const resolved = await resolveItem(userId, args, title, {
+        tool: "complete_item",
+        verb: "complete",
+        notFound: `Couldn't find an open item matching "${esc(title)}"`,
+        tz: user.timezone,
+      });
       if (resolved.kind === "stop") return resolved.outcome;
       const item = resolved.item;
+      if (item.status === "done") return echoOutcome(`${b(item.title)} is already done.`);
 
       await updateItem(item.id, userId, { status: "done" as ItemStatus });
-      return echoOutcome(`Completed: ${b(item.title)}`, {
-        kind: "complete_item",
-        summary: `completed ${b(item.title)}`,
-        inverse: { op: "restore_item", itemId: item.id, fields: { status: item.status } },
-      });
+      return echoOutcome(`Completed: ${b(item.title)}`, completionRecord(item));
     }
 
     case "delete_item": {
       const title = requireStr(args, "title");
       if (!title) return missing("title");
-      const items = await listItems(userId);
-      const resolved = resolveItem(
-        items,
-        args,
-        title,
-        "delete_item",
-        "delete",
-        `Couldn't find an item matching "${esc(title)}"`
-      );
+      const resolved = await resolveItem(userId, args, title, {
+        tool: "delete_item",
+        verb: "delete",
+        notFound: `Couldn't find an item matching "${esc(title)}"`,
+        tz: user.timezone,
+        closedToo: true,
+      });
       if (resolved.kind === "stop") return resolved.outcome;
       const item = resolved.item;
 
       if (asScope(args.scope) === "series" && (item.seriesId || item.recurrenceRule)) {
         const seriesId = item.seriesId ?? item.id;
         const members = await listSeries(seriesId, userId);
-        // Every member's Google event has to go too — dropping only the rows leaves each one
-        // orphaned on the calendar with nothing left pointing at it.
-        for (const member of members) {
-          await deleteLinkedEvent(user, member.googleEventId, "delete_item");
-        }
         const removed = await deleteSeries(seriesId, userId);
         return echoOutcome(`Deleted all ${removed} occurrences of ${b(item.title)}`, {
           kind: "delete_series",
           summary: `deleted every ${b(item.title)}`,
           inverse: {
             op: "sequence",
-            ops: members.map((member) => ({
-              op: "recreate_item" as const,
-              itemId: member.id,
-              data: { ...snapshot(member), googleEventId: null },
-            })),
+            ops: members.map((member) => ({ op: "recreate_item" as const, itemId: member.id, data: snapshot(member) })),
           },
         });
       }
 
-      await deleteLinkedEvent(user, item.googleEventId, "delete_item");
-
       await deleteItem(item.id, userId);
-
-      // The Google event is gone for good — undo restores the task, not the calendar entry,
-      // because a recreated event would carry a new id the old row could not point at.
       return echoOutcome(`Deleted: ${b(item.title)}`, {
         kind: "delete_item",
         summary: `deleted ${b(item.title)}`,
-        inverse: {
-          op: "recreate_item",
-          itemId: item.id,
-          data: { ...snapshot(item), googleEventId: null },
-        },
+        inverse: { op: "recreate_item", itemId: item.id, data: snapshot(item) },
       });
     }
 
     case "update_item": {
       const query = requireStr(args, "query");
       if (!query) return missing("task name");
-      const open = await listItems(userId, { status: OPEN_STATUSES });
-      const resolved = resolveItem(
-        open,
-        args,
-        query,
-        "update_item",
-        "update",
-        `Couldn't find an open item matching "${esc(query)}". Try a different title.`
-      );
+      const resolved = await resolveItem(userId, args, query, {
+        tool: "update_item",
+        verb: "update",
+        notFound: `Couldn't find an open item matching "${esc(query)}". Try a different title.`,
+        tz: user.timezone,
+      });
       if (resolved.kind === "stop") return resolved.outcome;
       const item = resolved.item;
       const before = snapshot(item);
       const scope = asScope(args.scope);
 
-      if (args.skip_next === true) return skipNextOccurrence(item, userId);
-
+      if (args.skip_next === true) return skipNextOccurrence(item, userId, user.timezone);
 
       const updates: {
         title?: string;
@@ -554,7 +425,6 @@ async function runTool(
         remindAt?: Date | null;
         priority?: Priority;
         status?: ItemStatus;
-        recurring?: RecurringType;
         recurrenceRule?: string | null;
         recurrenceEnd?: Date | null;
       } = {};
@@ -578,7 +448,17 @@ async function runTool(
         }
       }
       if (args.remind_at !== undefined) {
-        updates.remindAt = args.remind_at ? parseInTz(args.remind_at as string, user.timezone) : null;
+        // Unreadable is refused, not nulled: nulling it silently deleted the existing reminder.
+        updates.remindAt = args.remind_at ? parseInTz(String(args.remind_at), user.timezone) : null;
+        if (args.remind_at && !updates.remindAt) return refuse(BAD_REMIND_AT);
+        if (updates.remindAt && isPast(updates.remindAt)) return refuse(PAST_REMIND_AT);
+        // A moved repeating reminder: restart its rule at the new time, or the old start keeps
+        // firing too ("move my 9am meds to 8am" rang at 8 *and* 9, then went back to 9).
+        if (updates.remindAt && item.recurrenceRule && !args.recurrence) {
+          updates.recurrenceRule = reanchorRule(item.recurrenceRule, updates.remindAt) ?? item.recurrenceRule;
+        }
+        // Re-arming a reminder that already rang (a reply "move it to Friday") reopens it.
+        if (updates.remindAt && item.status === "done" && args.status === undefined) updates.status = "pending";
       }
       if (args.priority !== undefined) updates.priority = args.priority as Priority;
       if (args.status !== undefined) updates.status = args.status as ItemStatus;
@@ -588,47 +468,36 @@ async function runTool(
         const anchor = updates.remindAt ?? item.remindAt ?? (due ? dueDateAnchor(due) : undefined);
         updates.recurrenceRule = paramsToRRule(params, anchor);
         updates.recurrenceEnd = params.until ? parseInTz(params.until, user.timezone) : null;
-        updates.recurring = legacyRecurring(params.frequency);
       }
       if (args.clear_recurrence) {
         updates.recurrenceRule = null;
         updates.recurrenceEnd = null;
-        updates.recurring = "none";
       }
 
       if (scope === "series" && (item.seriesId || item.recurrenceRule)) {
         const seriesId = item.seriesId ?? item.id;
-        // `members` is the run as it was *before* the change: what the undo restores, and what
-        // each linked Google event has to be moved from.
+        // `members` is the run as it was *before* the change, which is what the undo restores.
         const members = await updateSeries(seriesId, userId, updates);
-        const ops: UndoOp[] = [];
-        for (const member of members) {
-          const pushed = await syncLinkedEvent(user, member, updates);
-          ops.push({ op: "restore_item", itemId: member.id, fields: snapshot(member) });
-          const patch = inverseEventPatch(user, member, pushed);
-          if (patch) ops.push(patch);
-        }
         return echoOutcome(`Updated all ${members.length} occurrences of ${b(item.title)}`, {
           kind: "update_series",
           summary: `the change to every ${b(item.title)}`,
-          inverse: { op: "sequence", ops },
+          inverse: {
+            op: "sequence",
+            ops: members.map((member) => ({ op: "restore_item" as const, itemId: member.id, fields: snapshot(member) })),
+          },
         });
       }
 
       const updated = await updateItem(item.id, userId, updates);
-      const pushed = await syncLinkedEvent(user, item, updates);
-
-      const restore: UndoOp = { op: "restore_item", itemId: item.id, fields: before };
-      const patch = inverseEventPatch(user, item, pushed);
       return echoOutcome(`Updated: ${b(updated.title)}`, {
         kind: "update_item",
         summary: `the change to ${b(item.title)}`,
-        inverse: patch ? { op: "sequence", ops: [restore, patch] } : restore,
+        inverse: { op: "restore_item", itemId: item.id, fields: before },
       });
     }
 
     case "get_calendar": {
-      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Settings.");
+      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Open Calcapone → Settings.");
       const startDate = requireStr(args, "start_date");
       const endDate = requireStr(args, "end_date");
       if (!startDate || !endDate) return missing("date range");
@@ -655,7 +524,7 @@ async function runTool(
     }
 
     case "create_calendar_event": {
-      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Settings.");
+      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Open Calcapone → Settings.");
 
       const title = requireStr(args, "title");
       const startTime = requireStr(args, "start_time");
@@ -701,16 +570,17 @@ async function runTool(
       const event = await createEvent(
         user.googleRefreshToken,
         calendarId,
-        { title, startTime, endTime, description, recurrence },
+        // Google wants a full RFC 3339 time; the model now sends local wall-clock without one.
+        { title, startTime: toRfc3339InTz(startInstant, user.timezone), endTime: toRfc3339InTz(endInstant, user.timezone), description, recurrence },
         user.timezone
       );
 
-      await writeThroughEvent(userId, calendarId, event, "create_calendar_event");
+      await mirrorEvent(userId, calendarId, event);
 
       const warnings: string[] = [];
       const eventDate = formatDateInTz(startInstant, user.timezone);
       const items = await listItems(userId, { status: "pending" as ItemStatus });
-      const sameDayTasks = items.filter((item) => item.dueDate === eventDate && !item.googleEventId);
+      const sameDayTasks = items.filter((item) => item.dueDate === eventDate);
       if (sameDayTasks.length > 0) {
         const taskList = sameDayTasks
           .slice(0, 3)
@@ -743,25 +613,22 @@ async function runTool(
       });
     }
 
-    case "list_categories": {
-      const cats = await listCategories(userId);
-      if (cats.length === 0) return readOutcome("No categories yet.");
-      return readOutcome(cats.map((c) => `- ${esc(c.name)}`).join("\n"));
-    }
-
     case "update_calendar_event": {
-      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Settings.");
+      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Open Calcapone → Settings.");
 
-      const queryRaw = requireStr(args, "query");
-      if (!queryRaw) return missing("event name");
-      const query = queryRaw.toLowerCase();
+      const query = requireStr(args, "query");
+      if (!query) return missing("event name");
       const calendarId = user.googleCalendarId ?? "primary";
 
       const gcalFields: { title?: string; startTime?: string; endTime?: string; description?: string } = {};
       if (args.title !== undefined) gcalFields.title = args.title as string;
       if (args.description !== undefined) gcalFields.description = args.description as string;
-      if (args.start_time !== undefined) gcalFields.startTime = args.start_time as string;
-      if (args.end_time !== undefined) gcalFields.endTime = args.end_time as string;
+      for (const [arg, field] of [["start_time", "startTime"], ["end_time", "endTime"]] as const) {
+        if (args[arg] === undefined) continue;
+        const at = parseInTz(String(args[arg]), user.timezone);
+        if (!at) return refuse("I couldn't understand the event time.");
+        gcalFields[field] = toRfc3339InTz(at, user.timezone);
+      }
       if (args.recurrence) {
         (gcalFields as Record<string, unknown>).recurrence = [paramsToRRule(args.recurrence as RecurrenceParams)];
       }
@@ -769,64 +636,9 @@ async function runTool(
         (gcalFields as Record<string, unknown>).recurrence = null;
       }
 
-      const items = await listItems(userId);
-      const linked = items.find((item) => fuzzyMatch(item.title, query) && item.googleEventId);
-
-      if (linked) {
-        const before = snapshot(linked);
-        const updates: { title?: string; dueDate?: string | null; dueTime?: string | null; description?: string | null } = {};
-        if (args.title !== undefined) updates.title = args.title as string;
-        if (args.description !== undefined) updates.description = args.description as string;
-        if (args.start_time !== undefined) {
-          const startDate = parseInTz(args.start_time as string, user.timezone);
-          if (startDate) {
-            updates.dueDate = formatDateInTz(startDate, user.timezone);
-            updates.dueTime = formatHHmmInTz(startDate, user.timezone);
-          }
-        }
-        // What the event looked like before, read off the item it mirrors — a database-only
-        // inverse would undo the row and leave the event sitting at its new time.
-        const priorEvent: Partial<EventSnapshot> = {};
-        if (gcalFields.title !== undefined) priorEvent.title = linked.title;
-        // "" rather than omitted: undoing a description the call *added* has to clear it.
-        if (gcalFields.description !== undefined) priorEvent.description = linked.description ?? "";
-        if ((gcalFields.startTime !== undefined || gcalFields.endTime !== undefined) && linked.dueDate && linked.dueTime) {
-          Object.assign(priorEvent, dueWindowToGcal(linked.dueDate, linked.dueTime));
-        }
-
-        // Same partial-patch hazard as the Google-only branch below; here the app's own
-        // one-hour window convention is the event's duration.
-        if (linked.dueDate && linked.dueTime) {
-          preserveEventDuration(gcalFields, dueWindowToGcal(linked.dueDate, linked.dueTime), user.timezone);
-        }
-
-        await updateItem(linked.id, userId, updates);
-        try {
-          const updated = await updateEvent(user.googleRefreshToken, calendarId, linked.googleEventId!, gcalFields, user.timezone);
-          await writeThroughEvent(userId, calendarId, updated, "update_calendar_event");
-        } catch (error) {
-          if (error instanceof CalendarAuthError) throw error;
-          return echoOutcome(`Updated in-app event: ${b(args.title ?? linked.title)} (Google Calendar sync failed)`);
-        }
-        const restore: UndoOp = { op: "restore_item", itemId: linked.id, fields: before };
-        return echoOutcome(`Updated calendar event: ${b(args.title ?? linked.title)}`, {
-          kind: "update_calendar_event",
-          summary: `the change to ${b(linked.title)}`,
-          inverse:
-            Object.keys(priorEvent).length > 0
-              ? {
-                  op: "sequence",
-                  ops: [restore, { op: "patch_event", calendarId, eventId: linked.googleEventId!, fields: priorEvent }],
-                }
-              : restore,
-        });
-      }
-
-      const now = new Date();
-      const searchEnd = new Date(now.getTime() + 90 * 86400000);
-      const events = await getEvents(user.googleRefreshToken, calendarId, now, searchEnd, user.timezone);
-      const gcalMatch = events.find((e) => fuzzyMatch(e.title, query));
-      if (!gcalMatch) return refuse(`Couldn't find a calendar event matching "${esc(queryRaw)}"`);
+      const resolved = await resolveEvent(user.googleRefreshToken, calendarId, query, user.timezone);
+      if (resolved.kind === "stop") return resolved.outcome;
+      const gcalMatch = resolved.item;
 
       preserveEventDuration(gcalFields, gcalMatch, user.timezone);
 
@@ -846,7 +658,7 @@ async function runTool(
 
       try {
         const updated = await updateEvent(user.googleRefreshToken, calendarId, gcalMatch.id, gcalFields, user.timezone);
-        await writeThroughEvent(userId, calendarId, updated, "update_calendar_event");
+        await mirrorEvent(userId, calendarId, updated);
       } catch (error) {
         if (error instanceof CalendarAuthError) throw error;
         return refuse(`Found "${esc(gcalMatch.title)}" but failed to update it in Google Calendar.`);
@@ -859,68 +671,19 @@ async function runTool(
     }
 
     case "delete_calendar_event": {
-      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Settings.");
+      if (!user.googleRefreshToken) return refuse("Google Calendar not connected. Connect it in Open Calcapone → Settings.");
 
-      const queryRaw = requireStr(args, "query");
-      if (!queryRaw) return missing("event name");
-      const query = queryRaw.toLowerCase();
+      const query = requireStr(args, "query");
+      if (!query) return missing("event name");
       const calendarId = user.googleCalendarId ?? "primary";
 
-      const items = await listItems(userId);
-      const linked = items.find((item) => fuzzyMatch(item.title, query) && item.googleEventId);
-
-      if (linked) {
-        const before = snapshot(linked);
-        let event: { title: string; startTime: string; endTime: string; description?: string } | null = null;
-        try {
-          const window = await getEvents(
-            user.googleRefreshToken,
-            calendarId,
-            new Date(Date.now() - 86400000),
-            new Date(Date.now() + 90 * 86400000),
-            user.timezone
-          );
-          const found = window.find((e) => e.id === linked.googleEventId);
-          if (found) {
-            event = {
-              title: found.title,
-              startTime: found.startTime,
-              endTime: found.endTime,
-              ...(found.description ? { description: found.description } : {}),
-            };
-          }
-          await deleteEvent(user.googleRefreshToken, calendarId, linked.googleEventId!);
-          await writeThroughDelete(userId, linked.googleEventId!, "delete_calendar_event");
-        } catch (error) {
-          if (error instanceof CalendarAuthError) throw error;
-          console.error("[tool:delete_calendar_event] calendar delete failed:", error instanceof Error ? error.message : error);
-        }
-
-        await deleteItem(linked.id, userId);
-
-        return echoOutcome(`Deleted calendar event: ${b(linked.title)}`, {
-          kind: "delete_calendar_event",
-          summary: `deleted ${b(linked.title)}`,
-          inverse: event
-            ? {
-                op: "recreate_event",
-                calendarId,
-                event,
-                item: { ...before, id: linked.id, title: linked.title, categoryId: linked.categoryId },
-              }
-            : { op: "recreate_item", itemId: linked.id, data: { ...before, googleEventId: null } },
-        });
-      }
-
-      const now = new Date();
-      const searchEnd = new Date(now.getTime() + 90 * 86400000);
-      const events = await getEvents(user.googleRefreshToken, calendarId, now, searchEnd, user.timezone);
-      const gcalMatch = events.find((e) => fuzzyMatch(e.title, query));
-      if (!gcalMatch) return refuse(`Couldn't find a calendar event matching "${esc(queryRaw)}"`);
+      const resolved = await resolveEvent(user.googleRefreshToken, calendarId, query, user.timezone);
+      if (resolved.kind === "stop") return resolved.outcome;
+      const gcalMatch = resolved.item;
 
       try {
         await deleteEvent(user.googleRefreshToken, calendarId, gcalMatch.id);
-        await writeThroughDelete(userId, gcalMatch.id, "delete_calendar_event");
+        await unmirrorEvent(userId, gcalMatch.id);
       } catch (error) {
         if (error instanceof CalendarAuthError) throw error;
         return refuse(`Found "${esc(gcalMatch.title)}" but failed to delete it from Google Calendar.`);
@@ -942,92 +705,15 @@ async function runTool(
       });
     }
 
-    case "suggest_schedule": {
-      const pending = await listItems(userId, { status: "pending" as ItemStatus });
-      if (pending.length === 0) return readOutcome("No pending tasks to schedule.");
-
-      const now = new Date();
-      let startStr = todayInTz(user.timezone, now);
-      if (args.date != null) {
-        const requested = normalizeDueDate(args.date, user.timezone);
-        if (!requested) return refuse("I couldn't understand that date — could you give it as a plain date, like 2026-08-25?");
-        startStr = requested;
-      }
-      const today = startOfDayInTz(startStr, user.timezone);
-      const sevenDaysOut = new Date(today.getTime() + 7 * 86400000);
-      // Today's window starts *now* so slots already gone aren't offered; a future week starts
-      // at its own midnight, which is the whole point of asking for one.
-      const windowStart = today > now ? today : now;
-
-      const taskLines = pending
-        .slice(0, 10)
-        .map((item) => `- ${esc(item.title)} (priority: ${item.priority}${item.dueDate ? `, due: ${item.dueDate}` : ""})`)
-        .join("\n");
-
-      if (!user.googleRefreshToken) {
-        return readOutcome(
-          `Here are your pending tasks — connect Google Calendar in Settings for time-slot suggestions:\n\n${taskLines}`,
-          pending.slice(0, 10).map((item) => item.id)
-        );
-      }
-
-      const events = await getEvents(
-        user.googleRefreshToken,
-        user.googleCalendarId ?? "primary",
-        windowStart,
-        sevenDaysOut,
-        user.timezone
-      );
-
-      const workStart = 9 * 60;
-      const workEnd = 18 * 60;
-      const freeBlocks: string[] = [];
-      const fmt = (mins: number) => `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
-
-      const busy = events
-        .filter((e) => !e.allDay && e.transparency !== "transparent")
-        .map((e) => {
-          const start = new Date(e.startTime);
-          const end = new Date(e.endTime);
-          return {
-            date: formatDateInTz(start, user.timezone),
-            startMin: toMinutesOfDay(start, user.timezone),
-            endMin: toMinutesOfDay(end, user.timezone),
-          };
-        });
-
-      for (let d = 0; d < 7; d++) {
-        const day = new Date(today.getTime() + d * 86400000);
-        const dateStr = formatDateInTz(day, user.timezone);
-        const dayEvents = busy.filter((e) => e.date === dateStr).sort((a, z) => a.startMin - z.startMin);
-
-        let cursor = workStart;
-        for (const ev of dayEvents) {
-          if (cursor < ev.startMin) freeBlocks.push(`${dateStr} ${fmt(cursor)}–${fmt(ev.startMin)}`);
-          cursor = Math.max(cursor, ev.endMin);
-        }
-        if (cursor < workEnd) freeBlocks.push(`${dateStr} ${fmt(cursor)}–${fmt(workEnd)}`);
-      }
-
-      const freeLines = freeBlocks.slice(0, 8).join(", ") || "No free blocks found in working hours (9am–6pm)";
-      return readOutcome(
-        `Pending tasks:\n${taskLines}\n\nFree blocks in the 7 days from ${startStr} (09:00–18:00):\n${freeLines}`,
-        pending.slice(0, 10).map((item) => item.id)
-      );
-    }
-
     case "decompose_task": {
       const parentTitle = requireStr(args, "parent_title");
       if (!parentTitle) return missing("task name");
-      const open = await listItems(userId, { status: OPEN_STATUSES });
-      const resolved = resolveItem(
-        open,
-        args,
-        parentTitle,
-        "decompose_task",
-        "break down",
-        `Couldn't find an open task matching "${esc(parentTitle)}"`
-      );
+      const resolved = await resolveItem(userId, args, parentTitle, {
+        tool: "decompose_task",
+        verb: "break down",
+        notFound: `Couldn't find an open task matching "${esc(parentTitle)}"`,
+        tz: user.timezone,
+      });
       if (resolved.kind === "stop") return resolved.outcome;
       const parent = resolved.item;
 
@@ -1083,15 +769,15 @@ async function runTool(
  * "Skip this week" — move a repeating item on by one occurrence without completing it and
  * without spawning the next copy, which is what completing it would do.
  */
-async function skipNextOccurrence(item: ItemRow, userId: string): Promise<ToolOutcome> {
-  const rule = item.recurrenceRule || LEGACY_RRULES[item.recurring];
+async function skipNextOccurrence(item: ItemRow, userId: string, tz: string): Promise<ToolOutcome> {
+  const rule = item.recurrenceRule;
   if (!rule) return refuse(`${b(item.title)} doesn't repeat, so there's nothing to skip.`);
 
   if (item.remindAt) {
-    const next = getNextOccurrence(rule, item.remindAt);
+    const next = getNextOccurrence(rule, item.remindAt, undefined, tz);
     if (!next) return refuse(`${b(item.title)} has no occurrence after this one.`);
     await updateItem(item.id, userId, { remindAt: next });
-    return echoOutcome(`Skipped — next ${b(item.title)} is ${next.toISOString().slice(0, 10)}`, {
+    return echoOutcome(`Skipped — next ${b(item.title)} is ${formatDateInTz(next, tz)}`, {
       kind: "skip_occurrence",
       summary: `skipping ${b(item.title)}`,
       inverse: { op: "restore_item", itemId: item.id, fields: { remindAt: item.remindAt.toISOString() } },
@@ -1107,15 +793,4 @@ async function skipNextOccurrence(item: ItemRow, userId: string): Promise<ToolOu
     summary: `skipping ${b(item.title)}`,
     inverse: { op: "restore_item", itemId: item.id, fields: { dueDate: item.dueDate } },
   });
-}
-
-const LEGACY_RRULES: Record<string, string> = {
-  daily: "FREQ=DAILY",
-  weekly: "FREQ=WEEKLY",
-  monthly: "FREQ=MONTHLY",
-};
-
-function toMinutesOfDay(date: Date, tz: string): number {
-  const [h, m] = formatHHmmInTz(date, tz).split(":").map(Number);
-  return h * 60 + m;
 }

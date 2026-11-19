@@ -1,4 +1,4 @@
-import { offsetInTz, formatInTz } from "@/lib/tz";
+import { formatInTz, weekdayInTz } from "@/lib/tz";
 export const AI_TOOLS = [
   {
     name: "create_item",
@@ -12,8 +12,7 @@ export const AI_TOOLS = [
         category: { type: "string", description: "Category name (e.g. Work, Personal). Required." },
         due_date: { type: "string", description: "Due date in YYYY-MM-DD format" },
         due_time: { type: "string", description: "Due time in HH:mm format (24h)" },
-        remind_at: { type: "string", description: "When to send the Telegram reminder: ISO 8601 datetime WITH the user's UTC offset, e.g. 2026-08-20T15:00:00+08:00" },
-        recurring: { type: "string", enum: ["none", "daily", "weekly", "monthly"], description: "Legacy simple recurrence. Prefer 'recurrence' object for complex patterns." },
+        remind_at: { type: "string", description: "When to send the Telegram reminder: the user's local date and time, no offset, e.g. 2026-08-20T15:00:00" },
         recurrence: {
           type: "object",
           description: "Rich recurrence pattern. Use for any repeating schedule.",
@@ -78,7 +77,7 @@ export const AI_TOOLS = [
         skip_next: { type: "boolean", description: "Skip this occurrence of a repeating item and move it to the next one, without completing it. Use for \"skip this week\"." },
         due_date: { type: ["string", "null"] as unknown as "string", description: "New due date YYYY-MM-DD, or null to clear" },
         due_time: { type: ["string", "null"] as unknown as "string", description: "New due time HH:mm, or null to clear" },
-        remind_at: { type: ["string", "null"] as unknown as "string", description: "New reminder time: ISO 8601 datetime with the user's UTC offset (e.g. 2026-08-20T15:00:00+08:00), or null to clear" },
+        remind_at: { type: ["string", "null"] as unknown as "string", description: "New reminder time: the user's local date and time, no offset, e.g. 2026-08-20T15:00:00, or null to clear" },
         priority: { type: "string", enum: ["low", "medium", "high"], description: "New priority" },
         status: { type: "string", enum: ["pending", "in_progress", "done"], description: "New status" },
         recurrence: {
@@ -106,8 +105,8 @@ export const AI_TOOLS = [
     parameters: {
       type: "object" as const,
       properties: {
-        start_date: { type: "string", description: "Range start: YYYY-MM-DD (interpreted in the user's timezone) or ISO 8601 datetime with offset" },
-        end_date: { type: "string", description: "Range end (exclusive): YYYY-MM-DD or ISO 8601 datetime with offset" },
+        start_date: { type: "string", description: "Range start: YYYY-MM-DD, or the user's local date and time without offset" },
+        end_date: { type: "string", description: "Range end (exclusive): YYYY-MM-DD, or the user's local date and time without offset" },
       },
       required: ["start_date", "end_date"],
     },
@@ -119,8 +118,8 @@ export const AI_TOOLS = [
       type: "object" as const,
       properties: {
         title: { type: "string", description: "Event title/summary" },
-        start_time: { type: "string", description: "Event start: ISO 8601 datetime WITH the user's UTC offset, e.g. 2026-08-20T12:00:00+08:00" },
-        end_time: { type: "string", description: "Event end: ISO 8601 datetime WITH the user's UTC offset" },
+        start_time: { type: "string", description: "Event start: the user's local date and time, no offset, e.g. 2026-08-20T15:00:00" },
+        end_time: { type: "string", description: "Event end: the user's local date and time, no offset" },
         description: { type: "string", description: "Optional event description" },
         confirm_conflict: { type: "boolean", description: "Set true ONLY after the user has confirmed they want the event even though it overlaps an existing one (the previous attempt reported a conflict)." },
         recurrence: {
@@ -149,8 +148,8 @@ export const AI_TOOLS = [
       properties: {
         query: { type: "string", description: "The title or partial title to find the event" },
         title: { type: "string", description: "New event title" },
-        start_time: { type: "string", description: "New start: ISO 8601 datetime with the user's UTC offset" },
-        end_time: { type: "string", description: "New end: ISO 8601 datetime with the user's UTC offset" },
+        start_time: { type: "string", description: "New start: the user's local date and time, no offset" },
+        end_time: { type: "string", description: "New end: the user's local date and time, no offset" },
         description: { type: "string", description: "New event description" },
         recurrence: {
           type: "object",
@@ -183,16 +182,6 @@ export const AI_TOOLS = [
     },
   },
   {
-    name: "suggest_schedule",
-    description: "Suggest optimal times to work on pending todos based on free calendar slots",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        date: { type: "string", description: "YYYY-MM-DD to start the seven-day window from (defaults to today)" },
-      },
-    },
-  },
-  {
     name: "create_category",
     description: "Create a new category for organizing todos and reminders",
     parameters: {
@@ -203,11 +192,6 @@ export const AI_TOOLS = [
       },
       required: ["name"],
     },
-  },
-  {
-    name: "list_categories",
-    description: "List the user's categories",
-    parameters: { type: "object" as const, properties: {} },
   },
   {
     name: "search_items",
@@ -251,24 +235,23 @@ export function buildSystemPrompt(user: { telegramUsername: string; timezone: st
     : "No categories exist yet.";
 
   const nowDate = new Date();
-  const offset = offsetInTz(nowDate, user.timezone);
   // Minute precision, not second: every distinct prefix is a fresh prompt-cache entry, and a
   // ticking seconds field guarantees a miss on every single call.
-  const now = formatInTz(nowDate, user.timezone);
+  const now = `${weekdayInTz(nowDate, user.timezone)} ${formatInTz(nowDate, user.timezone)}`;
 
   return `You are Calcapone, a smart personal assistant that helps manage calendar, todos, and reminders.
 
 User: ${user.telegramUsername}
-Timezone: ${user.timezone} (UTC offset ${offset})
+Timezone: ${user.timezone}
 
 ${categoryList}
 
 Rules:
-- All datetimes you pass to tools (remind_at, start_time, end_time, start_date, end_date) MUST be ISO 8601 with the user's UTC offset ${offset}, e.g. 2026-08-20T15:00:00${offset}. Never send a naive or UTC-shifted time.
-- When the user mentions a time without a date, assume today.
+- All datetimes you pass to tools (remind_at, start_time, end_time, start_date, end_date) are the user's LOCAL wall-clock time with NO offset, e.g. 2026-08-20T15:00:00. Never add an offset or convert to UTC — the server knows the user's timezone, including daylight saving.
+- When the user mentions a time without a date, use today if that time is still ahead, otherwise tomorrow.
 - When the user says "tomorrow", use the next calendar day in their timezone.
 - You will see the result of every tool you call, so chain them: look something up first, then act on what you found. Do not guess an answer you could look up.
-- After a read-only tool (list_items, search_items, get_calendar, list_categories, suggest_schedule) the user sees only YOUR summary, not the raw output — so answer the question in your own words.
+- After a read-only tool (list_items, search_items, get_calendar) the user sees only YOUR summary, not the raw output — so answer the question in your own words.
 - After a tool that changes something the user already sees a receipt, so acknowledge briefly or say nothing at all rather than repeating it.
 - If a tool reports it matched several items, stop and let the user choose. Do not re-call it with a guess.
 - If create_calendar_event reports a conflict and the user then confirms ("yes", "go ahead", "book it anyway"), call create_calendar_event again with the same details plus confirm_conflict: true.
@@ -278,17 +261,18 @@ Rules:
 - Calendar events are separate from tasks — do NOT create an in-app task when creating a calendar event.
 - When the user asks to move, reschedule, or change a calendar event, use update_calendar_event.
 - When the user asks to cancel or delete a calendar event, use delete_calendar_event.
+- The morning briefing, weekly digest, quiet hours and the priority filter are settings, not reminders: if the user asks for one, tell them to turn it on in Open Calcapone → Settings. Event-start alerts are set with /alerts (e.g. /alerts 15). Never create a reminder to imitate them.
 - For a repeating item, scope "series" changes or deletes the whole run and skip_next true skips just this one. Default to "this" unless the user clearly means all of them.
 
 Examples:
 User: "remind me to call mom tomorrow at 3pm"
-→ Use create_item with title "Call mom", remind_at "<tomorrow>T15:00:00${offset}", category "Reminders"
+→ Use create_item with title "Call mom", remind_at "<tomorrow>T15:00:00", category "General"
 
 User: "buy groceries by friday"
-→ Use create_item with title "Buy groceries", due_date set to next Friday, category "General"
+→ Use create_item with title "Buy groceries", due_date set to the coming Friday, category "General"
 
 User: "lunch with Sarah tomorrow noon to 1pm"
-→ Use create_calendar_event with title "Lunch with Sarah", start_time "<tomorrow>T12:00:00${offset}", end_time "<tomorrow>T13:00:00${offset}"
+→ Use create_calendar_event with title "Lunch with Sarah", start_time "<tomorrow>T12:00:00", end_time "<tomorrow>T13:00:00"
 
 User: "actually make that 2pm" (referring to a previously created item)
 → Use update_item with query matching the recently mentioned task

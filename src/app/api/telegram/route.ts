@@ -9,10 +9,12 @@ import {
   sendTyping,
   answerCallbackQuery,
   editMessageText,
+  downloadFile,
   esc,
   mdToHtml,
   htmlToPlain,
 } from "@/lib/services/telegram";
+import { transcribeVoice, TranscriptionUnavailableError } from "@/lib/services/transcribe";
 import { executeToolCall, FORCED_ITEM_ID } from "@/lib/services/execute-tool";
 import { parseSlashCommand, handleCommand, isAiHintCommand, getAiHint } from "@/lib/services/commands";
 import { listCategories } from "@/lib/services/category";
@@ -30,7 +32,6 @@ import { rememberMessageRef, getMessageRef, resolvePosition } from "@/lib/servic
 import { createPendingAction, consumePendingAction } from "@/lib/services/pending-action";
 import { getItem } from "@/lib/services/item";
 import { forwardSourceLine } from "@/lib/services/forward-source";
-import { parseConflictData, resolveConflict, type ConflictResolution } from "@/lib/services/conflict";
 import { CalendarAuthError } from "@/lib/services/calendar";
 import { markCalendarDisconnected, CALENDAR_RECONNECT_MESSAGE } from "@/lib/services/calendar-link";
 import { notifyOwner } from "@/lib/services/alert";
@@ -95,6 +96,9 @@ function pickPhoto<T extends { file_size?: number }>(sizes: T[]): T | null {
 const IMAGE_MIME = /^image\/(jpeg|png|gif|webp)$/;
 
 const ok = () => NextResponse.json({ ok: true });
+
+/** Tools a reply can target, so "done"/"move it" in reply to a message act on that message's item. */
+const REPLY_TARGETED_TOOLS = new Set(["complete_item", "update_item", "delete_item", "decompose_task"]);
 
 /**
  * Record the update id; returns false if we've already seen it (Telegram redelivery).
@@ -205,7 +209,7 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
     const aiApiKey = decryptUserApiKey(user.aiApiKey);
     const keyWarning =
       user.aiApiKey && !aiApiKey
-        ? "\n\n⚠️ I couldn't read your saved API key — please re-enter it in Settings."
+        ? "\n\n⚠️ I couldn't read your saved API key — please re-enter it in Open Calcapone → Settings."
         : "";
     const aiConfig = { provider: user.aiProvider as string | null, apiKey: aiApiKey, model: user.aiModel };
 
@@ -214,7 +218,6 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
 
     if (hasImage) {
       try {
-        const { downloadFile } = await import("@/lib/services/telegram");
         await sendTyping(chatId);
         const fileId = photo?.file_id ?? imageDocument!.file_id;
         const buffer = await downloadFile(fileId);
@@ -241,8 +244,6 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
         return;
       }
       try {
-        const { downloadFile } = await import("@/lib/services/telegram");
-        const { transcribeVoice } = await import("@/lib/services/transcribe");
         await sendTyping(chatId);
         const audioBuffer = await downloadFile(message.voice.file_id);
         messageText = await transcribeVoice(audioBuffer, aiConfig);
@@ -254,11 +255,10 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
         // of only becoming obvious once the wrong thing has already been created.
         await sendMessageSafe(chatId, `🎤 Heard: ${esc(messageText.trim())}`);
       } catch (error) {
-        const { TranscriptionUnavailableError } = await import("@/lib/services/transcribe");
         if (error instanceof TranscriptionUnavailableError) {
           await sendMessageSafe(
             chatId,
-            "Voice notes need an OpenAI key — this bot doesn't have one configured. Send me text instead, or add an OpenAI key in Settings."
+            "Voice notes need an OpenAI key — this bot doesn't have one configured. Send me text instead, or add an OpenAI key in Open Calcapone → Settings."
           );
           return;
         }
@@ -286,6 +286,9 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
       if (messageId && reply.itemIds?.length) {
         await rememberMessageRef({ userId: user.id, chatId, messageId, kind: "list", itemIds: reply.itemIds });
       }
+      // Saved to history so a follow-up like "push 2 to tomorrow" after /today has context.
+      await saveMessage(user.id, chatId, "user", messageText);
+      await saveMessage(user.id, chatId, "assistant", htmlToPlain(reply.text).slice(0, 500));
       return;
     }
 
@@ -314,8 +317,8 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
     // describes, so the image needs telling apart from the person asking.
     if (hasImage) userMessage = `${userMessage}\n\n${IMAGE_DATA_NOTE}`;
 
-    const replyContext = await describeReplyTarget(message, user.id, messageText);
-    if (replyContext) userMessage = `${userMessage}\n\n${replyContext}`;
+    const replyTarget = await describeReplyTarget(message, user.id, messageText);
+    if (replyTarget) userMessage = `${userMessage}\n\n${replyTarget.note}`;
 
     const trialUser = { ...user, aiApiKey: aiApiKey ? user.aiApiKey : null };
     const quota = await checkAndConsumeTrialQuota(trialUser);
@@ -335,7 +338,17 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
       { telegramUsername: user.telegramUsername, timezone: user.timezone, categories: categories.map((c) => c.name) },
       aiConfig,
       history,
-      (call: ToolCall) => executeToolCall(call.name, call.args, user.id, user),
+      // A reply names its item exactly: matching the title again found tomorrow's copy of a
+      // daily reminder that had already rung, and completed that instead.
+      (call: ToolCall) =>
+        executeToolCall(
+          call.name,
+          replyTarget && REPLY_TARGETED_TOOLS.has(call.name) && call.args[FORCED_ITEM_ID] === undefined
+            ? { ...call.args, [FORCED_ITEM_ID]: replyTarget.itemId }
+            : call.args,
+          user.id,
+          user
+        ),
       { onStep: () => void sendTyping(chatId), ...(images ? { images } : {}) }
     );
 
@@ -343,7 +356,11 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
     await chargeExtraTrialCalls(trialUser, run.modelCalls - 1 + (images ? IMAGE_CALL_SURCHARGE : 0));
 
     const rendered = await renderRun(run.calls, run.text, user.id, chatId);
-    const response = rendered.text + keyWarning;
+    const lowQuota =
+      quota.remaining !== null && quota.remaining <= 3
+        ? `\n\n<i>${quota.remaining} free AI request${quota.remaining === 1 ? "" : "s"} left today. /note, /list, /today and /done don't use them.</i>`
+        : "";
+    const response = rendered.text + keyWarning + lowQuota;
 
     if (response.trim()) {
       await saveMessage(user.id, chatId, "assistant", htmlToPlain(response).slice(0, 500));
@@ -366,7 +383,7 @@ async function handleMessage(update: TelegramUpdate): Promise<void> {
     await sendMessageSafe(
       chatId,
       looksLikeVision && (message.photo || message.document)
-        ? "Your AI model can't read images. Switch to a vision-capable model in Settings, or tell me what's in it."
+        ? "Your AI model can't read images. Switch to a vision-capable model in Open Calcapone → Settings, or tell me what's in it."
         : "Sorry, something went wrong on my end. Please try again."
     );
     await notifyOwner("telegram:webhook", error);
@@ -392,8 +409,11 @@ async function renderRun(
   const undoIds: string[] = [];
   const receiptItemIds: string[] = [];
 
-  for (const { outcome } of calls) {
-    if (outcome.echo && outcome.text) parts.push(outcome.text);
+  for (const [i, { call, outcome }] of calls.entries()) {
+    // A refusal the model then fixed itself is noise: the user saw "Couldn't find 'dentist
+    // appointment'" right above "Updated: Dentist".
+    const fixedLater = outcome.failed && calls.slice(i + 1).some((later) => later.call.name === call.name && !later.outcome.failed);
+    if (outcome.echo && outcome.text && !fixedLater) parts.push(outcome.text);
     if (outcome.undo) {
       const actionId = await recordAction(userId, chatId, outcome.undo);
       if (actionId) undoIds.push(actionId);
@@ -474,14 +494,15 @@ async function describeReplyTarget(
   message: TelegramMessage,
   userId: string,
   body: string
-): Promise<string | null> {
+): Promise<{ note: string; itemId: string } | null> {
   const repliedTo = message.reply_to_message;
   if (!repliedTo) return null;
 
   const ref = await getMessageRef(message.chat.id, repliedTo.message_id);
   if (!ref || ref.itemIds.length === 0) return null;
 
-  const leadingNumber = body.trim().match(/^(\d+)/)?.[1];
+  // "3", "done 3" and "#3 is done" all point at line 3 of the list being replied to.
+  const leadingNumber = body.match(/\b(\d+)\b/)?.[1];
   const targetId =
     ref.kind === "item"
       ? ref.itemIds[0]
@@ -492,7 +513,10 @@ async function describeReplyTarget(
   const item = await getItem(targetId, userId);
   if (!item) return null;
 
-  return `(Context: the user is replying to a message about the task "${item.title}". Any instruction like "done", "move it", or "delete it" refers to that exact task — pass "${item.title}" as the tool's title/query.)`;
+  return {
+    itemId: item.id,
+    note: `(Context: the user is replying to a message about the task "${item.title}". Any instruction like "done", "move it", or "delete it" refers to that exact task — pass "${item.title}" as the tool's title/query.)`,
+  };
 }
 
 /**
@@ -509,29 +533,6 @@ async function handleButtonPress(update: TelegramUpdate): Promise<void> {
 
   try {
     const user = await findOrCreateUser(BigInt(query.from.id), query.from.username ?? query.from.first_name);
-
-    // Conflict buttons are parsed separately: settling one needs the calendar credentials and
-    // the local mirror, neither of which the item-centric callback layer knows about.
-    const conflict = query.data ? parseConflictData(query.data) : null;
-    if (conflict) {
-      let settled: ConflictResolution;
-      try {
-        settled = await resolveConflict(conflict.itemId, conflict.side, user);
-      } catch (error) {
-        if (!(error instanceof CalendarAuthError)) throw error;
-        await showCalendarReconnect(query, user.id);
-        return;
-      }
-      await answerCallbackQuery(query.id, settled.ok ? settled.toast : "Couldn't do that");
-      if (query.message) {
-        await editMessageText(
-          query.message.chat.id,
-          query.message.message_id,
-          settled.ok ? settled.text : esc(settled.reason)
-        );
-      }
-      return;
-    }
 
     const parsed = query.data ? parseCallbackData(query.data) : null;
 

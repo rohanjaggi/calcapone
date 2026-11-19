@@ -8,6 +8,7 @@ const mockItem = vi.hoisted(() => ({
 
 const mockActionLog = vi.hoisted(() => ({
   undoById: vi.fn(),
+  recordAction: vi.fn(),
 }));
 
 vi.mock("@/lib/services/item", () => mockItem);
@@ -157,11 +158,25 @@ describe("handleCallback", () => {
   });
 
   it("marks an item done", async () => {
-    mockItem.getItem.mockResolvedValue({ id: UUID, title: "Buy milk" });
+    mockItem.getItem.mockResolvedValue({ id: UUID, title: "Buy milk", status: "pending" });
+    mockActionLog.recordAction.mockResolvedValue("act-1");
     const parsed: ParsedCallback = { action: "done", itemId: UUID };
     const result = await handleCallback(parsed, user, now);
     expect(mockItem.getItem).toHaveBeenCalledWith(UUID, "u1");
     expect(mockItem.updateItem).toHaveBeenCalledWith(UUID, "u1", { status: "done" });
+    // Journalled, so /undo reaches it, and the receipt carries its own ↩️.
+    expect(mockActionLog.recordAction).toHaveBeenCalledWith(
+      "u1",
+      null,
+      expect.objectContaining({ inverse: { op: "restore_item", itemId: UUID, fields: { status: "pending" } } })
+    );
+    expect(result).toEqual({ text: "✅ <b>Buy milk</b> — done", toast: "Marked done", keyboard: undoKeyboard("act-1") });
+  });
+
+  it("does not journal a press on an item that was already done", async () => {
+    mockItem.getItem.mockResolvedValue({ id: UUID, title: "Buy milk", status: "done" });
+    const result = await handleCallback({ action: "done", itemId: UUID }, user, now);
+    expect(mockActionLog.recordAction).not.toHaveBeenCalled();
     expect(result).toEqual({ text: "✅ <b>Buy milk</b> — done", toast: "Marked done" });
   });
 
@@ -179,6 +194,21 @@ describe("handleCallback", () => {
     const result = await handleCallback(parsed, user, now);
     expect(mockItem.snoozeReminder).toHaveBeenCalledWith(UUID, "u1", new Date(now.getTime() + 10 * 60_000));
     expect(result?.toast).toContain("Snoozed until");
+  });
+
+  // Unjournalled, /undo after a snooze reversed some older change instead.
+  it("journals a snooze so /undo puts the reminder back as it was", async () => {
+    mockItem.getItem.mockResolvedValue({ id: UUID, title: "Buy milk", remindAt: null, status: "done" });
+    mockActionLog.recordAction.mockResolvedValue("act-9");
+
+    const result = await handleCallback({ action: "snooze", itemId: UUID, minutes: 10 }, user, now);
+
+    expect(mockActionLog.recordAction).toHaveBeenCalledWith(
+      "u1",
+      null,
+      expect.objectContaining({ inverse: { op: "restore_item", itemId: UUID, fields: { remindAt: null, status: "done" } } })
+    );
+    expect(result?.keyboard).toEqual(undoKeyboard("act-9"));
   });
 
   it("snoozes to 9am the next morning in the user's timezone for the tomorrow button", async () => {

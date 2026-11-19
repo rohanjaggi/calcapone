@@ -12,18 +12,22 @@ import {
   endOfDayInTz,
   weekdayInTz,
   isSelectableTz,
+  addDays,
 } from "@/lib/tz";
-import { updateUserSettings } from "@/lib/services/user";
+import { updateUserSettings, changeTimezone } from "@/lib/services/user";
 import { latestListRef, resolvePosition } from "@/lib/services/message-ref";
 import { renderGroupedList, renderFlatList } from "./format";
-import { undoLast } from "@/lib/services/action-log";
+import { undoLast, recordAction } from "@/lib/services/action-log";
+import { completionRecord } from "@/lib/services/tool-outcome";
 import type { ItemStatus } from "@/generated/prisma/enums";
 import type { CommandContext, CommandReply } from "./index";
 
 export async function handleDone(body: string, ctx: CommandContext): Promise<CommandReply> {
   if (!body) return { text: "Usage: /done task name" };
 
-  const open = await listItems(ctx.userId, { status: OPEN_STATUSES });
+  const top = await listItems(ctx.userId, { status: OPEN_STATUSES });
+  // Subtasks count too: "break down X" makes them, and nothing else in chat could tick them off.
+  const open = [...top, ...top.flatMap((item) => item.subtasks.filter((sub) => sub.status !== "done"))];
 
   if (/^\d+$/.test(body)) {
     const ref = await latestListRef(ctx.userId, ctx.chatId);
@@ -32,27 +36,58 @@ export async function handleDone(body: string, ctx: CommandContext): Promise<Com
     }
     const id = resolvePosition(ref.itemIds, body);
     const target = id ? open.find((item) => item.id === id) : undefined;
-    if (target) {
-      await updateItem(target.id, ctx.userId, { status: "done" as ItemStatus });
-      return { text: `Completed: ${b(target.title)}` };
-    }
-    // The number pointed past the remembered list, or at something no longer open (already
-    // done, deleted). Fall through to title matching, which reports "no match" for a bare
-    // number rather than silently doing nothing.
+    if (target) return complete(target, ctx);
+    // A number is never matched as a title: "/done 7" against a 5-item list completed "Dinner at 7pm".
+    return {
+      text: id
+        ? `#${body} in your last list is already done or gone.`
+        : `There's no #${body} in your last list — it has ${ref.itemIds.length}.`,
+    };
   }
 
   const found = matchByTitle(open, body);
 
   if (found.kind === "none") return { text: `No open task matching "${esc(body)}"` };
   // Several hits: taking the first silently completed the wrong task ("call" -> "Call dentist").
+  // Numbered and remembered, so "/done 2" picks one straight away.
   if (found.kind === "many") {
-    const options = found.items.slice(0, 5).map((item) => `• ${esc(item.title)}`).join("\n");
+    const options = found.items.slice(0, 5);
+    const lines = options.map((item, i) => `${i + 1}. ${esc(item.title)}${item.dueDate ? ` — ${item.dueDate}` : ""}`).join("\n");
     const more = found.items.length > 5 ? `\n…and ${found.items.length - 5} more` : "";
-    return { text: `That matches ${found.items.length} tasks — which one?\n${options}${more}` };
+    return {
+      text: `That matches ${found.items.length} tasks — which one? Send <code>/done 1</code>, <code>/done 2</code>…\n${lines}${more}`,
+      itemIds: options.map((item) => item.id),
+    };
   }
 
-  await updateItem(found.item.id, ctx.userId, { status: "done" as ItemStatus });
-  return { text: `Completed: ${b(found.item.title)}` };
+  return complete(found.item, ctx);
+}
+
+/** Journalled like the AI's complete_item, so `/undo` straight after reverses this one. */
+async function complete(
+  item: { id: string; title: string; status: ItemStatus },
+  ctx: CommandContext
+): Promise<CommandReply> {
+  await updateItem(item.id, ctx.userId, { status: "done" as ItemStatus });
+  await recordAction(ctx.userId, ctx.chatId, completionRecord(item));
+  return { text: `Completed: ${b(item.title)}` };
+}
+
+/**
+ * What "today" holds: overdue dated tasks, tasks due today, and reminders ringing today. Shared
+ * by /today and the morning briefing, which used to disagree (a 3pm reminder with no due date
+ * was in one and not the other).
+ */
+export function todaySelection<T extends { dueDate: string | null; remindAt: Date | null }>(
+  items: T[],
+  tz: string,
+  todayStr: string
+): { overdue: T[]; todayItems: T[]; todayReminders: T[] } {
+  return {
+    overdue: items.filter((item) => item.dueDate && item.dueDate < todayStr && !item.remindAt),
+    todayItems: items.filter((item) => item.dueDate === todayStr && !item.remindAt),
+    todayReminders: items.filter((item) => item.remindAt && formatDateInTz(item.remindAt, tz) === todayStr),
+  };
 }
 
 export async function handleToday(ctx: CommandContext): Promise<CommandReply> {
@@ -61,17 +96,7 @@ export async function handleToday(ctx: CommandContext): Promise<CommandReply> {
   const todayStr = todayInTz(tz, now);
 
   const allPending = await listItems(ctx.userId, { status: OPEN_STATUSES });
-
-  const overdue = allPending.filter(
-    (item) => item.dueDate && item.dueDate < todayStr && !item.remindAt
-  );
-  const todayItems = allPending.filter(
-    (item) => item.dueDate === todayStr && !item.remindAt
-  );
-  const todayReminders = allPending.filter((item) => {
-    if (!item.remindAt) return false;
-    return formatDateInTz(item.remindAt, tz) === todayStr;
-  });
+  const { overdue, todayItems, todayReminders } = todaySelection(allPending, tz, todayStr);
 
   // Flat, in visual order, so the numbers printed below line up 1:1 with this array —
   // that's what lets a reply like `/done 3` resolve without re-parsing the message.
@@ -133,17 +158,11 @@ export async function handleToday(ctx: CommandContext): Promise<CommandReply> {
   return { text: parts.join("\n"), ...(itemIds.length > 0 ? { itemIds } : {}) };
 }
 
-/** Add days to a YYYY-MM-DD string via calendar-date arithmetic, not tz-instant math — see endOfDayInTz. */
-function addDaysToDateStr(dateStr: string, days: number): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
-}
-
 export async function handleWeek(ctx: CommandContext): Promise<CommandReply> {
   const now = new Date();
   const tz = ctx.user.timezone;
   const todayStr = todayInTz(tz, now);
-  const days = Array.from({ length: 7 }, (_, i) => addDaysToDateStr(todayStr, i));
+  const days = Array.from({ length: 7 }, (_, i) => addDays(todayStr, i));
   const lastDay = days[days.length - 1];
 
   const allPending = await listItems(ctx.userId, { status: OPEN_STATUSES });
@@ -243,6 +262,12 @@ export async function handleNote(body: string, ctx: CommandContext): Promise<Com
     categoryId: firstCategory.id,
     title: body,
   });
+  // Journalled: otherwise /undo right after a /note reversed whatever came before it.
+  await recordAction(ctx.userId, ctx.chatId, {
+    kind: "create_item",
+    summary: `noted ${b(item.title)}`,
+    inverse: { op: "delete_item", itemId: item.id },
+  });
 
   return { text: `📝 Noted: ${b(item.title)}` };
 }
@@ -340,6 +365,7 @@ export async function handleTimezone(body: string, ctx: CommandContext): Promise
 
   if (requested === current) return { text: `Already set to ${b(current)}.` };
 
-  await updateUserSettings(ctx.userId, { timezone: requested });
-  return { text: `Timezone set to ${b(requested)} — it's ${formatHHmmInTz(new Date(), requested)} there now.` };
+  const moved = await changeTimezone(ctx.userId, current, requested);
+  const kept = moved > 0 ? ` Your ${moved} pending reminder${moved === 1 ? "" : "s"} keep their clock times there.` : "";
+  return { text: `Timezone set to ${b(requested)} — it's ${formatHHmmInTz(new Date(), requested)} there now.${kept}` };
 }

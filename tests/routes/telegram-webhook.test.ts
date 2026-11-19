@@ -10,8 +10,8 @@ const mockDownloadFile = vi.hoisted(() => vi.fn());
 const mockEditMessageText = vi.hoisted(() => vi.fn());
 const mockAnswerCallbackQuery = vi.hoisted(() => vi.fn());
 const mockRememberMessageRef = vi.hoisted(() => vi.fn());
-const mockParseConflictData = vi.hoisted(() => vi.fn());
-const mockResolveConflict = vi.hoisted(() => vi.fn());
+const mockParseCallbackData = vi.hoisted(() => vi.fn());
+const mockHandleCallback = vi.hoisted(() => vi.fn());
 const mockMarkCalendarDisconnected = vi.hoisted(() => vi.fn());
 
 vi.mock("next/server", async (importOriginal) => {
@@ -57,14 +57,9 @@ vi.mock("@/lib/services/calendar-link", () => ({
   CALENDAR_RECONNECT_MESSAGE: "Your Google Calendar link expired.",
 }));
 
-vi.mock("@/lib/services/conflict", () => ({
-  parseConflictData: mockParseConflictData,
-  resolveConflict: mockResolveConflict,
-}));
-
 vi.mock("@/lib/services/execute-tool", () => ({ executeToolCall: vi.fn(), FORCED_ITEM_ID: "__forced" }));
 vi.mock("@/lib/services/commands", () => ({
-  parseSlashCommand: () => null,
+  parseSlashCommand: vi.fn(() => null),
   handleCommand: vi.fn(),
   isAiHintCommand: () => false,
   getAiHint: () => "",
@@ -81,8 +76,8 @@ vi.mock("@/lib/services/trial", () => ({
   trialLimitMessage: () => "Trial limit reached.",
 }));
 vi.mock("@/lib/services/callbacks", () => ({
-  parseCallbackData: () => null,
-  handleCallback: vi.fn(),
+  parseCallbackData: mockParseCallbackData,
+  handleCallback: mockHandleCallback,
   undoKeyboard: vi.fn(),
   chooseKeyboard: vi.fn(),
 }));
@@ -102,6 +97,11 @@ vi.mock("@/lib/services/alert", () => ({ notifyOwner: vi.fn() }));
 import { NextRequest } from "next/server";
 import { CalendarAuthError } from "@/lib/services/calendar";
 import { POST } from "@/app/api/telegram/route";
+import { executeToolCall } from "@/lib/services/execute-tool";
+import { getMessageRef } from "@/lib/services/message-ref";
+import { getItem } from "@/lib/services/item";
+import { parseSlashCommand, handleCommand } from "@/lib/services/commands";
+import { saveMessage } from "@/lib/services/conversation";
 
 const SECRET = "hook-secret";
 
@@ -166,7 +166,7 @@ beforeEach(() => {
   mockSendMessage.mockResolvedValue(99);
   mockSendMessageSafe.mockResolvedValue(99);
   mockDownloadFile.mockResolvedValue(Buffer.from("image-bytes"));
-  mockParseConflictData.mockReturnValue(null);
+  mockParseCallbackData.mockReturnValue(null);
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -320,16 +320,68 @@ describe("forwarded content", () => {
   });
 });
 
-describe("conflict buttons with a dead Google grant", () => {
+describe("a button whose action needs a dead Google grant", () => {
   it("clears the link and replaces the message with the reconnect prompt", async () => {
-    mockParseConflictData.mockReturnValue({ itemId: "i1", side: "mine" });
-    mockResolveConflict.mockRejectedValue(new CalendarAuthError("revoked"));
+    // e.g. ↩️ on a calendar change: undoing it has to call Google.
+    mockParseCallbackData.mockReturnValue({ action: "undo", actionId: "a1" });
+    mockHandleCallback.mockRejectedValue(new CalendarAuthError("revoked"));
 
-    await POST(webhook(buttonPress("c:i1:m")));
+    await POST(webhook(buttonPress("u:a1")));
 
     expect(mockMarkCalendarDisconnected).toHaveBeenCalledWith("u1");
     expect(mockAnswerCallbackQuery).toHaveBeenCalledWith("cb1", "Reconnect Google Calendar");
     // No keyboard passed, so the now-useless buttons come off the message.
     expect(mockEditMessageText).toHaveBeenCalledWith(555, 10, "Your Google Calendar link expired.");
+  });
+});
+
+describe("what the user sees and what the bot acts on", () => {
+  // "Couldn't find 'dentist appointment'" sat right above "Updated: Dentist".
+  it("hides a refusal the model then fixed itself", async () => {
+    mockRunAgent.mockResolvedValue({
+      text: "",
+      calls: [
+        { call: { name: "update_item", args: {} }, outcome: { text: "Couldn't find an open item matching 'dentist appointment'", echo: true, failed: true } },
+        { call: { name: "update_item", args: {} }, outcome: { text: "Updated: <b>Dentist</b>", echo: true } },
+      ],
+      stop: "answered",
+      modelCalls: 2,
+    });
+
+    await POST(webhook(message({ text: "move dentist to Friday" })));
+
+    const sent = String(mockSendMessage.mock.calls.at(-1)?.[1]);
+    expect(sent).toContain("Updated: <b>Dentist</b>");
+    expect(sent).not.toContain("Couldn't find");
+  });
+
+  // Matching the title again found tomorrow's copy of a daily reminder that had already rung.
+  it("acts on exactly the item a reply points at", async () => {
+    vi.mocked(getMessageRef).mockResolvedValueOnce({ kind: "item", itemIds: ["r1"] } as never);
+    vi.mocked(getItem).mockResolvedValueOnce({ id: "r1", title: "Take meds" } as never);
+    vi.mocked(executeToolCall).mockResolvedValue({ text: "Done", echo: true });
+    mockRunAgent.mockImplementationOnce(async (_m, _u, _c, _h, execute) => {
+      await execute({ id: "t1", name: "complete_item", args: { title: "Take meds" } });
+      return { text: "", calls: [], stop: "answered", modelCalls: 1 };
+    });
+
+    await POST(webhook(message({ text: "done", reply_to_message: { message_id: 9, chat: { id: 555, type: "private" }, date: 0 } })));
+
+    expect(vi.mocked(executeToolCall)).toHaveBeenCalledWith(
+      "complete_item",
+      { title: "Take meds", __forced: "r1" },
+      "u1",
+      expect.anything()
+    );
+  });
+
+  it("keeps a slash command and its reply in the history, so a follow-up has context", async () => {
+    vi.mocked(parseSlashCommand).mockReturnValueOnce({ command: "today", body: "" } as never);
+    vi.mocked(handleCommand).mockResolvedValueOnce({ text: "<b>Today</b>\n1. Pay rent" });
+
+    await POST(webhook(message({ text: "/today" })));
+
+    expect(vi.mocked(saveMessage)).toHaveBeenCalledWith("u1", 555, "user", "/today");
+    expect(vi.mocked(saveMessage)).toHaveBeenCalledWith("u1", 555, "assistant", "Today\n1. Pay rent");
   });
 });
