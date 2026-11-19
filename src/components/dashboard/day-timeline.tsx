@@ -6,6 +6,7 @@ import { Calendar, ArrowRight, Plus } from "lucide-react";
 import Link from "next/link";
 import { toggleItemStatus } from "@/app/actions";
 import { TaskCheck } from "@/components/todos/task-row";
+import { UNDO_MS } from "@/components/todos/use-optimistic-items";
 import { useToast } from "@/components/ui/toast";
 import { haptic } from "@/lib/telegram-webapp";
 import type { TimelineItem } from "@/lib/types";
@@ -79,7 +80,7 @@ function Row({
         <div className="flex items-center gap-2">
           {/* Tasks tick off right here; before, Home was read-only and you had to find it in Tasks. */}
           {item.type === "item" ? (
-            <TaskCheck done={done} size="sm" onToggle={onToggle} label={`Mark ${item.title} as done`} />
+            <TaskCheck done={done} size="sm" onToggle={onToggle} label={item.title} />
           ) : (
             <TypeIcon item={item} className={`w-3.5 h-3.5 shrink-0 ${tone}`} />
           )}
@@ -131,19 +132,36 @@ export function DayTimeline({
   const router = useRouter();
   const { notify } = useToast();
   const [ticked, setTicked] = useState<ReadonlySet<string>>(() => new Set());
-  const tick = async (id: string) => {
+  const untick = (id: string) =>
+    setTicked((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  const tick = async (id: string, title: string) => {
     if (ticked.has(id)) return;
     setTicked((prev) => new Set(prev).add(id));
     haptic("success");
     try {
       await toggleItemStatus(id, "done");
       router.refresh();
-    } catch {
-      setTicked((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
+      // The refresh drops the row, so a mis-tap needs a way back that doesn't involve Tasks.
+      notify(`Done: “${title}”`, {
+        tone: "info",
+        durationMs: UNDO_MS,
+        action: {
+          label: "Undo",
+          onClick: () =>
+            void toggleItemStatus(id, "pending")
+              .then(() => {
+                untick(id);
+                router.refresh();
+              })
+              .catch(() => notify("Couldn't reopen that task — find it in Tasks.")),
+        },
       });
+    } catch {
+      untick(id);
       notify("Couldn't update that task — please try again.");
     }
   };
@@ -189,7 +207,7 @@ export function DayTimeline({
                   past={isToday && !item.allDay && isPast(item.time, now)}
                   timeZone={timezone}
                   done={ticked.has(item.id)}
-                  onToggle={() => void tick(item.id)}
+                  onToggle={() => void tick(item.id, item.title)}
                 />
                 {showNow && i === lastPast && <NowLine label={nowLabel} />}
               </div>
