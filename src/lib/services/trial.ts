@@ -31,6 +31,13 @@ export type TrialCheck =
   | { allowed: true; remaining: number | null }
   | { allowed: false; limit: number };
 
+/** Free AI requests left today, or null when the user isn't on the trial (own key, or the owner). */
+export function trialCallsLeft(user: Omit<TrialUser, "id">, now: Date = new Date()): number | null {
+  if (user.aiApiKey || isOwner(user.telegramId)) return null;
+  const used = user.aiCallsDate === todayInTz(user.timezone, now) ? user.aiCallsCount : 0;
+  return Math.max(0, getTrialDailyLimit() - used);
+}
+
 /**
  * Users on the shared default key ("trial") get `TRIAL_DAILY_LIMIT` AI calls per
  * day (in their own timezone). The owner and BYOK users are exempt.

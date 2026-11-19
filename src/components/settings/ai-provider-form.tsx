@@ -21,10 +21,13 @@ type Props = {
   currentProvider: string | null;
   currentModel: string | null;
   hasApiKey: boolean;
+  /** Free requests left today on the shared key; null when the user isn't limited. */
+  trialLeft: number | null;
+  trialLimit: number;
   onSave: (data: { aiProvider: string; aiApiKey?: string; aiModel: string }) => Promise<void>;
 };
 
-export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSave }: Props) {
+export function AiProviderForm({ currentProvider, currentModel, hasApiKey, trialLeft, trialLimit, onSave }: Props) {
   const [provider, setProvider] = useState(currentProvider ?? "openai");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -69,7 +72,12 @@ export function AiProviderForm({ currentProvider, currentModel, hasApiKey, onSav
   };
 
   const currentLabel = PROVIDERS.find((p) => p.value === currentProvider)?.label;
-  const summary = hasApiKey && currentLabel ? `${currentLabel} · ${currentModel ?? "default model"}` : "Using the shared trial key";
+  const summary =
+    hasApiKey && currentLabel
+      ? `${currentLabel} · ${currentModel ?? "default model"}`
+      : trialLeft === null
+        ? "Using the shared key"
+        : `${trialLeft} of ${trialLimit} free requests left today`;
 
   return (
     <SettingsCard icon={Cpu} title="AI provider" value={summary}>

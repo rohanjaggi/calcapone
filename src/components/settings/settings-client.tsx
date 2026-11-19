@@ -23,6 +23,8 @@ type Props = {
     aiProvider: string | null;
     aiModel: string | null;
     hasAiApiKey: boolean;
+    trialLeft: number | null;
+    trialLimit: number;
     hasGoogleCalendar: boolean;
     googleCalendarId: string | null;
     eventReminderMinutes: number | null;
@@ -105,6 +107,8 @@ export function SettingsClient({ settings }: Props) {
             currentProvider={settings.aiProvider}
             currentModel={settings.aiModel}
             hasApiKey={settings.hasAiApiKey}
+            trialLeft={settings.trialLeft}
+            trialLimit={settings.trialLimit}
             onSave={handleSaveAi}
           />
         </div>
