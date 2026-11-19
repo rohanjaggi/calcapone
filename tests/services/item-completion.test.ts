@@ -12,6 +12,8 @@ const mockPrisma = vi.hoisted(() => ({
     updateMany: vi.fn(),
     findUnique: vi.fn(),
     findUniqueOrThrow: vi.fn(),
+    count: vi.fn(async () => 0),
+    deleteMany: vi.fn(async () => ({ count: 0 })),
   },
 }));
 
@@ -32,22 +34,23 @@ const baseItem = (over: Record<string, unknown> = {}) => ({
   description: null,
   status: "pending",
   priority: "medium",
-  kind: "task",
   dueDate: "2026-06-01",
   dueTime: null,
   remindAt: null,
-  recurring: "none",
   recurrenceRule: "FREQ=DAILY",
   recurrenceEnd: null,
-  googleEventId: null,
   parentId: null,
-  calendarSyncedAt: null,
   notificationStage: 0,
+  createdAt: new Date("2026-05-01T00:00:00Z"),
+  updatedAt: new Date("2026-05-01T00:00:00Z"),
   ...over,
 });
 
 describe("updateItem: atomic completion guard", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.item.count.mockResolvedValue(0);
+  });
 
   it("completes through a status-guarded updateMany, not a plain update", async () => {
     mockPrisma.item.findUnique.mockResolvedValue(baseItem());

@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockGetDueItems = vi.hoisted(() => vi.fn());
 const mockClaimDueReminder = vi.hoisted(() => vi.fn());
-const mockCreateItem = vi.hoisted(() => vi.fn());
+const mockCreateNextReminder = vi.hoisted(() => vi.fn());
+const mockRestoreDueReminder = vi.hoisted(() => vi.fn());
 const mockGetEscalationCandidates = vi.hoisted(() => vi.fn());
 const mockUpdateNotificationStage = vi.hoisted(() => vi.fn());
 const mockClaimNotificationStage = vi.hoisted(() => vi.fn());
@@ -19,13 +20,13 @@ const MockTelegramBlockedError = vi.hoisted(
 );
 
 vi.mock("@/lib/services/item", async (importOriginal) => {
-  // createNextOccurrence stays real: the recurrence maths is part of what's under test.
   const actual = await importOriginal<typeof import("@/lib/services/item")>();
   return {
     ...actual,
     getDueItems: mockGetDueItems,
     claimDueReminder: mockClaimDueReminder,
-    createItem: mockCreateItem,
+    createNextReminder: mockCreateNextReminder,
+    restoreDueReminder: mockRestoreDueReminder,
     getEscalationCandidates: mockGetEscalationCandidates,
     updateNotificationStage: mockUpdateNotificationStage,
     claimNotificationStage: mockClaimNotificationStage,
@@ -80,10 +81,11 @@ const dueItem = (over = {}) => ({
   dueDate: null,
   dueTime: null,
   remindAt: new Date("2026-06-15T04:00:00Z"),
-  recurring: "none",
   recurrenceRule: null,
   recurrenceEnd: null,
   notificationStage: 0,
+  // Long before any rung, so creation time never suppresses one unless a test says so.
+  createdAt: new Date("2026-05-01T00:00:00Z"),
   user: user(),
   ...over,
 });
@@ -173,31 +175,25 @@ describe("POST /api/cron/reminders", () => {
     expect(mockClaimDueReminder).toHaveBeenCalledWith("i1", false);
   });
 
-  it("schedules the next occurrence of a recurring reminder", async () => {
-    mockGetDueItems.mockResolvedValue([
-      dueItem({ recurring: "daily", recurrenceRule: "FREQ=DAILY" }),
-    ]);
+  it("schedules the next occurrence of a recurring reminder, before sending it", async () => {
+    const item = dueItem({ recurrenceRule: "FREQ=DAILY" });
+    mockGetDueItems.mockResolvedValue([item]);
     await POST(request());
 
-    expect(mockCreateItem).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Take meds",
-        remindAt: new Date("2026-06-16T04:00:00Z"),
-        recurrenceRule: "FREQ=DAILY",
-      })
-    );
+    expect(mockCreateNextReminder).toHaveBeenCalledWith(item, "Asia/Singapore", expect.any(Date));
+    expect(mockCreateNextReminder.mock.invocationCallOrder[0]).toBeLessThan(mockSendMessage.mock.invocationCallOrder[0]);
   });
 
-  it("stops recurring once the series has ended", async () => {
-    mockGetDueItems.mockResolvedValue([
-      dueItem({
-        recurring: "daily",
-        recurrenceRule: "FREQ=DAILY",
-        recurrenceEnd: new Date("2026-06-15T12:00:00Z"),
-      }),
-    ]);
-    await POST(request());
-    expect(mockCreateItem).not.toHaveBeenCalled();
+  // The claim has already cleared remindAt; if making the next occurrence fails, the reminder
+  // has to be handed back for the next tick — not sent with its series silently ended.
+  it("puts the reminder back, unsent, when the next occurrence can't be created", async () => {
+    mockGetDueItems.mockResolvedValue([dueItem({ recurrenceRule: "FREQ=DAILY", status: "pending" })]);
+    mockCreateNextReminder.mockRejectedValueOnce(new Error("db blip"));
+    const body = await (await POST(request())).json();
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(mockRestoreDueReminder).toHaveBeenCalledWith("i1", expect.any(Date), "pending");
+    expect(body.errors).toBe(1);
   });
 
   it("keeps going when one item fails", async () => {

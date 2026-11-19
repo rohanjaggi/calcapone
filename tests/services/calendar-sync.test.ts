@@ -6,10 +6,6 @@ const mockPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     upsert: vi.fn(),
   },
-  item: {
-    findFirst: vi.fn(),
-    updateMany: vi.fn(),
-  },
   user: {
     update: vi.fn(),
   },
@@ -51,7 +47,6 @@ function event(overrides: Partial<SyncedEvent> = {}): SyncedEvent {
     startsAt: new Date("2026-08-20T12:00:00.000Z"),
     endsAt: new Date("2026-08-20T12:30:00.000Z"),
     allDay: false,
-    allDayDate: null,
     transparent: false,
     googleUpdatedAt: new Date("2026-08-20T09:00:00.000Z"),
     cancelled: false,
@@ -63,13 +58,12 @@ describe("syncUserCalendar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.calendarEvent.findUnique.mockResolvedValue(null);
-    mockPrisma.item.findFirst.mockResolvedValue(null);
   });
 
   it("makes no API call and returns a zero result when there is no refresh token", async () => {
     const result = await syncUserCalendar({ ...baseUser, googleRefreshToken: null }, NOW);
 
-    expect(result).toEqual({ applied: 0, removed: 0, conflicts: [], fullResync: false });
+    expect(result).toEqual({ applied: 0, removed: 0, fullResync: false });
     expect(mockCalendar.listEventChanges).not.toHaveBeenCalled();
     expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
@@ -89,15 +83,9 @@ describe("syncUserCalendar", () => {
     expect(mockPrisma.calendarEvent.deleteMany).not.toHaveBeenCalledWith({ where: { userId: "user-1" } });
   });
 
-  it("removes the mirror row and nulls the linked item's googleEventId on a cancelled event, without deleting the item", async () => {
+  it("removes the mirror row on a cancelled event", async () => {
     const cancelledEvent = event({ cancelled: true, startsAt: null, endsAt: null, googleUpdatedAt: null });
     mockCalendar.listEventChanges.mockResolvedValue({ events: [cancelledEvent], nextSyncToken: "tok-2", fullResync: false });
-    mockPrisma.item.findFirst.mockResolvedValue({
-      id: "item-1",
-      title: "Daily standup",
-      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
-      calendarSyncedAt: new Date("2026-08-01T00:00:00.000Z"),
-    });
 
     const result = await syncUserCalendar(baseUser, NOW);
 
@@ -105,12 +93,7 @@ describe("syncUserCalendar", () => {
       where: { userId: "user-1", googleEventId: "evt-1" },
     });
     expect(mockPrisma.calendarEvent.upsert).not.toHaveBeenCalled();
-    expect(mockPrisma.item.updateMany).toHaveBeenCalledWith({
-      where: { id: "item-1", userId: "user-1" },
-      data: { googleEventId: null },
-    });
     expect(result.removed).toBe(1);
-    expect(result.conflicts).toEqual([]);
   });
 
   it("removes (rather than stores) an event moved outside the mirror window", async () => {
@@ -162,133 +145,6 @@ describe("syncUserCalendar", () => {
     expect(call.update).not.toHaveProperty("reminderSentAt");
   });
 
-  it("reports a conflict and leaves the item untouched when both sides changed since the last agreement", async () => {
-    const changed = event({ googleUpdatedAt: new Date("2026-08-20T09:00:00.000Z") });
-    mockCalendar.listEventChanges.mockResolvedValue({ events: [changed], nextSyncToken: "tok-2", fullResync: false });
-    mockPrisma.item.findFirst.mockResolvedValue({
-      id: "item-1",
-      title: "Standup (local edit)",
-      updatedAt: new Date("2026-08-20T08:00:00.000Z"),
-      calendarSyncedAt: new Date("2026-08-19T00:00:00.000Z"),
-    });
-
-    const result = await syncUserCalendar(baseUser, NOW);
-
-    expect(result.conflicts).toEqual([
-      {
-        itemId: "item-1",
-        itemTitle: "Standup (local edit)",
-        googleEventId: "evt-1",
-        googleTitle: "Standup",
-        googleStartsAt: changed.startsAt,
-      },
-    ]);
-    expect(mockPrisma.item.updateMany).not.toHaveBeenCalled();
-  });
-
-  it("lets Google win and updates the item when only Google changed", async () => {
-    const changed = event({ googleUpdatedAt: new Date("2026-08-20T09:00:00.000Z") });
-    mockCalendar.listEventChanges.mockResolvedValue({ events: [changed], nextSyncToken: "tok-2", fullResync: false });
-    mockPrisma.item.findFirst.mockResolvedValue({
-      id: "item-1",
-      title: "Standup",
-      updatedAt: new Date("2026-08-18T00:00:00.000Z"), // not touched locally since the last sync
-      calendarSyncedAt: new Date("2026-08-19T00:00:00.000Z"),
-    });
-
-    const result = await syncUserCalendar(baseUser, NOW);
-
-    expect(result.conflicts).toEqual([]);
-    expect(mockPrisma.item.updateMany).toHaveBeenCalledWith({
-      where: { id: "item-1", userId: "user-1" },
-      data: {
-        title: "Standup",
-        dueDate: "2026-08-20",
-        dueTime: "20:00", // Asia/Singapore is UTC+8
-        calendarSyncedAt: NOW,
-        updatedAt: NOW,
-      },
-    });
-  });
-
-  it("leaves the item and its event in agreement, so the next Google-only edit isn't a conflict", async () => {
-    // The bug this covers: Prisma stamps @updatedAt at write time, so an item whose reconcile
-    // didn't set updatedAt itself comes back out of the database *newer* than the
-    // calendarSyncedAt that same write recorded — the local half of the conflict test is then
-    // permanently true and every later Google-side edit raises a conflict the user never caused.
-    const first = event({ googleUpdatedAt: new Date("2026-08-20T09:00:00.000Z") });
-    mockCalendar.listEventChanges.mockResolvedValue({ events: [first], nextSyncToken: "tok-2", fullResync: false });
-    mockPrisma.item.findFirst.mockResolvedValue({
-      id: "item-1",
-      title: "Standup",
-      updatedAt: new Date("2026-08-18T00:00:00.000Z"),
-      calendarSyncedAt: new Date("2026-08-19T00:00:00.000Z"),
-    });
-
-    await syncUserCalendar(baseUser, NOW);
-
-    // Replay what the database would hold afterwards: the fields the write set, plus @updatedAt
-    // landing a few ms later whenever the write didn't set it explicitly.
-    const written = mockPrisma.item.updateMany.mock.calls[0][0].data;
-    const writeLandedAt = new Date(NOW.getTime() + 3);
-    mockPrisma.item.findFirst.mockResolvedValue({
-      id: "item-1",
-      title: written.title,
-      updatedAt: written.updatedAt ?? writeLandedAt,
-      calendarSyncedAt: written.calendarSyncedAt,
-    });
-
-    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
-    const googleEdit = event({ googleUpdatedAt: new Date(NOW.getTime() + 30 * 60 * 1000) });
-    mockCalendar.listEventChanges.mockResolvedValue({ events: [googleEdit], nextSyncToken: "tok-3", fullResync: false });
-
-    const result = await syncUserCalendar(baseUser, later);
-
-    expect(result.conflicts).toEqual([]);
-  });
-
-  it("dates an all-day event by the calendar's own day, not the user's timezone", async () => {
-    // All-day 2026-08-21 on a UTC+8 calendar is 2026-08-20T16:00Z, which is still the 20th for
-    // a New York user — re-deriving the date from the instant lands the task a day early.
-    const allDay = event({
-      allDay: true,
-      startsAt: new Date("2026-08-20T16:00:00.000Z"),
-      endsAt: new Date("2026-08-21T16:00:00.000Z"),
-      allDayDate: "2026-08-21",
-    });
-    mockCalendar.listEventChanges.mockResolvedValue({ events: [allDay], nextSyncToken: "tok-2", fullResync: false });
-    mockPrisma.item.findFirst.mockResolvedValue({
-      id: "item-1",
-      title: "Standup",
-      updatedAt: new Date("2026-08-18T00:00:00.000Z"),
-      calendarSyncedAt: new Date("2026-08-19T00:00:00.000Z"),
-    });
-
-    await syncUserCalendar({ ...baseUser, timezone: "America/New_York" }, NOW);
-
-    expect(mockPrisma.item.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ dueDate: "2026-08-21", dueTime: null }) })
-    );
-  });
-
-  it("treats a never-synced item (calendarSyncedAt null) as having nothing to conflict with", async () => {
-    const changed = event();
-    mockCalendar.listEventChanges.mockResolvedValue({ events: [changed], nextSyncToken: "tok-2", fullResync: false });
-    mockPrisma.item.findFirst.mockResolvedValue({
-      id: "item-1",
-      title: "Standup",
-      updatedAt: new Date("2026-08-20T09:30:00.000Z"),
-      calendarSyncedAt: null,
-    });
-
-    const result = await syncUserCalendar(baseUser, NOW);
-
-    expect(result.conflicts).toEqual([]);
-    expect(mockPrisma.item.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "item-1", userId: "user-1" } })
-    );
-  });
-
   it("persists the returned sync token and lastCalendarSyncAt", async () => {
     mockCalendar.listEventChanges.mockResolvedValue({ events: [], nextSyncToken: "tok-fresh", fullResync: false });
 
@@ -315,12 +171,10 @@ describe("syncUserCalendar", () => {
  */
 describe("mirrorEvent", () => {
   const created = {
-    googleEventId: "evt-new",
+    id: "evt-new",
     title: "Dinner",
-    description: null,
-    startsAt: new Date("2026-08-20T12:00:00.000Z"),
-    endsAt: new Date("2026-08-20T14:00:00.000Z"),
-    googleUpdatedAt: new Date("2026-08-20T10:00:00.000Z"),
+    startTime: "2026-08-20T20:00:00+08:00",
+    endTime: "2026-08-20T22:00:00+08:00",
   };
 
   beforeEach(() => {
@@ -339,8 +193,8 @@ describe("mirrorEvent", () => {
       googleEventId: "evt-new",
       calendarId: "primary",
       title: "Dinner",
-      startsAt: created.startsAt,
-      endsAt: created.endsAt,
+      startsAt: new Date("2026-08-20T12:00:00.000Z"),
+      endsAt: new Date("2026-08-20T14:00:00.000Z"),
       allDay: false,
     });
   });
@@ -349,7 +203,11 @@ describe("mirrorEvent", () => {
     await mirrorEvent(
       "user-1",
       "primary",
-      { ...created, startsAt: new Date(NOW.getTime() + MIRROR_FUTURE_MS + 86400000), endsAt: new Date(NOW.getTime() + MIRROR_FUTURE_MS + 90000000) },
+      {
+        ...created,
+        startTime: new Date(NOW.getTime() + MIRROR_FUTURE_MS + 86400000).toISOString(),
+        endTime: new Date(NOW.getTime() + MIRROR_FUTURE_MS + 90000000).toISOString(),
+      },
       NOW
     );
 
@@ -362,6 +220,17 @@ describe("mirrorEvent", () => {
     await mirrorEvent("user-1", "primary", created, NOW);
 
     expect(mockPrisma.calendarEvent.upsert.mock.calls[0][0].update).toMatchObject({ reminderSentAt: null });
+  });
+
+  it("skips an all-day response (date, not dateTime) rather than writing an Invalid Date", async () => {
+    await mirrorEvent("user-1", "primary", { ...created, startTime: "", endTime: "" }, NOW);
+    expect(mockPrisma.calendarEvent.upsert).not.toHaveBeenCalled();
+  });
+
+  it("swallows a mirror failure: Google already has the event", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockPrisma.calendarEvent.upsert.mockRejectedValueOnce(new Error("db down"));
+    await expect(mirrorEvent("user-1", "primary", created, NOW)).resolves.toBeUndefined();
   });
 });
 

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { createEvent, deleteEvent, updateEvent, CalendarAuthError } from "@/lib/services/calendar";
+import { dropAutoSuccessor } from "@/lib/services/item";
 import type { Prisma } from "@/generated/prisma/client";
 import type { UndoOp, UndoRecord, ItemSnapshot } from "@/lib/services/tool-outcome";
 
@@ -64,9 +65,9 @@ function isAlreadyExists(error: unknown): boolean {
  * keys the snapshot never captured, so an undo only ever touches fields it actually recorded
  * rather than clobbering the rest with an explicit `undefined`.
  *
- * Generic over the input so extra required keys (`recreate_item`'s `title`/`categoryId`,
- * `recreate_event`'s `item.id`) stay required on the way out — a plain `ItemSnapshot ->
- * ItemSnapshot` signature would make Prisma's `create` calls think `title` might be missing.
+ * Generic over the input so `recreate_item`'s required `title`/`categoryId` stay required on
+ * the way out — a plain `ItemSnapshot -> ItemSnapshot` signature would make Prisma's `create`
+ * think `title` might be missing.
  */
 function revive<T extends ItemSnapshot>(
   snapshot: T
@@ -75,6 +76,11 @@ function revive<T extends ItemSnapshot>(
   const out = { ...rest } as Omit<T, "remindAt" | "recurrenceEnd"> & { remindAt?: Date | null; recurrenceEnd?: Date | null };
   if (remindAt !== undefined) out.remindAt = remindAt === null ? null : new Date(remindAt);
   if (recurrenceEnd !== undefined) out.recurrenceEnd = recurrenceEnd === null ? null : new Date(recurrenceEnd);
+  // shortcut: entries journalled before migration 20261119000000 can still carry the dropped
+  // `googleEventId` / `recurring` keys; remove these two once 24h (one undo window) has passed since deploy.
+  const legacy = out as Record<string, unknown>;
+  delete legacy.googleEventId;
+  delete legacy.recurring;
   for (const key of Object.keys(out) as (keyof typeof out)[]) {
     if (out[key] === undefined) delete out[key];
   }
@@ -93,21 +99,23 @@ type UndoTally = { failed: number; total: number };
  */
 async function applyUndo(op: UndoOp, user: UndoUser): Promise<UndoTally | void> {
   switch (op.op) {
-    case "noop":
-      return;
-
     case "delete_item":
       // deleteMany, not delete: undoing an undo (or a race with a second delete) can find the
       // row already gone, and that's not an error.
       await prisma.item.deleteMany({ where: { id: op.itemId, userId: user.id } });
       return;
 
-    case "restore_item":
+    case "restore_item": {
+      // Reopening a completed repeating item must also take back the copy completing it made.
+      const reopening = op.fields.status !== undefined && op.fields.status !== "done";
+      const row = reopening ? await prisma.item.findFirst({ where: { id: op.itemId, userId: user.id } }) : null;
       await prisma.item.updateMany({
         where: { id: op.itemId, userId: user.id },
         data: revive(op.fields),
       });
+      if (row?.status === "done" && row.recurrenceRule) await dropAutoSuccessor(row);
       return;
+    }
 
     case "recreate_item":
       try {
@@ -129,24 +137,10 @@ async function applyUndo(op: UndoOp, user: UndoUser): Promise<UndoTally | void> 
       await updateEvent(user.googleRefreshToken, op.calendarId, op.eventId, op.fields, user.timezone);
       return;
 
-    case "recreate_event": {
+    case "recreate_event":
       if (!user.googleRefreshToken) return;
-      // A deleted Google event can't keep its old id, which is exactly why the item (if any)
-      // has to be recreated pointing at whatever id the new event gets.
-      const created = await createEvent(user.googleRefreshToken, op.calendarId, op.event, user.timezone);
-      if (op.item) {
-        try {
-          // `revive` carries `id` through from `op.item` (it's just another own property of
-          // the object), so it isn't repeated here.
-          await prisma.item.create({
-            data: { userId: user.id, ...revive(op.item), googleEventId: created.id },
-          });
-        } catch (error) {
-          if (!isAlreadyExists(error)) throw error;
-        }
-      }
+      await createEvent(user.googleRefreshToken, op.calendarId, op.event, user.timezone);
       return;
-    }
 
     case "delete_category":
       await prisma.category.deleteMany({ where: { id: op.categoryId, userId: user.id } });

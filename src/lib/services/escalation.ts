@@ -19,6 +19,13 @@ export const LADDER: Rung[] = [
 export const MAX_ESCALATION_STAGE = LADDER.length;
 
 /**
+ * A task with a date and no time is due "some time that day". Counting down to 23:59 sent
+ * "Due soon" at 21:59 and "Overdue" at 23:59, before it was overdue; its pushes count down to
+ * this hour the next morning instead, so "Due" lands that morning and "Overdue" the next.
+ */
+export const UNTIMED_DEADLINE = "09:00";
+
+/**
  * The rung this item should be on now, or null if it is already there (or past everything).
  * Stage numbers are 1-based positions in the ladder.
  *
@@ -29,10 +36,15 @@ export const MAX_ESCALATION_STAGE = LADDER.length;
  */
 export function nextEscalation(
   hoursUntilDue: number,
-  currentStage: number
+  currentStage: number,
+  { hoursAtCreation = Infinity, untimed = false }: { hoursAtCreation?: number; untimed?: boolean } = {}
 ): { stage: number; label: string } | null {
   let matchIndex = -1;
   for (let i = 0; i < LADDER.length; i++) {
+    // A rung the item was created inside is old news: "/todo call bank today" pinged "Due"
+    // a minute later. "Due soon (in N min)" means nothing for a task with no time.
+    if (LADDER[i].hoursBefore >= hoursAtCreation) continue;
+    if (untimed && i === 1) continue;
     if (LADDER[i].hoursBefore >= hoursUntilDue) matchIndex = i;
   }
   if (matchIndex === -1) return null;
@@ -84,9 +96,8 @@ function countdownLabel(daysUntilDue: number, hoursUntilDue: number, minutesUnti
 /**
  * The badge for one deadline, or null when there is no deadline to describe.
  *
- * An item with a due date but no due time is treated as due at end of day — the same
- * assumption the escalation cron makes (`item.dueTime ?? "23:59"`), so a row and its push
- * agree about when "today" runs out.
+ * An item with a due date but no due time is treated as due at end of day, so the row turns
+ * "overdue" once that day is over. (Pushes wait until the next morning; see UNTIMED_DEADLINE.)
  */
 export function deadlineUrgency(
   dueDate: string | null,

@@ -10,7 +10,9 @@ const mockPrisma = vi.hoisted(() => ({
     deleteMany: vi.fn(),
     findUnique: vi.fn(),
     findUniqueOrThrow: vi.fn(),
+    count: vi.fn(),
   },
+  user: { findUnique: vi.fn(async () => ({ timezone: "Asia/Singapore" })) },
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -26,7 +28,6 @@ import {
   updateItem,
   deleteItem,
   getDueItems,
-  createNextOccurrence,
   OPEN_STATUSES,
   nextDueDate,
   listSeries,
@@ -36,7 +37,7 @@ import {
 
 /**
  * A full item row as `prisma.item.findUnique`/`findMany` would return it, including the
- * newer columns (`seriesId`, `calendarSyncedAt`). Used wherever a test
+ * `seriesId` column. Used wherever a test
  * needs a realistic "before" row rather than a hand-picked handful of fields.
  */
 const baseItem = (over: Record<string, unknown> = {}) => ({
@@ -51,12 +52,9 @@ const baseItem = (over: Record<string, unknown> = {}) => ({
   dueDate: "2026-06-01",
   dueTime: null,
   remindAt: null,
-  recurring: "none",
   recurrenceRule: null,
   recurrenceEnd: null,
-  googleEventId: null,
   parentId: null,
-  calendarSyncedAt: null,
   notificationStage: 0,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -72,6 +70,7 @@ describe("ItemService", () => {
     // the tests that care about losing it say so explicitly.
     mockPrisma.item.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.item.findUniqueOrThrow.mockResolvedValue({ id: "i1", status: "done", category: { name: "General" } });
+    mockPrisma.item.count.mockResolvedValue(0); // no later occurrence in the run unless a test says so
   });
 
   it("creates an item", async () => {
@@ -228,24 +227,6 @@ describe("ItemService", () => {
     });
   });
 
-  it("creates next occurrence for daily recurring", () => {
-    const base = new Date("2026-05-16T17:00:00Z");
-    const next = createNextOccurrence(base, "daily");
-    expect(next!.toISOString()).toBe("2026-05-17T17:00:00.000Z");
-  });
-
-  it("creates next occurrence for weekly recurring", () => {
-    const base = new Date("2026-05-16T17:00:00Z");
-    const next = createNextOccurrence(base, "weekly");
-    expect(next!.toISOString()).toBe("2026-05-23T17:00:00.000Z");
-  });
-
-  it("creates next occurrence for monthly recurring", () => {
-    const base = new Date("2026-05-16T17:00:00Z");
-    const next = createNextOccurrence(base, "monthly");
-    expect(next!.toISOString()).toBe("2026-06-16T17:00:00.000Z");
-  });
-
   describe("nextDueDate", () => {
     it("FREQ=DAILY advances exactly one calendar day", () => {
       expect(nextDueDate("2026-06-01", "FREQ=DAILY")).toBe("2026-06-02");
@@ -333,7 +314,6 @@ describe("ItemService", () => {
         dueDate: "2026-06-01",
         dueTime: "08:00",
         remindAt: null,
-        recurring: "none",
         recurrenceRule: "FREQ=WEEKLY",
         recurrenceEnd: null,
         status: "pending",
@@ -354,8 +334,7 @@ describe("ItemService", () => {
           priority: "high",
           dueDate: "2026-06-08",
           dueTime: "08:00",
-          recurring: "none",
-          recurrenceRule: "FREQ=WEEKLY",
+            recurrenceRule: "FREQ=WEEKLY",
           recurrenceEnd: null,
         },
         include: { category: true },
@@ -374,7 +353,6 @@ describe("ItemService", () => {
         dueDate: "2026-06-01",
         dueTime: null,
         remindAt: null,
-        recurring: "none",
         recurrenceRule: "FREQ=WEEKLY",
         recurrenceEnd: null,
         status: "pending",
@@ -395,32 +373,51 @@ describe("ItemService", () => {
           priority: "medium",
           dueDate: "2026-06-08",
           dueTime: null,
-          recurring: "none",
-          recurrenceRule: "FREQ=WEEKLY",
+            recurrenceRule: "FREQ=WEEKLY",
           recurrenceEnd: null,
         },
         include: { category: true },
       });
     });
 
-    it("does not roll forward when the item has a remindAt (the cron owns that path)", async () => {
-      const before = baseItem({
-        recurrenceRule: "FREQ=DAILY",
-        dueDate: "2026-06-01",
-        remindAt: new Date("2026-06-01T09:00:00.000Z"),
-        status: "pending",
-      });
+    // The cron never fires a done item, so a daily reminder ticked off before it rang used to
+    // end the series there.
+    it("makes the next reminder when a repeating one is ticked off before it rings", async () => {
+      const ringsAt = new Date(Date.now() + 10 * 60_000);
+      const before = baseItem({ recurrenceRule: "FREQ=DAILY", dueDate: null, remindAt: ringsAt, status: "pending" });
       mockPrisma.item.findUnique.mockResolvedValue(before);
-      mockPrisma.item.update.mockResolvedValue({ id: "i1", status: "done", category: { name: "General" } });
+      mockPrisma.item.create.mockResolvedValue({ id: "i2", category: { name: "General" } });
 
       await updateItem("i1", "u1", { status: "done" });
 
-      expect(mockPrisma.item.create).not.toHaveBeenCalled();
+      expect(mockPrisma.item.create).toHaveBeenCalledTimes(1);
+      const next = mockPrisma.item.create.mock.calls[0][0].data.remindAt as Date;
+      expect(next.getTime() - ringsAt.getTime()).toBe(24 * 60 * 60_000);
+    });
+
+    // Ticking a repeating task made next week's copy; un-ticking left both open.
+    it("takes back the copy completing it made when a repeating task is reopened", async () => {
+      const completedAt = new Date("2026-06-01T10:00:00.000Z");
+      const before = baseItem({ seriesId: "s1", recurrenceRule: "FREQ=WEEKLY", status: "done", updatedAt: completedAt });
+      mockPrisma.item.findUnique.mockResolvedValue(before);
+      mockPrisma.item.update.mockResolvedValue({ id: "i1", status: "pending", category: { name: "General" } });
+
+      await updateItem("i1", "u1", { status: "pending" });
+
+      expect(mockPrisma.item.deleteMany).toHaveBeenCalledWith({
+        where: {
+          userId: "u1",
+          seriesId: "s1",
+          id: { not: "i1" },
+          status: { not: "done" },
+          remindAt: null,
+          createdAt: { gte: completedAt, lte: new Date(completedAt.getTime() + 60_000) },
+        },
+      });
     });
 
     it("does not roll forward a non-recurring item", async () => {
       const before = baseItem({
-        recurring: "none",
         recurrenceRule: null,
         dueDate: "2026-06-01",
         status: "pending",
@@ -478,45 +475,25 @@ describe("ItemService", () => {
       expect(mockPrisma.item.create).not.toHaveBeenCalled();
     });
 
-    it("still rolls forward a legacy recurring item with no recurrenceRule", async () => {
-      const before = baseItem({
-        id: "i1",
-        userId: "u1",
-        categoryId: "cat-1",
-        seriesId: null,
-        title: "Take out the trash",
-        description: null,
-        priority: "medium",
-        dueDate: "2026-06-01",
-        dueTime: null,
-        remindAt: null,
-        recurring: "weekly",
-        recurrenceRule: null,
-        recurrenceEnd: null,
-        status: "pending",
-      });
+    // Undo a completion and complete it again: the first completion already made next week's
+    // copy, so making another would put two of every occurrence in the run from then on.
+    it("does not roll forward when the run already holds a later open occurrence", async () => {
+      const before = baseItem({ seriesId: "series-1", recurrenceRule: "FREQ=WEEKLY", dueDate: "2026-06-01", status: "pending" });
       mockPrisma.item.findUnique.mockResolvedValue(before);
-      mockPrisma.item.update.mockResolvedValue({ id: "i1", status: "done", category: { name: "General" } });
-      mockPrisma.item.create.mockResolvedValue({ id: "i2", category: { name: "General" } });
+      mockPrisma.item.count.mockResolvedValue(1);
 
       await updateItem("i1", "u1", { status: "done" });
 
-      expect(mockPrisma.item.create).toHaveBeenCalledWith({
-        data: {
+      expect(mockPrisma.item.count).toHaveBeenCalledWith({
+        where: {
           userId: "u1",
-          categoryId: "cat-1",
-          seriesId: "i1",
-          title: "Take out the trash",
-          description: null,
-          priority: "medium",
-          dueDate: "2026-06-08",
-          dueTime: null,
-          recurring: "weekly",
-          recurrenceRule: null,
-          recurrenceEnd: null,
+          seriesId: "series-1",
+          id: { not: "i1" },
+          status: { not: "done" },
+          createdAt: { gt: new Date("2026-01-01T00:00:00.000Z") },
         },
-        include: { category: true },
       });
+      expect(mockPrisma.item.create).not.toHaveBeenCalled();
     });
   });
 

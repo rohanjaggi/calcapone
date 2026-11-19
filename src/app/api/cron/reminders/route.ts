@@ -3,8 +3,7 @@ import {
   getDueItems,
   claimDueReminder,
   restoreDueReminder,
-  createNextOccurrence,
-  createItem,
+  createNextReminder,
   getEscalationCandidates,
   updateNotificationStage,
   claimNotificationStage,
@@ -12,13 +11,13 @@ import {
 import { sendMessage, b, TelegramBlockedError } from "@/lib/services/telegram";
 import { reminderKeyboard, doneOnlyKeyboard } from "@/lib/services/callbacks";
 import { shouldNotify, isQuietHours, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
-import { LADDER, nextEscalation, type Rung } from "@/lib/services/escalation";
+import { LADDER, nextEscalation, UNTIMED_DEADLINE, type Rung } from "@/lib/services/escalation";
 import { pruneOldMessages } from "@/lib/services/conversation";
 import { pruneActionLog } from "@/lib/services/action-log";
 import { pruneMessageRefs, rememberMessageRef } from "@/lib/services/message-ref";
 import { prunePendingActions } from "@/lib/services/pending-action";
 import { notifyOwner } from "@/lib/services/alert";
-import { formatDateInTz, formatHHmmInTz, isValidTz } from "@/lib/tz";
+import { formatDateInTz, formatHHmmInTz, isValidTz, addDays } from "@/lib/tz";
 
 export const maxDuration = 60;
 
@@ -57,10 +56,9 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const isRecurring = Boolean(item.recurrenceRule) || item.recurring !== "none";
       // Pure reminders and recurring occurrences complete on fire; dated tasks stay open
       // so deadline escalation can follow up.
-      const markDone = !item.dueDate || isRecurring;
+      const markDone = !item.dueDate || Boolean(item.recurrenceRule);
 
       // Claim first so an overlapping run can't double-send or fork the series.
       if (!(await claimDueReminder(item.id, markDone))) {
@@ -71,6 +69,10 @@ export async function POST(request: NextRequest) {
       const originalRemindAt = item.remindAt;
 
       try {
+        // Before the send, inside the restore: if this write fails the reminder is handed back
+        // and retried, instead of being sent with its series silently ended.
+        await createNextReminder(item, item.user.timezone, now);
+
         const chatId = Number(item.user.telegramId);
         const messageId = await sendMessage(chatId, `🔔 ${b("Reminder:")} ${b(item.title)}`, {
           keyboard: reminderKeyboard(item.id),
@@ -99,30 +101,6 @@ export async function POST(request: NextRequest) {
       }
 
       sent++;
-
-      if (isRecurring && item.remindAt) {
-        const nextRemindAt = createNextOccurrence(item.remindAt, item.recurring, item.recurrenceRule, now);
-
-        if (nextRemindAt && (!item.recurrenceEnd || nextRemindAt <= item.recurrenceEnd)) {
-          await createItem({
-            userId: item.userId,
-            categoryId: item.categoryId,
-            title: item.title,
-            description: item.description,
-            priority: item.priority,
-            // seriesId has to ride along, same as rollForwardDatedSeries's due-date path —
-            // otherwise occurrence two comes back detached from its run and "stop the daily
-            // meds reminder" can no longer reach it.
-            seriesId: item.seriesId ?? item.id,
-            dueDate: item.dueDate ? formatDateInTz(nextRemindAt, item.user.timezone) : null,
-            dueTime: item.dueTime,
-            remindAt: nextRemindAt,
-            recurring: item.recurring,
-            recurrenceRule: item.recurrenceRule,
-            recurrenceEnd: item.recurrenceEnd,
-          });
-        }
-      }
     } catch (error) {
       console.error(`[cron:reminders] item ${item.id}:`, error instanceof Error ? error.message : error);
       errors++;
@@ -142,10 +120,13 @@ export async function POST(request: NextRequest) {
       const userNowStr = formatDateInTz(now, item.user.timezone);
       const userTimeStr = formatHHmmInTz(now, item.user.timezone);
 
-      const dueTime = item.dueTime ?? "23:59";
-
-      const dueMinutes = toMinutes(item.dueDate, dueTime);
+      const tz = item.user.timezone;
+      const untimed = !item.dueTime;
+      const dueMinutes = untimed
+        ? toMinutes(addDays(item.dueDate, 1), UNTIMED_DEADLINE)
+        : toMinutes(item.dueDate, item.dueTime!);
       const nowMinutes = toMinutes(userNowStr, userTimeStr);
+      const createdMinutes = toMinutes(formatDateInTz(item.createdAt, tz), formatHHmmInTz(item.createdAt, tz));
       // A malformed dueDate/dueTime yields NaN, and every comparison below would silently
       // be false — the item would never escalate. Surface it instead of losing it.
       if (!Number.isFinite(dueMinutes) || !Number.isFinite(nowMinutes)) {
@@ -156,9 +137,10 @@ export async function POST(request: NextRequest) {
       const minutesUntilDue = dueMinutes - nowMinutes;
       const hoursUntilDue = minutesUntilDue / 60;
 
-      // The ladder is per-kind (an exam wants a week's notice, a task doesn't) — see
-      // src/lib/services/escalation.ts. This just turns the picked rung into a message.
-      const next = nextEscalation(hoursUntilDue, item.notificationStage);
+      const next = nextEscalation(hoursUntilDue, item.notificationStage, {
+        hoursAtCreation: (dueMinutes - createdMinutes) / 60,
+        untimed,
+      });
 
       if (next) {
         // Ticks are ~60s apart while maxDuration is 60s, so two runs can overlap. Claiming

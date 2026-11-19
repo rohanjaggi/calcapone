@@ -6,6 +6,7 @@ import { getEvents } from "@/lib/services/calendar";
 import { sendMessage, esc, b } from "@/lib/services/telegram";
 import { decryptUserApiKey } from "@/lib/services/user";
 import { chatWithAi } from "@/lib/services/ai";
+import { todaySelection } from "@/lib/services/commands/handlers";
 import { formatHHmmInTz, todayInTz, startOfDayInTz, endOfDayInTz, hhmmToMinutes, isValidTz } from "@/lib/tz";
 
 export const maxDuration = 60;
@@ -37,8 +38,9 @@ export async function POST(request: NextRequest) {
 
       // in_progress counts too — a task you started is still on today's plate.
       const pending = await listItems(user.id, { status: OPEN_STATUSES });
-      const overdue = pending.filter((i) => i.dueDate && i.dueDate < todayStr && !i.remindAt);
-      const todayItems = pending.filter((i) => i.dueDate === todayStr);
+      // The same selection /today shows, so the two can't disagree about what today holds.
+      const { overdue, todayItems: due, todayReminders } = todaySelection(pending, user.timezone, todayStr);
+      const todayItems = [...due, ...todayReminders];
 
       let calendarSummary = "";
       if (user.googleRefreshToken) {
@@ -56,7 +58,13 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const taskLines = todayItems.map((i) => `- ${i.title}`).join("\n") || "none";
+      const taskLines =
+        todayItems
+          .map((i) => {
+            const at = i.remindAt ? formatHHmmInTz(i.remindAt, user.timezone) : i.dueTime;
+            return `- ${at ? `${at} ` : ""}${i.title}`;
+          })
+          .join("\n") || "none";
       const overdueLines = overdue.length > 0 ? `\nOverdue: ${overdue.map((i) => i.title).join(", ")}` : "";
 
       const aiConfig = {
