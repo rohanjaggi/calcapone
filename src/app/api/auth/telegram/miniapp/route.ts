@@ -18,8 +18,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid Telegram data" }, { status: 401 });
   }
 
-  const user = await findOrCreateUser(BigInt(telegramUser.id), displayNameFor(telegramUser));
-  const token = await createSessionToken(user.id);
+  // The Telegram data is fine past this point, so a failure here is ours (typically the
+  // database being unreachable, e.g. a paused Supabase project). Say so with a 503 so the
+  // login screen can tell the user to retry instead of to reopen the app.
+  let token: string;
+  try {
+    const user = await findOrCreateUser(BigInt(telegramUser.id), displayNameFor(telegramUser));
+    token = await createSessionToken(user.id);
+  } catch (error) {
+    console.error("[auth] mini app sign-in failed:", error instanceof Error ? error.message : error);
+    return NextResponse.json({ error: "unavailable" }, { status: 503 });
+  }
 
   const response = NextResponse.json({ ok: true });
   response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
