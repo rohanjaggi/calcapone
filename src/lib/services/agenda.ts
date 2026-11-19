@@ -1,16 +1,18 @@
 import { prisma } from "@/lib/prisma";
-import { listItems, OPEN_STATUSES } from "@/lib/services/item";
+import { listItems, OPEN_STATUSES, toClientItem } from "@/lib/services/item";
 import { listCategories } from "@/lib/services/category";
 import { buildTimeline } from "@/lib/timeline";
-import { startOfDayInTz, endOfDayInTz, todayInTz, combineDateTimeInTz } from "@/lib/tz";
+import { startOfDayInTz, endOfDayInTz, todayInTz, combineDateTimeInTz, addDays } from "@/lib/tz";
 import { deadlineUrgency, type Severity, type Urgency } from "@/lib/services/escalation";
-import type { Item, AgendaEvent, TimelineItem } from "@/lib/mock-data";
+import type { Item, AgendaEvent, TimelineItem } from "@/lib/types";
 import type { Priority } from "@/generated/prisma/enums";
 
 export type AheadItem = {
   id: string;
   title: string;
   dueDate: string;
+  /** Lets the dashboard link a deadline to its list page, even when it falls outside the week. */
+  categoryId: string;
   categoryName: string;
   color: string;
   urgency: Urgency;
@@ -25,7 +27,8 @@ export type Agenda = {
   /**
    * The nearest deadlines regardless of which day is selected, overdue first. The timeline
    * answers "what is on this day"; without this the dashboard could not answer "what is
-   * coming that I should worry about" without hunting day by day.
+   * coming that I should worry about" without hunting day by day. Only the first may be due
+   * today, since the Today card already lists the rest.
    */
   ahead: AheadItem[];
 };
@@ -39,12 +42,6 @@ export const AHEAD_LIMIT = 5;
 const SEVERITY_RANK: Record<Severity, number> = { overdue: 0, urgent: 1, soon: 2, upcoming: 3 };
 
 const DEFAULT_CATEGORY_COLOR = "#92785C";
-
-/** Shift a "YYYY-MM-DD" by whole days without routing through a local-time Date. */
-function shiftDate(dateStr: string, days: number): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
-}
 
 /**
  * Everything the dashboard renders, in one payload.
@@ -72,7 +69,7 @@ export async function getAgenda(
   days: number = AGENDA_DAYS,
   now: Date = new Date()
 ): Promise<Agenda> {
-  const dates = Array.from({ length: days }, (_, i) => shiftDate(anchorDate, i));
+  const dates = Array.from({ length: days }, (_, i) => addDays(anchorDate, i));
   const windowStart = startOfDayInTz(dates[0], tz);
   const windowEnd = endOfDayInTz(dates[dates.length - 1], tz);
 
@@ -101,23 +98,7 @@ export async function getAgenda(
     allDay: e.allDay,
   }));
 
-  const items: Item[] = openItems.map((item) => ({
-    id: item.id,
-    title: item.title,
-    description: item.description,
-    status: item.status,
-    priority: item.priority,
-    category: {
-      id: item.category.id,
-      name: item.category.name,
-      color: item.category.color ?? DEFAULT_CATEGORY_COLOR,
-    },
-    dueDate: item.dueDate,
-    dueTime: item.dueTime,
-    remindAt: item.remindAt?.toISOString() ?? null,
-    recurring: item.recurring,
-    googleEventId: item.googleEventId ?? null,
-  }));
+  const items: Item[] = openItems.map((item) => toClientItem(item, tz));
 
   const byDay: Record<string, TimelineItem[]> = {};
   for (const date of dates) byDay[date] = buildTimeline(items, events, tz, date, now);
@@ -138,11 +119,14 @@ export async function getAgenda(
 
   const todayStr = todayInTz(tz, now);
   const ahead: AheadItem[] = openItems
-    .filter((item) => item.dueDate && !item.remindAt)
+    // Deadlines with a reminder count too: they're still due, and dropping them hid an essay
+    // due Friday from "Coming up" until its Thursday reminder rang.
+    .filter((item) => item.dueDate)
     .map((item) => ({
       id: item.id,
       title: item.title,
       dueDate: item.dueDate!,
+      categoryId: item.category.id,
       categoryName: item.category.name,
       color: item.category.color ?? DEFAULT_CATEGORY_COLOR,
       urgency: deadlineUrgency(item.dueDate, item.dueTime, todayStr, now, (d, t) =>
@@ -151,6 +135,9 @@ export async function getAgenda(
     }))
     // Soonest first, overdue at the top — the ordering someone scanning for trouble expects.
     .sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))
+    // Home shows the first as its "most pressing" card. Past that, today's deadlines are left
+    // out: the Today card already lists them, and repeats pushed later ones off the screen.
+    .filter((item, i) => i === 0 || item.dueDate !== todayStr)
     .slice(0, AHEAD_LIMIT);
 
   const categories = categoryRows.map((c) => ({

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildTimeline } from "@/lib/timeline";
-import type { Item, AgendaEvent } from "@/lib/mock-data";
+import type { Item, AgendaEvent } from "@/lib/types";
 import { combineDateTimeInTz } from "@/lib/tz";
 
 const SG = "Asia/Singapore";
@@ -18,8 +18,8 @@ function item(overrides: Partial<Item> & { id: string }): Item {
     dueDate: null,
     dueTime: null,
     remindAt: null,
-    recurring: "none",
-    googleEventId: null,
+    remindLocal: null,
+    repeat: null,
     ...overrides,
   };
 }
@@ -40,8 +40,17 @@ describe("buildTimeline", () => {
     const items = [item({ id: "now", dueDate: TODAY, dueTime: "08:00" })];
     const timeline = buildTimeline(items, [], SG, TODAY);
     expect(timeline).toHaveLength(1);
-    expect(timeline[0].time).toBe("2026-08-20T08:00:00");
+    // An instant, not a bare wall-clock string: read on a UTC server, "08:00:00" with no zone
+    // rendered as 4pm in Singapore and sorted after the afternoon.
+    expect(timeline[0].time).toBe("2026-08-20T00:00:00.000Z");
     expect(timeline[0].isReminder).toBe(false);
+  });
+
+  it("shows a deadline on its due day even when its reminder rings on another day", () => {
+    // "Essay due Fri, remind Thu 20:00" used to vanish from Friday.
+    const essay = item({ id: "essay", dueDate: "2026-08-21", dueTime: "17:00", remindAt: "2026-08-20T12:00:00.000Z" });
+    expect(buildTimeline([essay], [], SG, TODAY).map((t) => [t.id, t.isReminder])).toEqual([["essay", true]]);
+    expect(buildTimeline([essay], [], SG, "2026-08-21").map((t) => [t.id, t.isReminder])).toEqual([["essay", false]]);
   });
 
   it("includes an item due today with no due time, at the head of the day", () => {

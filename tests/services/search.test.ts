@@ -65,6 +65,15 @@ describe("searchItems", () => {
     expect(results.find((r) => r.title === "Client meeting prep")?.type).toBe("reminder");
   });
 
+  // ORing the words made "pay the rent" match anything containing "the".
+  it("requires every word of the query to appear", async () => {
+    mockFindMany.mockResolvedValue(threeKeywordHits);
+    await searchItems("user-1", "pay rent");
+    const where = mockFindMany.mock.calls[0][0].where;
+    expect(where.AND).toHaveLength(2);
+    expect(where.AND[0].OR[0]).toEqual({ title: { contains: "pay", mode: "insensitive" } });
+  });
+
   it("returns empty for an empty query", async () => {
     const results = await searchItems("user-1", "");
     expect(results).toEqual([]);
@@ -88,6 +97,19 @@ describe("searchItems", () => {
 
     expect(mockGenerateEmbedding).toHaveBeenCalledWith("shopping");
     expect(results.map((r) => r.id)).toEqual(["1", "2"]);
+  });
+
+  // A fixed 0.3 bar let "groceries" pull in "Pay rent" (0.35) beside "Buy milk" (0.42).
+  it("keeps only semantic hits close to the best match", async () => {
+    mockFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([groceries, clientPrep]);
+    mockQueryRaw.mockResolvedValue([
+      { id: "1", similarity: 0.42 },
+      { id: "2", similarity: 0.39 },
+      { id: "3", similarity: 0.35 },
+    ]);
+
+    await searchItems("user-1", "shopping");
+    expect(mockFindMany.mock.calls[1][0].where).toEqual({ id: { in: ["1", "2"] } });
   });
 
   it("does not duplicate an item found by both passes", async () => {

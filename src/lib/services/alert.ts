@@ -22,11 +22,6 @@ function ownerChatId(): bigint | null {
   }
 }
 
-/** Test seam: forget the cooldown window. */
-export function resetAlertCooldown(): void {
-  lastSent.clear();
-}
-
 /**
  * DM the owner about an unexpected failure. Never throws and never blocks the caller's own
  * error handling — a broken alert path must not make the original fault worse.

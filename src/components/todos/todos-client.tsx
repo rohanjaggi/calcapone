@@ -1,637 +1,230 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence, useMotionValue, useTransform } from "motion/react";
-import { Bell, Plus, ChevronRight, Inbox, Trash2, Pencil, X, MoreHorizontal, GripVertical, ListTodo } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { Plus, ChevronRight, ChevronDown, MoreHorizontal, GripVertical } from "lucide-react";
 import Link from "next/link";
 import {
   DndContext,
   DragOverlay,
   closestCorners,
-  pointerWithin,
   PointerSensor,
   TouchSensor,
   useSensor,
   useSensors,
   type DragStartEvent,
-  type DragOverEvent,
   type DragEndEvent,
-  type CollisionDetection,
 } from "@dnd-kit/core";
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
-  arrayMove,
-} from "@dnd-kit/sortable";
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { toggleItemStatus, removeItem, editItem, editCategory, removeCategory, reorderCategoriesAction, moveItemToCategory } from "@/app/actions";
-import { statusIcon, formatTime, priorityColors, priorityLabels } from "@/lib/task-constants";
+import { editCategory, removeCategory, reorderCategoriesAction } from "@/app/actions";
 import { CreateItemSheet } from "@/components/todos/create-item-sheet";
+import { EditItemSheet } from "@/components/todos/edit-item-sheet";
+import { ListActionsSheet } from "@/components/todos/list-actions-sheet";
+import { TaskRow } from "@/components/todos/task-row";
+import { useOptimisticItems } from "@/components/todos/use-optimistic-items";
+import { SearchDialog } from "@/components/search/search-dialog";
 import { useToast } from "@/components/ui/toast";
-import { confirmAction } from "@/lib/telegram-webapp";
-import type { Item, Category } from "@/lib/mock-data";
-import type { Priority } from "@/generated/prisma/enums";
+import { confirmAction, haptic } from "@/lib/telegram-webapp";
+import { listColor } from "@/lib/list-colors";
+import type { Item, Category } from "@/lib/types";
 
-function ItemRow({
-  item,
-  index,
-  onToggle,
-  onDelete,
-  onEdit,
-  editMode,
-  dragListeners,
-}: {
-  item: Item;
-  index: number;
+type RowHandlers = {
+  today: string;
   onToggle: (id: string, current: Item["status"]) => void;
   onDelete: (id: string) => void;
   onEdit: (item: Item) => void;
-  editMode?: boolean;
-  dragListeners?: Record<string, unknown>;
-}) {
-  const Icon = statusIcon[item.status];
-  const isDone = item.status === "done";
-  const x = useMotionValue(0);
-  const [swiping, setSwiping] = useState(false);
+};
 
-  const bgOpacity = useTransform(x, [-120, -60, 0], [1, 0.8, 0]);
-
-  return (
-    <div
-      className={`relative overflow-hidden ${
-        index > 0 ? "border-t border-border/30" : ""
-      } ${isDone ? "opacity-40" : ""}`}
-    >
-      <motion.div
-        className="absolute inset-y-0 right-0 flex items-center gap-0"
-        style={{ opacity: bgOpacity }}
-      >
-        <button
-          onClick={() => onEdit(item)}
-          className="h-full w-14 flex items-center justify-center bg-secondary"
-        >
-          <Pencil className="w-4 h-4 text-foreground/70" />
-        </button>
-        <button
-          onClick={() => onDelete(item.id)}
-          className="h-full w-14 flex items-center justify-center bg-destructive"
-        >
-          <Trash2 className="w-4 h-4 text-white" />
-        </button>
-      </motion.div>
-
-      <motion.div
-        className="relative z-10 bg-card flex items-center gap-3 px-4 py-3"
-        drag="x"
-        dragConstraints={{ left: -200, right: 0 }}
-        dragElastic={0.1}
-        style={{ x }}
-        onDragStart={() => setSwiping(true)}
-        onDragEnd={(_, info) => {
-          setSwiping(false);
-          const threshold = -120;
-          if (info.offset.x < threshold) {
-            onDelete(item.id);
-          }
-        }}
-      >
-        <button
-          onClick={() => !swiping && onToggle(item.id, item.status)}
-          className="shrink-0 active:scale-90 transition-transform duration-150"
-        >
-          <Icon
-            className={`w-[18px] h-[18px] ${
-              isDone
-                ? "text-sage"
-                : item.status === "in_progress"
-                ? "text-primary animate-spin [animation-duration:3s]"
-                : "text-muted-foreground/40"
-            }`}
-          />
-        </button>
-
-        {editMode && (
-          <div
-            className="shrink-0 p-1 -m-1 cursor-grab active:cursor-grabbing"
-            style={{ touchAction: "none" }}
-            {...(dragListeners as React.HTMLAttributes<HTMLDivElement>)}
-          >
-            <GripVertical className="w-3.5 h-3.5 text-muted-foreground/40" />
-          </div>
-        )}
-
-        <div className="flex-1 min-w-0">
-          <p
-            className={`text-sm leading-snug truncate ${
-              isDone ? "line-through text-muted-foreground" : "text-foreground"
-            }`}
-          >
-            {item.remindAt && !isDone && (
-              <span className="inline-flex items-center gap-0.5 mr-1.5 text-muted-foreground/70">
-                <Bell className="w-3 h-3" />
-                {item.dueTime && (
-                  <span className="text-[11px]">{formatTime(item.dueTime)}</span>
-                )}
-              </span>
-            )}
-            {item.title}
-          </p>
-        </div>
-
-        {!editMode && !isDone && (
-          <span
-            className="shrink-0 text-[10px] font-medium capitalize px-2 py-0.5 rounded-full border"
-            style={{ color: priorityColors[item.priority], borderColor: `${priorityColors[item.priority]}40` }}
-          >
-            {item.priority}
-          </span>
-        )}
-        {isDone && !editMode && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.2 }}
-            onClick={() => onDelete(item.id)}
-            className="shrink-0 text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all duration-150"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </motion.button>
-        )}
-      </motion.div>
-      {item.subtasks && item.subtasks.length > 0 && (
-        <div className="pl-10 border-t border-border/20">
-          {item.subtasks.map((sub, si) => {
-            const SubIcon = statusIcon[sub.status];
-            return (
-              <div
-                key={sub.id}
-                className={`flex items-center gap-3 px-4 py-2 ${si > 0 ? "border-t border-border/15" : ""} ${sub.status === "done" ? "opacity-40" : ""}`}
-              >
-                <button
-                  onClick={() => onToggle(sub.id, sub.status)}
-                  className="shrink-0 active:scale-90 transition-transform duration-150"
-                >
-                  <SubIcon
-                    className={`w-[14px] h-[14px] ${sub.status === "done" ? "text-sage" : "text-muted-foreground/30"}`}
-                  />
-                </button>
-                <p className={`text-xs leading-snug truncate ${sub.status === "done" ? "line-through text-muted-foreground" : "text-foreground/80"}`}>
-                  {sub.title}
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SortableItemRow({
-  item,
-  index,
-  editMode,
-  onToggle,
-  onDelete,
-  onEdit,
-}: {
-  item: Item;
-  index: number;
-  editMode: boolean;
-  onToggle: (id: string, current: Item["status"]) => void;
-  onDelete: (id: string) => void;
-  onEdit: (item: Item) => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: item.id, data: { type: "item", categoryId: item.category.id } });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.3 : 1,
-  };
-
-  return (
-    <div ref={setNodeRef} style={style} {...attributes}>
-      <ItemRow
-        item={item}
-        index={index}
-        onToggle={onToggle}
-        onDelete={onDelete}
-        onEdit={onEdit}
-        editMode={editMode}
-        dragListeners={editMode ? (listeners as unknown as Record<string, unknown>) : undefined}
-      />
-    </div>
-  );
-}
-
-function CategoryCard({
+function ListSection({
   category,
   items,
-  cardIndex,
   editMode,
-  onToggle,
-  onDelete,
-  onEdit,
-  onCategoryRename,
-  onCategoryDelete,
   dragListeners,
+  onActions,
+  ...handlers
 }: {
   category: Category;
   items: Item[];
-  cardIndex: number;
   editMode: boolean;
-  onToggle: (id: string, current: Item["status"]) => void;
-  onDelete: (id: string) => void;
-  onEdit: (item: Item) => void;
-  onCategoryRename: (id: string, name: string) => void;
-  onCategoryDelete: (id: string) => void;
   dragListeners?: Record<string, unknown>;
-}) {
-  const [showMenu, setShowMenu] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [newName, setNewName] = useState(category.name);
-  const [saving, setSaving] = useState(false);
-  const menuBtnRef = useRef<HTMLButtonElement>(null);
-  const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
-
-  const activeItems = items.filter((i) => i.status !== "done");
-  const doneItems = items.filter((i) => i.status === "done");
-  const sorted = [...activeItems, ...doneItems];
-  const count = items.length;
-  const isOrphan = category.id === "__none__";
-
-  const handleRename = async () => {
-    if (!newName.trim() || saving) return;
-    setSaving(true);
-    onCategoryRename(category.id, newName.trim());
-    setSaving(false);
-    setRenaming(false);
-  };
+  onActions?: (category: Category) => void;
+} & RowHandlers) {
+  const sorted = [...items.filter((i) => i.status !== "done"), ...items.filter((i) => i.status === "done")];
+  const openCount = items.length - items.filter((i) => i.status === "done").length;
+  const label = (
+    <>
+      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: listColor(category.color) }} aria-hidden="true" />
+      <span id={`list-${category.id}`} className="text-[17px] font-semibold text-foreground truncate">
+        {category.name}
+      </span>
+      <span className="font-serif text-[15px] text-muted-foreground shrink-0">{openCount}</span>
+    </>
+  );
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: cardIndex * 0.08 + 0.1 }}
-      className={`bg-card border rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden ${
-        editMode ? "border-primary/25" : "border-border/50"
-      }`}
-    >
-      {/* Card header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30">
+    <section aria-labelledby={`list-${category.id}`} className="bg-card rounded-[1.5rem] overflow-hidden">
+      <div className={`flex items-center gap-1 pl-4 pr-2 pt-3 ${editMode ? "pl-1" : ""}`}>
+        {editMode && dragListeners ? (
+          <span
+            className="shrink-0 w-11 h-11 flex items-center justify-center text-faint cursor-grab active:cursor-grabbing"
+            style={{ touchAction: "none" }}
+            aria-label={`Drag to reorder ${category.name}`}
+            {...(dragListeners as React.HTMLAttributes<HTMLSpanElement>)}
+          >
+            <GripVertical className="w-4 h-4" />
+          </span>
+        ) : null}
         {editMode ? (
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div
-              className="shrink-0 p-1 -m-1 cursor-grab active:cursor-grabbing"
-              style={{ touchAction: "none" }}
-              {...(dragListeners as React.HTMLAttributes<HTMLDivElement>)}
-            >
-              <GripVertical className="w-4 h-4 text-muted-foreground/40" />
-            </div>
-            <span
-              className="w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: category.color }}
-            />
-            <span className="text-sm font-medium text-foreground flex-1 truncate">{category.name}</span>
-            <span className="text-[11px] text-muted-foreground shrink-0">
-              {count === 1 ? "1 task" : `${count} tasks`}
-            </span>
-          </div>
+          <span className="flex items-center gap-2.5 flex-1 min-w-0 min-h-11">{label}</span>
         ) : (
-          <>
-            <Link
-              href={`/todos/${category.id}`}
-              className="flex items-center gap-2 flex-1 min-w-0 group"
-            >
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: category.color }}
-              />
-              <span className="text-sm font-medium text-foreground flex-1 truncate">{category.name}</span>
-              <span className="text-[11px] text-muted-foreground shrink-0">
-                {count === 1 ? "1 task" : `${count} tasks`}
-              </span>
-              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform duration-150 shrink-0" />
-            </Link>
-            {!isOrphan && (
-              <div className="shrink-0">
-                <button
-                  ref={menuBtnRef}
-                  onClick={() => {
-                    if (!showMenu && menuBtnRef.current) {
-                      const rect = menuBtnRef.current.getBoundingClientRect();
-                      setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
-                    }
-                    setShowMenu((v) => !v);
-                  }}
-                  className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
-                >
-                  <MoreHorizontal className="w-3.5 h-3.5" />
-                </button>
-                <AnimatePresence>
-                  {showMenu && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                      transition={{ duration: 0.15 }}
-                      className="fixed w-40 bg-card border border-border/50 rounded-xl shadow-lg overflow-hidden z-50"
-                      style={{ top: menuPos.top, right: menuPos.right }}
-                    >
-                      <button
-                        onClick={() => { setRenaming(true); setShowMenu(false); }}
-                        className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-secondary transition-colors flex items-center gap-2"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                        Rename
-                      </button>
-                      <button
-                        onClick={() => { setShowMenu(false); onCategoryDelete(category.id); }}
-                        className="w-full px-4 py-2.5 text-left text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-2"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        Delete
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )}
-          </>
+          <Link href={`/todos/${category.id}`} className="flex items-center gap-2.5 flex-1 min-w-0 min-h-11 active:opacity-70">
+            {label}
+            <ChevronRight className="w-4 h-4 text-faint shrink-0" aria-hidden="true" />
+          </Link>
+        )}
+        {onActions && !editMode && (
+          <button
+            onClick={() => onActions(category)}
+            aria-label={`${category.name} options`}
+            className="shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-muted-foreground active:bg-foreground/10"
+          >
+            <MoreHorizontal className="w-5 h-5" />
+          </button>
         )}
       </div>
 
-      {/* Inline rename */}
-      <AnimatePresence>
-        {renaming && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden border-b border-border/30"
-          >
-            <div className="flex gap-2 px-4 py-2.5">
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                autoFocus
-                className="flex-1 h-8 px-3 rounded-lg border border-border/60 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-              />
-              <button
-                onClick={handleRename}
-                disabled={!newName.trim() || saving}
-                className="h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
-              >
-                {saving ? "..." : "Save"}
-              </button>
-              <button
-                onClick={() => { setRenaming(false); setNewName(category.name); }}
-                className="h-8 px-3 rounded-lg text-muted-foreground text-xs hover:bg-secondary transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {sorted.length === 0 ? (
-        <div className="px-4 py-4 text-[13px] text-muted-foreground/50 italic">
-          No tasks
-        </div>
+        // Only edit mode shows an empty list here, as a handle to reorder it.
+        <p className="mx-4 mb-3 min-h-11 flex items-center border-t border-dashed border-border text-[15px] text-faint">No tasks</p>
       ) : (
-        <div>
-          <SortableContext items={sorted.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-            <AnimatePresence>
-              {sorted.map((item, i) => (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.25 }}
-                >
-                  <SortableItemRow
-                    item={item}
-                    index={i}
-                    editMode={editMode}
-                    onToggle={onToggle}
-                    onDelete={onDelete}
-                    onEdit={onEdit}
-                  />
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </SortableContext>
+        <div className="pb-1">
+          <AnimatePresence initial={false}>
+            {sorted.map((item, i) => (
+              <motion.div
+                key={item.id}
+                layout={editMode ? false : "position"}
+                exit={{ opacity: 0, height: 0, transition: { duration: 0.22, ease: [0.4, 0, 0.2, 1] } }}
+                transition={{ layout: { type: "spring", stiffness: 420, damping: 40 } }}
+                className="overflow-hidden"
+              >
+                <TaskRow item={item} first={i === 0} editMode={editMode} {...handlers} />
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
       )}
-    </motion.div>
+    </section>
   );
 }
 
-function SortableCategoryCard({
-  category,
-  items,
-  cardIndex,
-  editMode,
-  onToggle,
-  onDelete,
-  onEdit,
-  onCategoryRename,
-  onCategoryDelete,
-}: {
-  category: Category;
-  items: Item[];
-  cardIndex: number;
-  editMode: boolean;
-  onToggle: (id: string, current: Item["status"]) => void;
-  onDelete: (id: string) => void;
-  onEdit: (item: Item) => void;
-  onCategoryRename: (id: string, name: string) => void;
-  onCategoryDelete: (id: string) => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: category.id, data: { type: "category" } });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.3 : 1,
-  };
-
+function SortableListSection(props: React.ComponentProps<typeof ListSection>) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.category.id,
+    data: { type: "category" },
+  });
   return (
-    <div ref={setNodeRef} style={style} {...attributes}>
-      <CategoryCard
-        category={category}
-        items={items}
-        cardIndex={cardIndex}
-        editMode={editMode}
-        onToggle={onToggle}
-        onDelete={onDelete}
-        onEdit={onEdit}
-        onCategoryRename={onCategoryRename}
-        onCategoryDelete={onCategoryDelete}
-        dragListeners={editMode ? (listeners as unknown as Record<string, unknown>) : undefined}
-      />
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : 1 }}
+      {...(props.editMode ? attributes : {})}
+    >
+      <ListSection {...props} dragListeners={props.editMode ? (listeners as unknown as Record<string, unknown>) : undefined} />
     </div>
+  );
+}
+
+/** Lists with nothing in them, folded into one row instead of a stack of "No tasks" boxes. */
+function EmptyLists({ lists }: { lists: Category[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="bg-card rounded-[1.5rem] overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full min-h-14 px-4 flex items-center justify-between text-[15px] text-muted-foreground active:text-foreground"
+      >
+        <span>
+          {lists.length} empty {lists.length === 1 ? "list" : "lists"}
+        </span>
+        <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.ul
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden pb-1"
+          >
+            {lists.map((c) => (
+              <li key={c.id} className="relative before:absolute before:top-0 before:left-10 before:right-0 before:h-px before:bg-border">
+                <Link href={`/todos/${c.id}`} className="flex items-center gap-3 min-h-12 px-4 active:bg-foreground/5">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: listColor(c.color) }} aria-hidden="true" />
+                  <span className="flex-1 text-[15px] text-foreground">{c.name}</span>
+                  <ChevronRight className="w-4 h-4 text-faint" aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </section>
   );
 }
 
 type Props = {
   items: Item[];
   categories: Category[];
+  /** Today in the user's zone, from the server. */
+  today: string;
 };
 
-export function TodosClient({ items: initialItems, categories }: Props) {
+export function TodosClient({ items: initialItems, categories, today }: Props) {
   const router = useRouter();
   const { notify } = useToast();
   const [editMode, setEditMode] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [activeType, setActiveType] = useState<"category" | "item" | null>(null);
   const [localCategories, setLocalCategories] = useState(categories);
-  const [localItems, setLocalItems] = useState(initialItems);
+  const { items: localItems, setItems: setLocalItems, toggle: handleToggle, remove: handleDelete } =
+    useOptimisticItems(initialItems);
   const [showCreate, setShowCreate] = useState(false);
-  /**
-   * State as it was when the drag began. handleDragOver moves the item between categories
-   * live, so by the time handleDragEnd runs there is no un-mutated copy left to roll back
-   * to — snapshotting here is what makes the failure path actually restore anything.
-   */
-  const dragSnapshot = useRef<{ items: Item[]; categories: Category[] } | null>(null);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
+  const [actionsFor, setActionsFor] = useState<Category | null>(null);
 
-  // Re-sync with fresh server data. React's documented "adjusting state when a prop changes"
-  // pattern: doing this during render re-renders immediately with the right value, where an
-  // effect would commit a stale frame first and repaint.
-  const [syncedItems, setSyncedItems] = useState(initialItems);
+  // Same re-sync the items get inside useOptimisticItems.
   const [syncedCategories, setSyncedCategories] = useState(categories);
-  if (initialItems !== syncedItems) {
-    setSyncedItems(initialItems);
-    setLocalItems(initialItems);
-  }
   if (categories !== syncedCategories) {
     setSyncedCategories(categories);
     setLocalCategories(categories);
   }
-  const [editingItem, setEditingItem] = useState<Item | null>(null);
-
-  const [editTitle, setEditTitle] = useState("");
-  const [editDescription, setEditDescription] = useState("");
-  const [editDueDate, setEditDueDate] = useState("");
-  const [editDueTime, setEditDueTime] = useState("");
-  const [editPriority, setEditPriority] = useState<Priority>("medium");
-  const [editCategoryId, setEditCategoryId] = useState("");
-  const [editSaving, setEditSaving] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } })
   );
 
-  const collisionDetection: CollisionDetection = useCallback((args) => {
-    if (activeType === "category") {
-      const categoryIds = new Set(localCategories.map((c) => c.id));
-      const filtered = {
-        ...args,
-        droppableContainers: args.droppableContainers.filter(
-          (container) => categoryIds.has(container.id as string)
-        ),
-      };
-      return closestCorners(filtered);
-    }
-    return pointerWithin(args).length > 0 ? pointerWithin(args) : closestCorners(args);
-  }, [activeType, localCategories]);
 
   const grouped = localCategories.map((cat) => ({
     category: cat,
     items: localItems.filter((item) => item.category.id === cat.id),
   }));
+  // Edit mode shows every list, empty ones included: they are reorder handles.
+  const shown = editMode ? grouped : grouped.filter((g) => g.items.length > 0);
+  const emptyLists = grouped.filter((g) => g.items.length === 0).map((g) => g.category);
 
-  const listedCatIds = new Set(localCategories.map((c) => c.id));
-  const orphaned = localItems.filter((item) => !listedCatIds.has(item.category.id));
-
-  // Every optimistic update below snapshots first: without a rollback the list kept showing
-  // a state the server rejected, and nothing told the user their change hadn't been saved.
-  const handleToggle = async (id: string, current: Item["status"]) => {
-    const newStatus = current === "done" ? "pending" : "done";
-    const snapshot = localItems;
-    setLocalItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, status: newStatus as Item["status"] } : item))
-    );
-    try {
-      await toggleItemStatus(id, newStatus as "pending" | "done");
-      router.refresh();
-    } catch {
-      setLocalItems(snapshot);
-      notify("Couldn't update that task — please try again.");
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    const snapshot = localItems;
-    setLocalItems((prev) => prev.filter((item) => item.id !== id));
-    try {
-      await removeItem(id);
-      router.refresh();
-    } catch {
-      setLocalItems(snapshot);
-      notify("Couldn't delete that task — please try again.");
-    }
-  };
-
-  const openEdit = (item: Item) => {
-    setEditTitle(item.title);
-    setEditDescription(item.description ?? "");
-    setEditDueDate(item.dueDate ?? "");
-    setEditDueTime(item.dueTime ?? "");
-    setEditPriority(item.priority as Priority);
-    setEditCategoryId(item.category.id);
-    setEditingItem(item);
-  };
-
-  const handleEditSave = async () => {
-    if (!editingItem || !editTitle.trim()) return;
-    setEditSaving(true);
-    try {
-      await editItem(editingItem.id, {
-        title: editTitle.trim(),
-        description: editDescription.trim() || null,
-        dueDate: editDueDate || null,
-        dueTime: editDueTime || null,
-        priority: editPriority,
-        categoryId: editCategoryId !== editingItem.category.id ? editCategoryId : undefined,
-      });
-      setEditingItem(null);
-      router.refresh();
-    } catch {
-      notify("Couldn't save those changes — please try again.");
-    } finally {
-      setEditSaving(false);
-    }
-  };
+  const openCount = localItems.filter((i) => i.status !== "done").length;
+  const handlers: RowHandlers = { today, onToggle: handleToggle, onDelete: handleDelete, onEdit: setEditingItem };
 
   const handleCategoryRename = async (id: string, name: string) => {
     try {
       await editCategory(id, { name });
-      router.refresh();
     } catch {
       notify("Couldn't rename that list — please try again.");
-      router.refresh();
     }
+    router.refresh();
   };
 
   const handleCategoryDelete = async (id: string) => {
@@ -644,6 +237,7 @@ export function TodosClient({ items: initialItems, categories }: Props) {
     const snapshot = { items: localItems, categories: localCategories };
     setLocalCategories((prev) => prev.filter((c) => c.id !== id));
     setLocalItems((prev) => prev.filter((item) => item.category.id !== id));
+    haptic("warning");
     try {
       await removeCategory(id);
       router.refresh();
@@ -654,371 +248,139 @@ export function TodosClient({ items: initialItems, categories }: Props) {
     }
   };
 
+  // Only lists drag; a task changes list through the edit sheet's list picker.
   function handleDragStart(event: DragStartEvent) {
-    dragSnapshot.current = { items: localItems, categories: localCategories };
     setActiveId(event.active.id as string);
-    setActiveType(event.active.data.current?.type ?? null);
-  }
-
-  function handleDragOver(event: DragOverEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const activeData = active.data.current;
-    const overData = over.data.current;
-
-    if (activeData?.type !== "item") return;
-
-    const activeCatId = activeData.categoryId as string;
-    const overCatId = overData?.type === "category"
-      ? (over.id as string)
-      : (overData?.categoryId as string);
-
-    if (activeCatId && overCatId && activeCatId !== overCatId) {
-      setLocalItems((prev) =>
-        prev.map((item) =>
-          item.id === active.id
-            ? { ...item, category: { ...item.category, id: overCatId } }
-            : item
-        )
-      );
-    }
+    haptic("light");
   }
 
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     setActiveId(null);
-    setActiveType(null);
-
     if (!over || active.id === over.id) return;
-
-    if (active.data.current?.type === "category") {
-      const oldIndex = localCategories.findIndex((c) => c.id === active.id);
-      let newIndex = localCategories.findIndex((c) => c.id === over.id);
-      if (newIndex === -1 && over.data.current?.categoryId) {
-        newIndex = localCategories.findIndex((c) => c.id === over.data.current?.categoryId);
-      }
-      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-        const snapshot = dragSnapshot.current;
-        const reordered = arrayMove(localCategories, oldIndex, newIndex);
-        setLocalCategories(reordered);
-        try {
-          await reorderCategoriesAction(reordered.map((c) => c.id));
-          router.refresh();
-        } catch {
-          if (snapshot) setLocalCategories(snapshot.categories);
-          router.refresh(); // re-sync with the server; the optimistic order never landed
-        }
-      }
-    } else if (active.data.current?.type === "item") {
-      const movedItem = localItems.find((i) => i.id === active.id);
-      const originalCatId = initialItems.find((i) => i.id === active.id)?.category.id;
-      if (movedItem && originalCatId && movedItem.category.id !== originalCatId) {
-        const snapshot = dragSnapshot.current;
-        try {
-          await moveItemToCategory(movedItem.id, movedItem.category.id);
-          router.refresh();
-        } catch {
-          if (snapshot) setLocalItems(snapshot.items);
-          router.refresh();
-        }
-      }
+    const before = localCategories;
+    const oldIndex = before.findIndex((c) => c.id === active.id);
+    const newIndex = before.findIndex((c) => c.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(before, oldIndex, newIndex);
+    setLocalCategories(reordered);
+    try {
+      await reorderCategoriesAction(reordered.map((c) => c.id));
+      router.refresh();
+    } catch {
+      setLocalCategories(before);
+      notify("Couldn't reorder your lists — please try again.");
     }
-
-    dragSnapshot.current = null;
   }
 
-  return (
-    <main className="safe-bottom pb-8">
-      {/* Header */}
-      <motion.header
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-        className="px-5 pt-6 pb-2"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <ListTodo className="w-6 h-6 text-primary shrink-0" />
-            <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
-              Tasks
-            </h1>
-          </div>
-          {localCategories.length > 0 && (
-            <button
-              onClick={() => setEditMode((v) => !v)}
-              className={`text-sm font-medium transition-colors ${
-                editMode ? "text-destructive" : "text-primary"
-              }`}
-            >
-              {editMode ? "Done" : "Edit"}
-            </button>
-          )}
-        </div>
-      </motion.header>
+  const draggingCategory = localCategories.find((c) => c.id === activeId);
 
-      {/* Edit mode hint banner */}
-      <AnimatePresence>
+  return (
+    <main className="safe-bottom sky-wash">
+      <header className="rise px-6 pt-7">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="font-serif text-[2.5rem] leading-none font-semibold text-foreground">Tasks</h1>
+          <div className="flex items-center -mr-2 shrink-0">
+            {!editMode && <SearchDialog />}
+            {localCategories.length > 0 && (
+              <button
+                onClick={() => setEditMode((v) => !v)}
+                aria-pressed={editMode}
+                className="h-11 px-3 rounded-full text-[15px] font-semibold text-foreground active:bg-foreground/10"
+              >
+                {editMode ? "Done" : "Edit"}
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="mt-2.5 font-serif italic text-[17px] text-muted-foreground">
+          {openCount} open across {localCategories.length} {localCategories.length === 1 ? "list" : "lists"}
+        </p>
+      </header>
+
+      <AnimatePresence initial={false}>
         {editMode && (
-          <motion.div
+          <motion.p
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="px-5 overflow-hidden"
+            className="overflow-hidden mx-6 text-[13px] text-muted-foreground"
           >
-            <div className="px-3 py-2 bg-primary/10 rounded-lg text-center">
-              <p className="text-[11px] text-primary">
-                Drag categories to reorder · Drag tasks between categories · Swipe left to delete
-              </p>
-            </div>
-          </motion.div>
+            <span className="block pt-3">Drag a list by its handle to reorder it. To move a task to another list, tap it and pick the list.</span>
+          </motion.p>
         )}
       </AnimatePresence>
 
-      {/* Category cards */}
       <DndContext
         id="todos-dnd"
         sensors={sensors}
-        collisionDetection={collisionDetection}
+        collisionDetection={closestCorners}
         onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="px-5 mt-4 space-y-4">
+        <div className="rise-late px-4 mt-6">
           {localCategories.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-              className="flex flex-col items-center py-16 text-center"
-            >
-              <div className="w-14 h-14 rounded-2xl bg-secondary/80 flex items-center justify-center mb-4">
-                <Inbox className="w-6 h-6 text-muted-foreground/50" />
-              </div>
-              <p className="font-serif text-lg font-semibold text-foreground">No categories yet</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Tap + to create your first task and category
+            <div className="px-2 py-14 text-center">
+              <p className="font-serif text-2xl font-semibold text-foreground">No lists yet</p>
+              <p className="mt-2 text-[15px] text-muted-foreground">
+                Tell the bot what you need, or tap + to add your first task.
               </p>
-            </motion.div>
+            </div>
           ) : (
-            <SortableContext items={localCategories.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-              {grouped.map(({ category, items: catItems }, i) => (
-                <SortableCategoryCard
-                  key={category.id}
-                  category={category}
-                  items={catItems}
-                  cardIndex={i}
-                  editMode={editMode}
-                  onToggle={handleToggle}
-                  onDelete={handleDelete}
-                  onEdit={openEdit}
-                  onCategoryRename={handleCategoryRename}
-                  onCategoryDelete={handleCategoryDelete}
-                />
-              ))}
-            </SortableContext>
-          )}
+            // Each list is its own page, with room between them.
+            <div className="space-y-3">
+              {!editMode && shown.length === 0 && (
+                <div className="px-5 pt-6 pb-5">
+                  <p className="font-serif text-2xl font-semibold text-foreground">All clear</p>
+                  <p className="mt-1.5 text-[15px] text-muted-foreground">Nothing open in any list.</p>
+                </div>
+              )}
+              <SortableContext items={shown.map((g) => g.category.id)} strategy={verticalListSortingStrategy}>
+                {shown.map(({ category, items: catItems }) => (
+                  <SortableListSection
+                    key={category.id}
+                    category={category}
+                    items={catItems}
+                    editMode={editMode}
+                    onActions={setActionsFor}
+                    {...handlers}
+                  />
+                ))}
+              </SortableContext>
 
-          {/* Orphaned items (no matching category) */}
-          {orphaned.length > 0 && (
-            <CategoryCard
-              category={{ id: "__none__", name: "Uncategorized", color: "#A8A29E" }}
-              items={orphaned}
-              cardIndex={grouped.length}
-              editMode={editMode}
-              onToggle={handleToggle}
-              onDelete={handleDelete}
-              onEdit={openEdit}
-              onCategoryRename={handleCategoryRename}
-              onCategoryDelete={handleCategoryDelete}
-            />
+              {!editMode && emptyLists.length > 0 && <EmptyLists lists={emptyLists} />}
+            </div>
           )}
         </div>
 
         <DragOverlay>
-          {activeId && activeType === "category" ? (
-            (() => {
-              const cat = localCategories.find((c) => c.id === activeId);
-              if (!cat) return null;
-              const catItems = localItems.filter((i) => i.category.id === cat.id);
-              return (
-                <div className="opacity-80 shadow-2xl rounded-xl">
-                  <CategoryCard
-                    category={cat}
-                    items={catItems}
-                    cardIndex={0}
-                    editMode={editMode}
-                    onToggle={handleToggle}
-                    onDelete={handleDelete}
-                    onEdit={openEdit}
-                    onCategoryRename={handleCategoryRename}
-                    onCategoryDelete={handleCategoryDelete}
-                  />
-                </div>
-              );
-            })()
-          ) : activeId && activeType === "item" ? (
-            (() => {
-              const item = localItems.find((i) => i.id === activeId);
-              if (!item) return null;
-              return (
-                <div className="opacity-80 shadow-2xl rounded-lg">
-                  <ItemRow
-                    item={item}
-                    index={0}
-                    onToggle={handleToggle}
-                    onDelete={handleDelete}
-                    onEdit={openEdit}
-                    editMode={editMode}
-                  />
-                </div>
-              );
-            })()
+          {draggingCategory ? (
+            <div className="rounded-[1.25rem] shadow-[0_24px_48px_-12px_rgba(0,0,0,0.9)] bg-raised/95 px-4 min-h-12 flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: listColor(draggingCategory.color) }} />
+              <span className="text-[17px] font-semibold">{draggingCategory.name}</span>
+            </div>
           ) : null}
         </DragOverlay>
       </DndContext>
 
-      {/* FAB */}
       {!editMode && (
-        <motion.button
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.5 }}
+        <button
           onClick={() => setShowCreate(true)}
-          className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] right-5 w-13 h-13 rounded-full bg-primary text-primary-foreground shadow-[0_4px_16px_rgba(146,120,92,0.35)] flex items-center justify-center active:scale-90 transition-transform z-40"
+          aria-label="Add a task"
+          className="fixed z-40 right-5 bottom-[calc(env(safe-area-inset-bottom,0px)+6.25rem)] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-[0_14px_30px_-10px_rgba(0,0,0,0.85)] flex items-center justify-center active:scale-90 transition-transform"
         >
-          <Plus className="w-5 h-5" />
-        </motion.button>
+          <Plus className="w-6 h-6" strokeWidth={2.2} />
+        </button>
       )}
 
-      <CreateItemSheet
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
-        categories={localCategories}
+      <CreateItemSheet open={showCreate} onClose={() => setShowCreate(false)} categories={localCategories} />
+      <EditItemSheet item={editingItem} categories={localCategories} onClose={() => setEditingItem(null)} onDelete={handleDelete} />
+      <ListActionsSheet
+        category={actionsFor}
+        onClose={() => setActionsFor(null)}
+        onRename={handleCategoryRename}
+        onDelete={handleCategoryDelete}
       />
-
-      {/* Edit item sheet */}
-      <AnimatePresence>
-        {editingItem && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[55]"
-              onClick={() => setEditingItem(null)}
-            />
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 28, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 z-[60] bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
-            >
-              <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
-              <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
-                <div className="flex items-center justify-between mb-5">
-                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Task</h3>
-                  <button onClick={() => setEditingItem(null)} className="text-muted-foreground hover:text-foreground">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    placeholder="Task title"
-                    autoFocus
-                    className="w-full h-12 px-4 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                  />
-
-                  <textarea
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Description (optional)"
-                    rows={2}
-                    className="w-full px-4 py-3 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all resize-none"
-                  />
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Priority</label>
-                    <div className="flex gap-2">
-                      {(["low", "medium", "high"] as const).map((p) => (
-                        <button
-                          key={p}
-                          onClick={() => setEditPriority(p)}
-                          className={`flex-1 h-9 rounded-lg text-xs font-medium border transition-all duration-150 flex items-center justify-center gap-1.5 ${
-                            editPriority === p
-                              ? "border-primary bg-primary/5 text-foreground"
-                              : "border-border/50 text-muted-foreground"
-                          }`}
-                        >
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: priorityColors[p] }} />
-                          {priorityLabels[p]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {localCategories.length > 1 && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-2">Category</label>
-                      <div className="flex flex-wrap gap-2">
-                        {localCategories.map((cat) => (
-                          <button
-                            key={cat.id}
-                            onClick={() => setEditCategoryId(cat.id)}
-                            className={`h-8 px-3 rounded-lg text-xs font-medium border transition-all duration-150 flex items-center gap-1.5 ${
-                              editCategoryId === cat.id
-                                ? "border-primary bg-primary/5 text-foreground"
-                                : "border-border/50 text-muted-foreground"
-                            }`}
-                          >
-                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: cat.color }} />
-                            {cat.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Due date</label>
-                    <input
-                      type="date"
-                      value={editDueDate}
-                      onChange={(e) => setEditDueDate(e.target.value)}
-                      className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                    />
-                  </div>
-
-                  {editDueDate && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-2">Due time</label>
-                      <input
-                        type="time"
-                        value={editDueTime}
-                        onChange={(e) => setEditDueTime(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleEditSave}
-                    disabled={!editTitle.trim() || editSaving}
-                    className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {editSaving ? "Saving..." : "Save Changes"}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { formatHHmmInTz, hhmmToMinutes } from "@/lib/tz";
 import type { Priority } from "@/generated/prisma/enums";
 
 /** Bearer-token check for cron/admin endpoints. Fails closed when CRON_SECRET is unset. */
@@ -76,16 +77,9 @@ export function meetsPriorityFloor(user: Pick<NotifyPrefs, "notifyMinPriority">,
 export function isQuietHours(user: Pick<NotifyPrefs, "quietStart" | "quietEnd" | "timezone">, now: Date): boolean {
   if (!user.quietStart || !user.quietEnd) return false;
 
-  const userTime = new Intl.DateTimeFormat("en-GB", {
-    timeZone: user.timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(now);
-
-  const current = timeToMinutes(userTime);
-  const start = timeToMinutes(user.quietStart);
-  const end = timeToMinutes(user.quietEnd);
+  const current = hhmmToMinutes(formatHHmmInTz(now, user.timezone));
+  const start = hhmmToMinutes(user.quietStart);
+  const end = hhmmToMinutes(user.quietEnd);
 
   if (start <= end) return current >= start && current < end;
   return current >= start || current < end;
@@ -94,9 +88,4 @@ export function isQuietHours(user: Pick<NotifyPrefs, "quietStart" | "quietEnd" |
 /** Priority floor *and* quiet hours — used for automatic deadline escalation. */
 export function shouldNotify(user: NotifyPrefs, priority: Priority, now: Date): boolean {
   return meetsPriorityFloor(user, priority) && !isQuietHours(user, now);
-}
-
-function timeToMinutes(time: string): number {
-  const [h, m] = time.split(":").map(Number);
-  return h * 60 + m;
 }

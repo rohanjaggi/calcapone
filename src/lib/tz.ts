@@ -65,9 +65,13 @@ export function startOfDayInTz(dateStr: string, tz: string): Date {
 
 /** Instant at local midnight of the day after `dateStr` in `tz` (exclusive end). */
 export function endOfDayInTz(dateStr: string, tz: string): Date {
+  return fromZonedTime(`${addDays(dateStr, 1)}T00:00:00`, tz);
+}
+
+/** Shift a "YYYY-MM-DD" by whole days, in UTC so no local offset or DST creeps in. */
+export function addDays(dateStr: string, days: number): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  const next = new Date(Date.UTC(y, m - 1, d + 1));
-  return fromZonedTime(`${next.toISOString().slice(0, 10)}T00:00:00`, tz);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
 /** Combine a YYYY-MM-DD and HH:mm in `tz` into an instant. */
@@ -102,6 +106,11 @@ export function isSelectableTz(tz: string): boolean {
   if (tz === "UTC") return true;
   if (!/^[A-Za-z][A-Za-z_+-]*\/[A-Za-z0-9_+\-\/]+$/.test(tz)) return false;
   return isValidTz(tz);
+}
+
+/** "2026-08-20T15:04:00+08:00" — the full form Google Calendar requires for a dateTime. */
+export function toRfc3339InTz(date: Date, tz: string): string {
+  return formatInTimeZone(date, tz, "yyyy-MM-dd'T'HH:mm:ssXXX");
 }
 
 /** "2026-08-20 15:04" in `tz` — minute precision, for prompts and logs. */

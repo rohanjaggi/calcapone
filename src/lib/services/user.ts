@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { encrypt, decrypt } from "@/lib/encryption";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { RRule } from "rrule";
 import type { AiProvider, Priority } from "@/generated/prisma/enums";
 
 /**
@@ -30,10 +32,6 @@ export async function findOrCreateUser(telegramId: bigint, username: string) {
   });
 
   return newUser;
-}
-
-export async function getUserByTelegramId(telegramId: bigint) {
-  return prisma.user.findUnique({ where: { telegramId } });
 }
 
 export async function getUserById(id: string) {
@@ -75,4 +73,33 @@ export async function updateUserSettings(
 export function decryptUserApiKey(encrypted: string | null): string | null {
   if (!encrypted) return null;
   return decrypt(encrypted);
+}
+
+/**
+ * Switch a user's timezone and keep every pending reminder at the same clock time there:
+ * "9am meds" means 9am where the user is, not the instant 9am was in the old zone. Repeating
+ * rules are restarted the same way, since their times are read in the user's zone.
+ * Returns how many reminders moved.
+ */
+export async function changeTimezone(userId: string, from: string, to: string): Promise<number> {
+  const sameClock = (at: Date) => fromZonedTime(formatInTimeZone(at, from, "yyyy-MM-dd'T'HH:mm:ss"), to);
+  const items = await prisma.item.findMany({
+    where: { userId, status: { not: "done" }, remindAt: { not: null } },
+    select: { id: true, remindAt: true, recurrenceRule: true },
+  });
+  const restart = (rule: string | null) => {
+    if (!rule) return rule;
+    const options = RRule.parseString(rule);
+    return options.dtstart ? new RRule({ ...options, dtstart: sameClock(options.dtstart) }).toString() : rule;
+  };
+  await prisma.$transaction([
+    ...items.map((item) =>
+      prisma.item.update({
+        where: { id: item.id },
+        data: { remindAt: sameClock(item.remindAt!), recurrenceRule: restart(item.recurrenceRule) },
+      })
+    ),
+    prisma.user.update({ where: { id: userId }, data: { timezone: to } }),
+  ]);
+  return items.length;
 }

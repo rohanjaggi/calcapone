@@ -68,20 +68,6 @@ enum Priority {
   high
 }
 
-/**
- * What a dated item actually is.
- *
- * Only used to decide how far ahead to start nagging: a 24-hour warning is useful for a
- * chore and useless for an exam, which is the whole reason this is not just a label.
- */
-
-enum RecurringType {
-  none
-  daily
-  weekly
-  monthly
-}
-
 model Category {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
@@ -109,19 +95,14 @@ model Item {
   dueDate     String?       @map("due_date")
   dueTime     String?       @map("due_time")
   remindAt    DateTime?     @map("remind_at") @db.Timestamptz
-  recurring   RecurringType @default(none)
   recurrenceRule  String?   @map("recurrence_rule")
   recurrenceEnd   DateTime? @map("recurrence_end") @db.Timestamptz
-  googleEventId String?       @map("google_event_id")
   parentId    String?       @map("parent_id") @db.Uuid
   parent      Item?         @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
   subtasks    Item[]        @relation("Subtasks")
   /// Every occurrence of a repeating item shares the first occurrence's id, so "stop the daily
   /// meds reminder" can reach the whole run rather than only the copy in front of the user.
   seriesId    String?       @map("series_id") @db.Uuid
-  /// When this item and its Google event were last known to agree. A change on both sides
-  /// since this instant is the definition of a sync conflict.
-  calendarSyncedAt DateTime?  @map("calendar_synced_at") @db.Timestamptz
   notificationStage Int    @default(0) @map("notification_stage")
   embedding   Unsupported("vector(768)")?
   createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz
@@ -267,14 +248,4 @@ model PendingAction {
 
   @@index([expiresAt])
   @@map("pending_actions")
-}
-
-/// One row per cron job, holding when it last ran. A scheduler that stops produces no error
-/// anywhere -- the first sign is a missed reminder days later -- so a tick that notices the
-/// gap is what turns that silence into an alert.
-model CronHeartbeat {
-  job        String   @id
-  lastTickAt DateTime @map("last_tick_at") @db.Timestamptz
-
-  @@map("cron_heartbeat")
 }

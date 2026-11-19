@@ -50,8 +50,8 @@ export function resolveAiClient(config: AiConfig): ResolvedConfig {
   if (!apiKey) {
     throw new AiConfigError(
       config.provider && !envApplies
-        ? `No API key saved for ${provider}. Add one in Settings (the shared trial key only works with ${defaultProvider}).`
-        : `No API key configured for provider "${provider}". Set one in Settings or configure DEFAULT_AI_API_KEY.`
+        ? `No API key saved for ${provider}. Add one in Open Calcapone → Settings (the shared trial key only works with ${defaultProvider}).`
+        : `No API key configured for provider "${provider}". Set one in Open Calcapone → Settings or configure DEFAULT_AI_API_KEY.`
     );
   }
 

@@ -1,51 +1,58 @@
 "use client";
 import { useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Globe, Check, ChevronDown } from "lucide-react";
+import { Globe } from "lucide-react";
+import { SettingsCard, SaveButton } from "@/components/settings/settings-card";
+import { fieldClass } from "@/components/ui/bottom-sheet";
+import { useToast } from "@/components/ui/toast";
 
 const COMMON_TIMEZONES = ["Asia/Singapore","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","America/Toronto","Europe/London","Europe/Paris","Europe/Berlin","Asia/Tokyo","Asia/Shanghai","Asia/Kolkata","Asia/Dubai","Australia/Sydney","Pacific/Auckland"];
+
+const label = (tz: string) => tz.replace(/_/g, " ");
 
 type Props = { currentTimezone: string; onSave: (timezone: string) => Promise<void> };
 
 export function TimezoneSelect({ currentTimezone, onSave }: Props) {
-  const [open, setOpen] = useState(false);
   const [timezone, setTimezone] = useState(currentTimezone);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const changed = timezone !== currentTimezone;
+  // A zone set from the bot (/timezone Europe/Lisbon) may not be in the short list; without
+  // it the select silently showed the first option instead of the real setting.
+  const zones = COMMON_TIMEZONES.includes(currentTimezone) ? COMMON_TIMEZONES : [currentTimezone, ...COMMON_TIMEZONES];
 
-  const handleSave = async () => { setSaving(true); await onSave(timezone); setSaving(false); setSaved(true); setTimeout(() => setSaved(false), 2000); };
+  const { notify } = useToast();
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(timezone);
+    } catch {
+      notify("Couldn't change your timezone — please try again.");
+      return;
+    } finally {
+      setSaving(false);
+    }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
 
   return (
-    <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-      <button
-        onClick={() => setOpen(!open)}
-        className={`w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-muted/30 ${open ? "border-b border-border/40" : ""}`}
+    <SettingsCard icon={Globe} title="Timezone" value={label(currentTimezone)}>
+      <select
+        value={timezone}
+        onChange={(e) => setTimezone(e.target.value)}
+        aria-label="Timezone"
+        className={fieldClass}
       >
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-slate-blue-light flex items-center justify-center"><Globe className="w-3.5 h-3.5 text-slate-blue" /></div>
-          <h3 className="text-sm font-medium text-foreground">Timezone</h3>
-        </div>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="p-4">
-              <select value={timezone} onChange={(e) => setTimezone(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all appearance-none">
-                {COMMON_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>)}
-              </select>
-              {changed && <button onClick={handleSave} disabled={saving} className="mt-3 w-full h-9 rounded-lg bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] flex items-center justify-center gap-2">{saved ? <><Check className="w-4 h-4" /> Saved</> : saving ? "Saving..." : "Update Timezone"}</button>}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+        {zones.map((tz) => (
+          <option key={tz} value={tz}>
+            {label(tz)}
+          </option>
+        ))}
+      </select>
+      <p className="text-[13px] text-muted-foreground -mt-2">
+        Today, reminders and the sky at the top of Home all follow this zone. Any other zone can be set from the bot with /timezone.
+      </p>
+      {(changed || saved) && <SaveButton onClick={handleSave} saving={saving} saved={saved} label="Update timezone" />}
+    </SettingsCard>
   );
 }

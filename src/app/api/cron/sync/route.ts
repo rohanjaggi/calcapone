@@ -1,27 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { syncUserCalendar, type CalendarConflict } from "@/lib/services/calendar-sync";
+import { syncUserCalendar } from "@/lib/services/calendar-sync";
 import { CalendarAuthError } from "@/lib/services/calendar";
 import { markCalendarDisconnected } from "@/lib/services/calendar-link";
-import { conflictKeyboard } from "@/lib/services/conflict";
 import {
   findDueEventReminders,
   claimEventReminder,
   releaseEventReminder,
   formatEventReminder,
 } from "@/lib/services/event-reminders";
-import { sendMessage, b, esc, TelegramBlockedError } from "@/lib/services/telegram";
+import { sendMessage, TelegramBlockedError } from "@/lib/services/telegram";
 import { isQuietHours, isAuthorizedCronRequest } from "@/lib/services/cron-utils";
-import { formatInTz } from "@/lib/tz";
 
 export const maxDuration = 60;
 
 /**
- * The GitHub Actions workflow fires this endpoint every ~60s (see cron-reminders.yml's
- * inner loop), but a Google Calendar sync isn't cheap and doesn't need to run that often.
- * 4 minutes gives a full tick's worth of headroom so a retried/overlapping invocation
- * doesn't re-sync a user who was just synced, while still keeping every user within one
- * 5-minute outer cron period of a fresh sync.
+ * This endpoint ticks every minute (cron-job.org), but a Google sync isn't cheap, so each
+ * user is synced at most once per 4 minutes — enough headroom that an overlapping tick
+ * doesn't re-sync a user who was just synced.
  */
 const RESYNC_THRESHOLD_MS = 4 * 60 * 1000;
 
@@ -40,7 +36,6 @@ export async function POST(request: NextRequest) {
 
   const now = new Date();
   let synced = 0;
-  let conflicts = 0;
   let reminded = 0;
   let errors = 0;
   let blocked = 0;
@@ -60,10 +55,8 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // Claim the user before syncing, not after. syncUserCalendar writes lastCalendarSyncAt at
-    // the very end, so the gate above lets two overlapping invocations both start on the same
-    // user, both read the same stale sync token and both send the same conflict prompt with
-    // its own set of buttons. Same claim-before-send shape as the reminder paths.
+    // Claim the user before syncing, not after: syncUserCalendar writes lastCalendarSyncAt at
+    // the very end, so the gate above alone lets two overlapping invocations sync the same user.
     const claimed = await prisma.user.updateMany({
       where: {
         id: user.id,
@@ -79,33 +72,8 @@ export async function POST(request: NextRequest) {
     if (claimed.count === 0) continue;
 
     try {
-      const result = await syncUserCalendar(
-        {
-          id: user.id,
-          googleRefreshToken: user.googleRefreshToken,
-          googleCalendarId: user.googleCalendarId,
-          timezone: user.timezone,
-          googleSyncToken: user.googleSyncToken,
-        },
-        now
-      );
+      await syncUserCalendar(user, now);
       synced++;
-
-      for (const conflict of result.conflicts) {
-        conflicts++;
-        try {
-          await sendMessage(Number(user.telegramId), formatConflictMessage(conflict, user.timezone), {
-            keyboard: conflictKeyboard(conflict.itemId),
-          });
-        } catch (error) {
-          if (error instanceof TelegramBlockedError) {
-            blocked++;
-          } else {
-            console.error(`[cron:sync] failed to notify user ${user.id} of conflict:`, error instanceof Error ? error.message : error);
-            errors++;
-          }
-        }
-      }
     } catch (error) {
       if (error instanceof CalendarAuthError) {
         await markCalendarDisconnected(user.id);
@@ -160,19 +128,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ synced, conflicts, reminded, errors, blocked, deferred });
-}
-
-/**
- * Names both versions and lets the attached buttons (see conflictKeyboard) settle it —
- * neither side is touched until the user picks one.
- */
-function formatConflictMessage(conflict: CalendarConflict, tz: string): string {
-  const googleWhen = esc(formatInTz(conflict.googleStartsAt, tz));
-  return [
-    `⚠️ ${b("Calendar conflict:")} this task and its Google Calendar event both changed since they last agreed.`,
-    `Yours: ${b(conflict.itemTitle)}`,
-    `Google's: ${b(conflict.googleTitle)} (${googleWhen})`,
-    "Which one should I keep?",
-  ].join("\n");
+  return NextResponse.json({ synced, reminded, errors, blocked, deferred });
 }

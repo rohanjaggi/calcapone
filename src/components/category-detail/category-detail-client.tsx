@@ -3,287 +3,56 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowLeft, Bell, Trash2, Plus, ChevronDown, ChevronUp, Pencil, X, MoreHorizontal } from "lucide-react";
+import { ArrowLeft, Plus, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
-import { toggleItemStatus, removeItem, editItem, editCategory, removeCategory } from "@/app/actions";
-import { statusIcon, formatTime, formatDueDate, priorityColors, priorityLabels } from "@/lib/task-constants";
+import { editCategory, removeCategory } from "@/app/actions";
 import { CreateItemSheet } from "@/components/todos/create-item-sheet";
+import { EditItemSheet } from "@/components/todos/edit-item-sheet";
+import { ListActionsSheet } from "@/components/todos/list-actions-sheet";
+import { TaskRow } from "@/components/todos/task-row";
+import { useOptimisticItems } from "@/components/todos/use-optimistic-items";
 import { useToast } from "@/components/ui/toast";
-import { confirmAction } from "@/lib/telegram-webapp";
-import type { Item, Category } from "@/lib/mock-data";
-import type { Priority } from "@/generated/prisma/enums";
-
-function ItemCard({
-  item,
-  index,
-  onToggle,
-  onDelete,
-  onEdit,
-}: {
-  item: Item;
-  index: number;
-  onToggle: (id: string, current: Item["status"]) => void;
-  onDelete: (id: string) => void;
-  onEdit: (item: Item) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const Icon = statusIcon[item.status];
-  const isDone = item.status === "done";
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, x: -40 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: index * 0.05 }}
-      className={`${index > 0 ? "border-t border-border/30" : ""} ${isDone ? "opacity-50" : ""}`}
-    >
-      <div className="flex items-start gap-3 px-4 py-3.5">
-        {/* Checkbox */}
-        <button
-          onClick={() => onToggle(item.id, item.status)}
-          className="mt-0.5 shrink-0 active:scale-90 transition-transform duration-150"
-        >
-          <Icon
-            className={`w-[18px] h-[18px] ${
-              isDone
-                ? "text-sage"
-                : item.status === "in_progress"
-                ? "text-primary animate-spin [animation-duration:3s]"
-                : "text-muted-foreground/40"
-            }`}
-          />
-        </button>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <button
-            onClick={() => setExpanded((v) => !v)}
-            className="w-full text-left"
-          >
-            <p
-              className={`text-sm leading-snug ${
-                isDone ? "line-through text-muted-foreground" : "text-foreground"
-              }`}
-            >
-              {item.title}
-            </p>
-
-            {/* Preview description when collapsed */}
-            {item.description && !expanded && (
-              <p className="text-[12px] text-muted-foreground mt-0.5 line-clamp-1">
-                {item.description}
-              </p>
-            )}
-          </button>
-
-          {/* Meta row */}
-          <div className="flex flex-wrap items-center gap-2 mt-1.5">
-            {/* Priority */}
-            <span className="flex items-center gap-1">
-              <span
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ backgroundColor: priorityColors[item.priority] }}
-              />
-              <span className="text-[11px] text-muted-foreground capitalize">{item.priority}</span>
-            </span>
-
-            {/* Due date */}
-            {item.dueDate && (
-              <span className="text-[11px] text-muted-foreground">
-                {formatDueDate(item.dueDate)}
-              </span>
-            )}
-
-            {/* Due time */}
-            {item.dueTime && (
-              <span className="text-[11px] text-muted-foreground">
-                {formatTime(item.dueTime)}
-              </span>
-            )}
-
-            {/* Recurring */}
-            {item.recurring !== "none" && (
-              <span className="text-[11px] text-muted-foreground capitalize">
-                {item.recurring}
-              </span>
-            )}
-
-            {/* Reminder badge */}
-            {item.remindAt && !isDone && (
-              <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
-                <Bell className="w-3 h-3" />
-                Reminder
-              </span>
-            )}
-          </div>
-
-          {/* Expanded full description */}
-          <AnimatePresence>
-            {expanded && item.description && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-                className="overflow-hidden"
-              >
-                <p className="text-[13px] text-muted-foreground mt-2 leading-relaxed">
-                  {item.description}
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Expand toggle when description exists */}
-          {item.description && (
-            <button
-              onClick={() => setExpanded((v) => !v)}
-              className="flex items-center gap-0.5 mt-1.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
-            >
-              {expanded ? (
-                <>
-                  <ChevronUp className="w-3 h-3" />
-                  Less
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="w-3 h-3" />
-                  More
-                </>
-              )}
-            </button>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
-          {!isDone && (
-            <button
-              onClick={() => onEdit(item)}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-secondary transition-all"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-          )}
-          <button
-            onClick={() => onDelete(item.id)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground/30 hover:text-destructive hover:bg-red-50 dark:hover:bg-red-950/30 transition-all active:scale-90"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
+import { confirmAction, haptic } from "@/lib/telegram-webapp";
+import { listColor } from "@/lib/list-colors";
+import type { Item, Category } from "@/lib/types";
 
 type Props = {
   category: Category;
   items: Item[];
+  /** Today in the user's zone, from the server. */
+  today: string;
+  /** Every list, so the edit sheet can move a task out of this one. */
+  lists: Category[];
 };
 
-export function CategoryDetailClient({ category, items: initialItems }: Props) {
+export function CategoryDetailClient({ category, items: initialItems, today, lists }: Props) {
   const router = useRouter();
   const { notify } = useToast();
-  const [items, setItems] = useState(initialItems);
+  const { items, toggle, remove } = useOptimisticItems(initialItems);
   const [showCreate, setShowCreate] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
-  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
-  const [editingCategory, setEditingCategory] = useState(false);
-  const [catName, setCatName] = useState(category.name);
-  const [catSaving, setCatSaving] = useState(false);
+  const [showActions, setShowActions] = useState(false);
 
-  // Edit item state
-  const [editTitle, setEditTitle] = useState("");
-  const [editDescription, setEditDescription] = useState("");
-  const [editDueDate, setEditDueDate] = useState("");
-  const [editDueTime, setEditDueTime] = useState("");
-  const [editPriority, setEditPriority] = useState<Priority>("medium");
-  const [editSaving, setEditSaving] = useState(false);
+  const done = items.filter((i) => i.status === "done");
+  const sorted = [...items.filter((i) => i.status !== "done"), ...done];
 
-  const activeItems = items.filter((i) => i.status !== "done");
-  const doneItems = items.filter((i) => i.status === "done");
-  const sorted = [...activeItems, ...doneItems];
-
-  // Snapshot before the optimistic write so a rejected action can be undone visibly.
-  const handleToggle = async (id: string, current: Item["status"]) => {
-    const newStatus = current === "done" ? "pending" : "done";
-    const snapshot = items;
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, status: newStatus as Item["status"] } : item))
-    );
+  const handleRename = async (id: string, name: string) => {
     try {
-      await toggleItemStatus(id, newStatus as "pending" | "done");
-      router.refresh();
-    } catch {
-      setItems(snapshot);
-      notify("Couldn't update that task — please try again.");
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    const snapshot = items;
-    setItems((prev) => prev.filter((item) => item.id !== id));
-    try {
-      await removeItem(id);
-      router.refresh();
-    } catch {
-      setItems(snapshot);
-      notify("Couldn't delete that task — please try again.");
-    }
-  };
-
-  const openEdit = (item: Item) => {
-    setEditTitle(item.title);
-    setEditDescription(item.description ?? "");
-    setEditDueDate(item.dueDate ?? "");
-    setEditDueTime(item.dueTime ?? "");
-    setEditPriority(item.priority as Priority);
-    setEditingItem(item);
-  };
-
-  const handleEditSave = async () => {
-    if (!editingItem || !editTitle.trim()) return;
-    setEditSaving(true);
-    try {
-      await editItem(editingItem.id, {
-        title: editTitle.trim(),
-        description: editDescription.trim() || null,
-        dueDate: editDueDate || null,
-        dueTime: editDueTime || null,
-        priority: editPriority,
-      });
-      setEditingItem(null);
-      router.refresh();
-    } catch {
-      notify("Couldn't save those changes — please try again.");
-    } finally {
-      setEditSaving(false);
-    }
-  };
-
-  const handleCategoryRename = async () => {
-    if (!catName.trim()) return;
-    setCatSaving(true);
-    try {
-      await editCategory(category.id, { name: catName.trim() });
-      setEditingCategory(false);
+      await editCategory(id, { name });
       router.refresh();
     } catch {
       notify("Couldn't rename this list — please try again.");
-    } finally {
-      setCatSaving(false);
     }
   };
 
-  const handleCategoryDelete = async () => {
+  const handleDelete = async () => {
     // Say what else goes with it — deleting a list cascades to every task in it.
     const count = items.length;
     const detail = count === 0 ? "" : ` This also deletes ${count} task${count === 1 ? "" : "s"}.`;
     if (!(await confirmAction(`Delete "${category.name}"?${detail}`))) return;
     try {
       await removeCategory(category.id);
+      haptic("warning");
       router.push("/todos");
     } catch {
       notify("Couldn't delete this list — please try again.");
@@ -291,157 +60,72 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
   };
 
   return (
-    <main className="safe-bottom pb-8">
-      {/* Header */}
-      <motion.header
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="px-5 pt-6 pb-2"
-      >
-        <Link
-          href="/todos"
-          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-3"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          Back
+    <main className="safe-bottom sky-wash">
+      <header className="rise px-6 pt-4">
+        {/* Telegram shows its own back button here too; this one serves everywhere else. */}
+        <Link href="/todos" className="inline-flex items-center gap-1.5 min-h-11 -ml-2 px-2 text-[15px] text-muted-foreground active:text-foreground">
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          Tasks
         </Link>
 
-        <div className="flex items-center gap-2.5">
-          <span
-            className="w-3 h-3 rounded-full shrink-0"
-            style={{ backgroundColor: category.color }}
-          />
-          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight flex-1">
+        <div className="mt-2 flex items-center gap-3">
+          <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: listColor(category.color) }} aria-hidden="true" />
+          <h1 className="font-serif text-[2.5rem] leading-[1.05] font-semibold text-foreground flex-1 min-w-0 break-words">
             {category.name}
           </h1>
-          <div className="relative">
-            <button
-              onClick={() => setShowCategoryMenu((v) => !v)}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
-            >
-              <MoreHorizontal className="w-4 h-4" />
-            </button>
-            <AnimatePresence>
-              {showCategoryMenu && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute right-0 top-10 w-40 bg-card border border-border/50 rounded-xl shadow-lg overflow-hidden z-50"
-                >
-                  <button
-                    onClick={() => { setEditingCategory(true); setShowCategoryMenu(false); }}
-                    className="w-full px-4 py-2.5 text-left text-sm text-foreground hover:bg-secondary transition-colors flex items-center gap-2"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                    Rename
-                  </button>
-                  <button
-                    onClick={() => { handleCategoryDelete(); setShowCategoryMenu(false); }}
-                    className="w-full px-4 py-2.5 text-left text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors flex items-center gap-2"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          <button
+            onClick={() => setShowActions(true)}
+            aria-label={`${category.name} options`}
+            className="shrink-0 w-11 h-11 -mr-2 rounded-full flex items-center justify-center text-muted-foreground active:bg-foreground/10"
+          >
+            <MoreHorizontal className="w-5 h-5" />
+          </button>
         </div>
+        <p className="mt-2.5 font-serif italic text-[17px] text-muted-foreground">
+          {items.length - done.length} open{done.length > 0 ? ` · ${done.length} done` : ""}
+        </p>
+      </header>
 
-        {/* Rename inline */}
-        <AnimatePresence>
-          {editingCategory && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden mt-3"
-            >
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={catName}
-                  onChange={(e) => setCatName(e.target.value)}
-                  autoFocus
-                  className="flex-1 h-9 px-3 rounded-lg border border-border/60 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                />
-                <button
-                  onClick={handleCategoryRename}
-                  disabled={!catName.trim() || catSaving}
-                  className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-40"
-                >
-                  {catSaving ? "..." : "Save"}
-                </button>
-                <button
-                  onClick={() => { setEditingCategory(false); setCatName(category.name); }}
-                  className="h-9 px-3 rounded-lg text-muted-foreground text-xs hover:bg-secondary transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.header>
-
-      {/* Item list */}
-      <div className="px-5 mt-4">
+      <div className="rise-late px-4 mt-6">
         {sorted.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-            className="flex flex-col items-center py-16 text-center"
-          >
-            <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 opacity-20"
-              style={{ backgroundColor: category.color }}
-            >
-              <span className="text-2xl font-serif font-bold text-white">
-                {category.name.charAt(0).toUpperCase()}
-              </span>
-            </div>
-            <p className="font-serif text-lg font-semibold text-foreground">No tasks yet</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Tap + to add a task to {category.name}
-            </p>
-          </motion.div>
+          <div className="px-2 py-14 text-center">
+            <p className="font-serif text-2xl font-semibold text-foreground">Nothing in {category.name}</p>
+            <p className="mt-2 text-[15px] text-muted-foreground">Tell the bot, or tap + to add one here.</p>
+          </div>
         ) : (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3, delay: 0.1 }}
-            className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]"
-          >
-            <AnimatePresence mode="popLayout">
+          <div className="bg-card rounded-[1.5rem] overflow-hidden py-1">
+            <AnimatePresence initial={false}>
               {sorted.map((item, i) => (
-                <ItemCard
+                <motion.div
                   key={item.id}
-                  item={item}
-                  index={i}
-                  onToggle={handleToggle}
-                  onDelete={handleDelete}
-                  onEdit={openEdit}
-                />
+                  layout="position"
+                  exit={{ opacity: 0, height: 0, transition: { duration: 0.22, ease: [0.4, 0, 0.2, 1] } }}
+                  transition={{ layout: { type: "spring", stiffness: 420, damping: 40 } }}
+                  className="overflow-hidden"
+                >
+                  <TaskRow
+                    item={item}
+                    first={i === 0}
+                    showDescription
+                    today={today}
+                    onToggle={toggle}
+                    onDelete={remove}
+                    onEdit={setEditingItem}
+                  />
+                </motion.div>
               ))}
             </AnimatePresence>
-          </motion.div>
+          </div>
         )}
       </div>
 
-      {/* FAB */}
-      <motion.button
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.5 }}
+      <button
         onClick={() => setShowCreate(true)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] right-5 w-13 h-13 rounded-full bg-primary text-primary-foreground shadow-[0_4px_16px_rgba(146,120,92,0.35)] flex items-center justify-center active:scale-90 transition-transform z-40"
+        aria-label={`Add a task to ${category.name}`}
+        className="fixed z-40 right-5 bottom-[calc(env(safe-area-inset-bottom,0px)+6.25rem)] w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-[0_14px_30px_-10px_rgba(0,0,0,0.85)] flex items-center justify-center active:scale-90 transition-transform"
       >
-        <Plus className="w-5 h-5" />
-      </motion.button>
+        <Plus className="w-6 h-6" strokeWidth={2.2} />
+      </button>
 
       <CreateItemSheet
         open={showCreate}
@@ -449,107 +133,13 @@ export function CategoryDetailClient({ category, items: initialItems }: Props) {
         categories={[category]}
         defaultCategoryId={category.id}
       />
-
-      {/* Edit item sheet */}
-      <AnimatePresence>
-        {editingItem && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[55]"
-              onClick={() => setEditingItem(null)}
-            />
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 28, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 z-[60] bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
-            >
-              <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
-              <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
-                <div className="flex items-center justify-between mb-5">
-                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Task</h3>
-                  <button onClick={() => setEditingItem(null)} className="text-muted-foreground hover:text-foreground">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    placeholder="Task title"
-                    autoFocus
-                    className="w-full h-12 px-4 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                  />
-
-                  <textarea
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Description (optional)"
-                    rows={2}
-                    className="w-full px-4 py-3 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all resize-none"
-                  />
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Priority</label>
-                    <div className="flex gap-2">
-                      {(["low", "medium", "high"] as const).map((p) => (
-                        <button
-                          key={p}
-                          onClick={() => setEditPriority(p)}
-                          className={`flex-1 h-9 rounded-lg text-xs font-medium border transition-all duration-150 flex items-center justify-center gap-1.5 ${
-                            editPriority === p
-                              ? "border-primary bg-primary/5 text-foreground"
-                              : "border-border/50 text-muted-foreground"
-                          }`}
-                        >
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: priorityColors[p] }} />
-                          {priorityLabels[p]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Due date</label>
-                    <input
-                      type="date"
-                      value={editDueDate}
-                      onChange={(e) => setEditDueDate(e.target.value)}
-                      className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                    />
-                  </div>
-
-                  {editDueDate && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-2">Due time</label>
-                      <input
-                        type="time"
-                        value={editDueTime}
-                        onChange={(e) => setEditDueTime(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleEditSave}
-                    disabled={!editTitle.trim() || editSaving}
-                    className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {editSaving ? "Saving..." : "Save Changes"}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      <EditItemSheet item={editingItem} categories={lists} onClose={() => setEditingItem(null)} onDelete={remove} />
+      <ListActionsSheet
+        category={showActions ? category : null}
+        onClose={() => setShowActions(false)}
+        onRename={handleRename}
+        onDelete={handleDelete}
+      />
     </main>
   );
 }

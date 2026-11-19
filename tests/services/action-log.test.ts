@@ -57,7 +57,7 @@ describe("action-log", () => {
       const id = await recordAction("u1", 123, {
         kind: "delete_item",
         summary: "Deleted <b>Buy milk</b>",
-        inverse: { op: "noop" },
+        inverse: { op: "delete_item", itemId: "i1" },
       });
       expect(id).toBe("log1");
       expect(mockPrisma.actionLog.create).toHaveBeenCalledWith({
@@ -66,7 +66,7 @@ describe("action-log", () => {
           chatId: BigInt(123),
           kind: "delete_item",
           summary: "Deleted <b>Buy milk</b>",
-          inverse: { op: "noop" },
+          inverse: { op: "delete_item", itemId: "i1" },
         },
         select: { id: true },
       });
@@ -74,7 +74,7 @@ describe("action-log", () => {
 
     it("passes a null chatId through as null", async () => {
       mockPrisma.actionLog.create.mockResolvedValue({ id: "log1" });
-      await recordAction("u1", null, { kind: "noop", summary: "x", inverse: { op: "noop" } });
+      await recordAction("u1", null, { kind: "noop", summary: "x", inverse: { op: "delete_item", itemId: "i1" } });
       expect(mockPrisma.actionLog.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ chatId: null }) })
       );
@@ -82,7 +82,7 @@ describe("action-log", () => {
 
     it("returns null without throwing when the insert rejects", async () => {
       mockPrisma.actionLog.create.mockRejectedValue(new Error("db down"));
-      const id = await recordAction("u1", 1, { kind: "noop", summary: "x", inverse: { op: "noop" } });
+      const id = await recordAction("u1", 1, { kind: "noop", summary: "x", inverse: { op: "delete_item", itemId: "i1" } });
       expect(id).toBeNull();
     });
   });
@@ -235,13 +235,8 @@ describe("action-log", () => {
       expect(result).toEqual({ ok: true, summary: "x" });
     });
 
-    it("recreate_event creates the Google event first, then the item pointing at the new event id", async () => {
-      mockCalendar.createEvent.mockResolvedValue({
-        id: "new-event-id",
-        title: "Standup",
-        startTime: "2026-08-21T09:00:00Z",
-        endTime: "2026-08-21T09:30:00Z",
-      });
+    it("recreate_event puts the deleted Google event back", async () => {
+      mockCalendar.createEvent.mockResolvedValue({ id: "new-event-id", title: "Standup", startTime: "", endTime: "" });
       mockPrisma.actionLog.findFirst.mockResolvedValue({
         id: "log1",
         summary: "Restored event",
@@ -249,13 +244,11 @@ describe("action-log", () => {
           op: "recreate_event",
           calendarId: "primary",
           event: { title: "Standup", startTime: "2026-08-21T09:00:00Z", endTime: "2026-08-21T09:30:00Z" },
-          item: { id: "i1", title: "Standup", categoryId: "c1" },
         },
       });
       mockPrisma.actionLog.updateMany.mockResolvedValue({ count: 1 });
-      mockPrisma.item.create.mockResolvedValue({ id: "i1" });
 
-      await undoLast(user, now);
+      const result = await undoLast(user, now);
 
       expect(mockCalendar.createEvent).toHaveBeenCalledWith(
         "enc-refresh-token",
@@ -263,13 +256,28 @@ describe("action-log", () => {
         { title: "Standup", startTime: "2026-08-21T09:00:00Z", endTime: "2026-08-21T09:30:00Z" },
         "Asia/Singapore"
       );
-      expect(mockPrisma.item.create).toHaveBeenCalledWith({
-        data: { id: "i1", userId: "u1", title: "Standup", categoryId: "c1", googleEventId: "new-event-id" },
-      });
+      expect(result.ok).toBe(true);
+    });
 
-      const eventCallOrder = mockCalendar.createEvent.mock.invocationCallOrder[0];
-      const itemCallOrder = mockPrisma.item.create.mock.invocationCallOrder[0];
-      expect(eventCallOrder).toBeLessThan(itemCallOrder);
+    // Undo entries journalled before migration 20261119000000 still name the dropped columns.
+    it("drops the removed googleEventId/recurring keys from an old snapshot instead of failing", async () => {
+      mockPrisma.actionLog.findFirst.mockResolvedValue({
+        id: "log1",
+        summary: "deleted <b>Buy milk</b>",
+        inverse: {
+          op: "recreate_item",
+          itemId: "i1",
+          data: { title: "Buy milk", categoryId: "c1", googleEventId: null, recurring: "none" },
+        },
+      });
+      mockPrisma.actionLog.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.item.create.mockResolvedValue({ id: "i1" });
+
+      await undoLast(user, now);
+
+      expect(mockPrisma.item.create).toHaveBeenCalledWith({
+        data: { id: "i1", userId: "u1", title: "Buy milk", categoryId: "c1" },
+      });
     });
 
     it("skips calendar ops silently when the user has no refresh token", async () => {
@@ -402,8 +410,9 @@ describe("action-log", () => {
 
   describe("undoById", () => {
     it("undoes the specified entry", async () => {
-      mockPrisma.actionLog.findFirst.mockResolvedValue({ id: "log1", summary: "Deleted x", inverse: { op: "noop" } });
+      mockPrisma.actionLog.findFirst.mockResolvedValue({ id: "log1", summary: "Deleted x", inverse: { op: "delete_item", itemId: "i1" } });
       mockPrisma.actionLog.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.item.deleteMany.mockResolvedValue({ count: 1 });
 
       const result = await undoById("log1", user, now);
 

@@ -1,6 +1,4 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { NextRequest } from "next/server";
-import { findOrCreateUser } from "@/lib/services/user";
 
 export type TelegramAuthUser = {
   id: number;
@@ -63,17 +61,4 @@ export function validateInitData(initData: string, now = Date.now()): TelegramAu
 
 export function displayNameFor(user: TelegramAuthUser): string {
   return user.username ?? user.first_name ?? "User";
-}
-
-/** Legacy header-based auth for the JSON API (Telegram Mini App clients sending `x-telegram-init-data`). */
-export async function authenticateRequest(request: NextRequest) {
-  const initData = request.headers.get("x-telegram-init-data");
-  if (!initData) return null;
-  const telegramUser = validateInitData(initData);
-  if (!telegramUser) return null;
-  try {
-    return await findOrCreateUser(BigInt(telegramUser.id), displayNameFor(telegramUser));
-  } catch {
-    return null;
-  }
 }

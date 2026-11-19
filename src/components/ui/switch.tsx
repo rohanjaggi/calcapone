@@ -1,32 +1,39 @@
-"use client"
+"use client";
 
-import { Switch as SwitchPrimitive } from "@base-ui/react/switch"
+import { haptic } from "@/lib/telegram-webapp";
 
-import { cn } from "@/lib/utils"
-
-function Switch({
-  className,
-  size = "default",
-  ...props
-}: SwitchPrimitive.Root.Props & {
-  size?: "sm" | "default"
+/** The one on/off control. On takes the hour's colour, like every other "this is live" mark. */
+export function Switch({
+  checked,
+  onChange,
+  label,
+  labelledBy,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  /** Accessible name, when no visible label is wired up through `labelledBy`. */
+  label?: string;
+  labelledBy?: string;
 }) {
   return (
-    <SwitchPrimitive.Root
-      data-slot="switch"
-      data-size={size}
-      className={cn(
-        "peer group/switch relative inline-flex shrink-0 items-center rounded-full border border-transparent transition-all outline-none after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[size=default]:h-[18.4px] data-[size=default]:w-[32px] data-[size=sm]:h-[14px] data-[size=sm]:w-[24px] dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 data-checked:bg-primary data-unchecked:bg-input dark:data-unchecked:bg-input/80 data-disabled:cursor-not-allowed data-disabled:opacity-50",
-        className
-      )}
-      {...props}
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      aria-labelledby={labelledBy}
+      onClick={() => {
+        haptic("select");
+        onChange(!checked);
+      }}
+      className={`relative shrink-0 w-[3.25rem] h-8 rounded-full transition-colors duration-200 ${checked ? "bg-hour" : "bg-input"}`}
     >
-      <SwitchPrimitive.Thumb
-        data-slot="switch-thumb"
-        className="pointer-events-none block rounded-full bg-background ring-0 transition-transform group-data-[size=default]/switch:size-4 group-data-[size=sm]/switch:size-3 group-data-[size=default]/switch:data-checked:translate-x-[calc(100%-2px)] group-data-[size=sm]/switch:data-checked:translate-x-[calc(100%-2px)] dark:data-checked:bg-primary-foreground group-data-[size=default]/switch:data-unchecked:translate-x-0 group-data-[size=sm]/switch:data-unchecked:translate-x-0 dark:data-unchecked:bg-foreground"
+      <span
+        aria-hidden="true"
+        className={`absolute top-1 left-1 w-6 h-6 rounded-full shadow-[0_2px_6px_rgba(0,0,0,0.35)] transition-[transform,background-color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+          checked ? "translate-x-5 bg-background" : "bg-foreground"
+        }`}
       />
-    </SwitchPrimitive.Root>
-  )
+    </button>
+  );
 }
-
-export { Switch }

@@ -1,4 +1,5 @@
-import type { Priority, ItemStatus, RecurringType } from "@/generated/prisma/enums";
+import { b } from "@/lib/services/telegram";
+import type { Priority, ItemStatus } from "@/generated/prisma/enums";
 
 /**
  * The shared vocabulary between a tool call and everything that happens after it.
@@ -26,10 +27,8 @@ export type ItemSnapshot = {
   dueDate?: string | null;
   dueTime?: string | null;
   remindAt?: string | null;
-  recurring?: RecurringType;
   recurrenceRule?: string | null;
   recurrenceEnd?: string | null;
-  googleEventId?: string | null;
   parentId?: string | null;
   notificationStage?: number;
   /** Which repeating run the item belongs to — dropping it orphans a restored occurrence. */
@@ -56,12 +55,10 @@ export type UndoOp =
   | { op: "recreate_item"; itemId: string; data: ItemSnapshot & { title: string; categoryId: string } }
   | { op: "delete_event"; calendarId: string; eventId: string }
   | { op: "patch_event"; calendarId: string; eventId: string; fields: Partial<EventSnapshot> }
-  /** Recreates the Google event, then (if `item` is set) the in-app row pointing at the new event id. */
-  | { op: "recreate_event"; calendarId: string; event: EventSnapshot; item?: ItemSnapshot & { id: string; title: string; categoryId: string } }
+  | { op: "recreate_event"; calendarId: string; event: EventSnapshot }
   | { op: "delete_category"; categoryId: string }
   /** Applied in order, best-effort: one user-visible action can be several writes (decomposing a task). */
-  | { op: "sequence"; ops: UndoOp[] }
-  | { op: "noop" };
+  | { op: "sequence"; ops: UndoOp[] };
 
 export type UndoRecord = {
   /** Machine name of the action, e.g. "create_item". Used for grouping, never shown raw. */
@@ -95,6 +92,18 @@ export type ToolOutcome = {
     candidates: Array<{ id: string; title: string }>;
   };
 };
+
+/**
+ * The journal entry for completing a task. Shared by the AI tool, `/done` and the ✅ button:
+ * when only the AI path journalled, `/undo` after a `/done` reversed whatever came before it.
+ */
+export function completionRecord(item: { id: string; title: string; status: ItemStatus }): UndoRecord {
+  return {
+    kind: "complete_item",
+    summary: `completed ${b(item.title)}`,
+    inverse: { op: "restore_item", itemId: item.id, fields: { status: item.status } },
+  };
+}
 
 /** A read-only result: shown to the model, not echoed to the user. */
 export function readOutcome(text: string | null, itemIds?: string[]): ToolOutcome {

@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { getAgenda } from "@/lib/services/agenda";
 import { todayInTz } from "@/lib/tz";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
-import { SearchDialog } from "@/components/search/search-dialog";
+import { SkyStyle } from "@/components/sky/sky-style";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +16,7 @@ export default async function Dashboard() {
 
   return (
     <>
-      <div className="fixed top-4 right-4 z-50">
-        <SearchDialog />
-      </div>
+      <SkyStyle timezone={user.timezone} />
       <DashboardClient
         userName={user.telegramUsername}
         timezone={user.timezone}

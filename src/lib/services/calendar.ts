@@ -323,13 +323,6 @@ export type SyncedEvent = {
   startsAt: Date | null;
   endsAt: Date | null;
   allDay: boolean;
-  /**
-   * The calendar's own "YYYY-MM-DD" for an all-day event, null otherwise. Carried alongside
-   * `startsAt` because that instant only means the right day when read back in the calendar's
-   * timezone — a consumer formatting it in the user's zone lands a day off whenever the two
-   * straddle midnight.
-   */
-  allDayDate: string | null;
   transparent: boolean;
   googleUpdatedAt: Date | null;
   cancelled: boolean;
@@ -401,7 +394,6 @@ async function fetchEventChanges(
         startsAt: cancelled ? null : parseGoogleInstant(event.start, calendarTz),
         endsAt: cancelled ? null : parseGoogleInstant(event.end, calendarTz),
         allDay: !cancelled && !event.start?.dateTime,
-        allDayDate: cancelled ? null : event.start?.date ?? null,
         transparent: event.transparency === "transparent",
         googleUpdatedAt: event.updated ? new Date(event.updated) : null,
         cancelled,

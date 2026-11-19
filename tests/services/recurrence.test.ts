@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { paramsToRRule, getNextOccurrence, dueDateAnchor } from "@/lib/services/recurrence";
-import { createNextOccurrence, nextDueDate } from "@/lib/services/item";
+import { paramsToRRule, getNextOccurrence, dueDateAnchor, reanchorRule } from "@/lib/services/recurrence";
+import { nextDueDate } from "@/lib/services/item";
 
 describe("recurrence", () => {
   it("daily rule without DTSTART advances from the item's own remindAt, not from now", () => {
@@ -43,17 +43,52 @@ describe("recurrence", () => {
     expect(nextDueDate("2026-09-04", rule)).toBeNull();
   });
 
-  it("legacy monthly handles the 31st without overflowing into March", () => {
+  // "FREQ=MONTHLY" etc. with no DTSTART is exactly what migration 20261119000000 writes for
+  // rows that only had the old daily/weekly/monthly enum, so these pin that it behaves the same.
+  it("a migrated monthly rule handles the 31st without overflowing into March", () => {
     const jan31 = new Date("2026-01-31T01:00:00Z");
-    const next = createNextOccurrence(jan31, "monthly", null)!;
+    const next = getNextOccurrence("FREQ=MONTHLY", jan31)!;
     // rrule skips months without a 31st instead of rolling into March 3rd
     expect(next.toISOString()).toBe("2026-03-31T01:00:00.000Z");
   });
 
-  it("legacy daily/weekly and 'none'", () => {
+  it("migrated daily/weekly rules advance from the occurrence itself", () => {
     const d = new Date("2026-08-19T01:00:00Z");
-    expect(createNextOccurrence(d, "daily", null)!.toISOString()).toBe("2026-08-20T01:00:00.000Z");
-    expect(createNextOccurrence(d, "weekly", null)!.toISOString()).toBe("2026-08-26T01:00:00.000Z");
-    expect(createNextOccurrence(d, "none", null)).toBeNull();
+    expect(getNextOccurrence("FREQ=DAILY", d)!.toISOString()).toBe("2026-08-20T01:00:00.000Z");
+    expect(getNextOccurrence("FREQ=WEEKLY", d)!.toISOString()).toBe("2026-08-26T01:00:00.000Z");
+  });
+});
+
+// rrule does its weekday arithmetic in UTC; these are read in the user's zone instead.
+describe("getNextOccurrence in the user's timezone", () => {
+  it("keeps 'every Tuesday 7am' on Tuesdays in Singapore (it drifted to Wednesdays)", () => {
+    const firstAlarm = new Date("2026-11-23T23:00:00Z"); // Tue 24 Nov, 07:00 SGT
+    const rule = paramsToRRule({ frequency: "weekly", byDay: ["TU"] }, firstAlarm);
+    const next = getNextOccurrence(rule, firstAlarm, undefined, "Asia/Singapore")!;
+    expect(next.toISOString()).toBe("2026-11-30T23:00:00.000Z"); // Tue 1 Dec, 07:00 SGT
+  });
+
+  it("keeps a London daily 9am at 9am across the clocks changing", () => {
+    const winter = new Date("2026-03-28T09:00:00Z"); // Sat 09:00 GMT
+    const rule = paramsToRRule({ frequency: "daily" }, winter);
+    const next = getNextOccurrence(rule, winter, undefined, "Europe/London")!;
+    expect(next.toISOString()).toBe("2026-03-29T08:00:00.000Z"); // Sun 09:00 BST
+  });
+
+  it("leaves UTC (the default) unchanged", () => {
+    const d = new Date("2026-08-19T01:00:00Z");
+    expect(getNextOccurrence("FREQ=DAILY", d)!.toISOString()).toBe("2026-08-20T01:00:00.000Z");
+  });
+});
+
+describe("reanchorRule", () => {
+  // "Move my 9am meds to 8am" changed only the alarm, so the old 9am start kept firing too.
+  it("restarts the rule at the new time", () => {
+    const rule = paramsToRRule({ frequency: "daily" }, new Date("2026-11-18T01:00:00Z"));
+    const moved = reanchorRule(rule, new Date("2026-11-20T00:00:00Z"))!;
+    expect(moved).toContain("DTSTART:20261120T000000Z");
+    expect(getNextOccurrence(moved, new Date("2026-11-20T00:00:00Z"), undefined, "Asia/Singapore")!.toISOString()).toBe(
+      "2026-11-21T00:00:00.000Z"
+    );
   });
 });

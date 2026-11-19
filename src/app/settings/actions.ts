@@ -1,9 +1,10 @@
 "use server";
 
-import { updateUserSettings } from "@/lib/services/user";
+import { updateUserSettings, changeTimezone } from "@/lib/services/user";
 import { requireUser } from "@/lib/auth";
 import { getAuthUrl, createOAuthState, revokeRefreshToken } from "@/lib/services/calendar";
 import { rememberOAuthState } from "@/lib/services/oauth-state";
+import { markCalendarDisconnected } from "@/lib/services/calendar-link";
 import { isHHmm, isPriority, isProvider } from "@/lib/settings-input";
 import { isSelectableTz } from "@/lib/tz";
 
@@ -24,7 +25,7 @@ export async function saveAiConfig(data: {
 export async function saveTimezone(timezone: string) {
   const user = await requireUser();
   if (!isSelectableTz(timezone)) throw new Error("Invalid time zone");
-  await updateUserSettings(user.id, { timezone });
+  if (timezone !== user.timezone) await changeTimezone(user.id, user.timezone, timezone);
 }
 
 export async function saveNotifications(data: {
@@ -46,9 +47,16 @@ export async function saveNotifications(data: {
     throw new Error("Digest day must be 0-6");
   }
   if (!isPriority(data.notifyMinPriority)) throw new Error("Invalid minimum priority");
+  // Named fields only: spreading `data` let a crafted call write any user column (e.g. reset aiCallsCount).
   await updateUserSettings(user.id, {
-    ...data,
+    briefingEnabled: data.briefingEnabled === true,
+    briefingTime: data.briefingTime,
+    weeklyDigestEnabled: data.weeklyDigestEnabled === true,
+    quietStart: data.quietStart,
+    quietEnd: data.quietEnd,
     notifyMinPriority: data.notifyMinPriority,
+    digestDay: data.digestDay,
+    digestTime: data.digestTime,
   });
 }
 
@@ -64,8 +72,6 @@ export async function disconnectGoogle() {
   if (user.googleRefreshToken) {
     await revokeRefreshToken(user.googleRefreshToken);
   }
-  await updateUserSettings(user.id, {
-    googleRefreshToken: null,
-    googleCalendarId: null,
-  });
+  await markCalendarDisconnected(user.id);
+  await updateUserSettings(user.id, { googleCalendarId: null });
 }

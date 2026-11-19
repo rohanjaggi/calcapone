@@ -1,6 +1,6 @@
 import { formatDateInTz, todayInTz, combineDateTimeInTz } from "@/lib/tz";
 import { deadlineUrgency } from "@/lib/services/escalation";
-import type { Item, AgendaEvent, TimelineItem } from "@/lib/mock-data";
+import type { Item, AgendaEvent, TimelineItem } from "@/lib/types";
 
 /** Calendar events all share one colour — they aren't categorised the way items are. */
 const EVENT_COLOR = "#4A6FA5";
@@ -32,41 +32,34 @@ export function buildTimeline(
 
   for (const item of items) {
     if (item.status === "done") continue;
-
-    let time: string | null = null;
-    let itemDay: string | null = null;
-    // A task due on a date but at no particular hour has no place on the clock. It used to be
-    // dropped entirely, so "essay due Friday" appeared on no day at all while still showing in
-    // /list and still escalating in Telegram. It now heads that day, like an all-day event.
-    let untimed = false;
-
-    if (item.remindAt) {
-      const instant = new Date(item.remindAt);
-      if (isNaN(instant.getTime())) continue;
-      time = item.remindAt;
-      itemDay = formatDateInTz(instant, tz);
-    } else if (item.dueDate) {
-      untimed = !item.dueTime;
-      time = `${item.dueDate}T${item.dueTime ?? "00:00"}:00`;
-      itemDay = item.dueDate;
-    }
-
-    if (!time || itemDay !== day) continue;
-
-    const urgency = item.remindAt ? null : urgencyOf(item.dueDate, item.dueTime);
-
-    timelineItems.push({
+    const base = {
       id: item.id,
-      type: "item",
+      type: "item" as const,
       title: item.title,
-      time,
       subtitle: `${item.category.name} · ${item.priority}`,
       color: item.category.color,
-      isReminder: !!item.remindAt,
-      ...(untimed ? { allDay: true } : {}),
-      ...(urgency ? { urgency } : {}),
       status: item.status,
-    });
+    };
+
+    // A reminder belongs to the day it rings and a deadline to its due day, so "essay due Fri,
+    // remind Thu 20:00" shows on both — it used to vanish from Friday.
+    const ringsAt = item.remindAt ? new Date(item.remindAt) : null;
+    const reminderDay = ringsAt && !isNaN(ringsAt.getTime()) ? formatDateInTz(ringsAt, tz) : null;
+    if (item.remindAt && reminderDay === day) {
+      timelineItems.push({ ...base, time: item.remindAt, isReminder: true });
+    } else if (item.dueDate === day) {
+      // A task due on a date at no hour heads the day, like an all-day event.
+      const urgency = urgencyOf(item.dueDate, item.dueTime);
+      timelineItems.push({
+        ...base,
+        // An instant, not a bare "2026-11-19T09:00:00": the server reads that as UTC, so a 9am
+        // Singapore task rendered as 5pm and sorted after the afternoon.
+        time: combineDateTimeInTz(item.dueDate, item.dueTime ?? "00:00", tz).toISOString(),
+        isReminder: false,
+        ...(item.dueTime ? {} : { allDay: true }),
+        ...(urgency ? { urgency } : {}),
+      });
+    }
   }
 
   for (const ev of events) {

@@ -1,0 +1,1068 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-18T19:01:44+00:00",
+  "title": "Design System: Calcapone",
+  "extensions": {
+    "colorMeta": {
+      "night-ink": {
+        "role": "neutral",
+        "displayName": "Night Ink",
+        "canonical": "#0E1220",
+        "oklch": "oklch(18.6% 0.029 271.2)",
+        "tonalRamp": [
+          "#090B11",
+          "#22252E",
+          "#3D424F",
+          "#5B6171",
+          "#7C8293",
+          "#9FA5B4",
+          "#C4C9D6",
+          "#EBEEF9"
+        ],
+        "purpose": "Ground of every page; Telegram background and bottom bar."
+      },
+      "page": {
+        "role": "neutral",
+        "displayName": "Diary Page",
+        "canonical": "#161B2B",
+        "oklch": "oklch(22.5% 0.032 270.4)",
+        "tonalRamp": [
+          "#090B12",
+          "#21252F",
+          "#3D4250",
+          "#5B6173",
+          "#7B8295",
+          "#9FA5B5",
+          "#C4C9D7",
+          "#EAEEFA"
+        ],
+        "purpose": "Day page, list groups, month grid, rows."
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised Ink",
+        "canonical": "#1C2234",
+        "oklch": "oklch(25.5% 0.035 269.7)",
+        "tonalRamp": [
+          "#080B13",
+          "#212530",
+          "#3C4251",
+          "#5A6174",
+          "#7A8297",
+          "#9EA5B7",
+          "#C3C9D8",
+          "#EAEEFB"
+        ],
+        "purpose": "Sheets, tab bar, toasts, search."
+      },
+      "seam-fill": {
+        "role": "neutral",
+        "displayName": "Seam Fill",
+        "canonical": "#1E2436",
+        "oklch": "oklch(26.3% 0.035 269.7)",
+        "tonalRamp": [
+          "#080B13",
+          "#212530",
+          "#3C4251",
+          "#5A6174",
+          "#7A8296",
+          "#9EA5B7",
+          "#C3C9D8",
+          "#EAEEFA"
+        ],
+        "purpose": "Skeletons, swipe Edit, neutral badges. Aliased as secondary, muted and accent in globals.css."
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#262D42",
+        "oklch": "oklch(30.0% 0.039 269.8)",
+        "tonalRamp": [
+          "#080B13",
+          "#202532",
+          "#3B4153",
+          "#596177",
+          "#798299",
+          "#9DA5B9",
+          "#C2C9DA",
+          "#E9EEFC"
+        ],
+        "purpose": "Default border and seams."
+      },
+      "input-edge": {
+        "role": "neutral",
+        "displayName": "Input Edge",
+        "canonical": "#303852",
+        "oklch": "oklch(34.5% 0.047 270.7)",
+        "tonalRamp": [
+          "#080B15",
+          "#1F2434",
+          "#3A4156",
+          "#58607B",
+          "#78819D",
+          "#9CA4BD",
+          "#C2C9DD",
+          "#E8EEFF"
+        ],
+        "purpose": "Input borders, off switch, disabled primary."
+      },
+      "ivory": {
+        "role": "primary",
+        "displayName": "Ivory",
+        "canonical": "#F3EEE6",
+        "oklch": "oklch(95.1% 0.012 79.8)",
+        "tonalRamp": [
+          "#0C0B08",
+          "#272521",
+          "#45413D",
+          "#65615A",
+          "#86827B",
+          "#A8A49F",
+          "#CCC9C4",
+          "#F0EEEA"
+        ],
+        "purpose": "Primary text and primary action fill."
+      },
+      "muted-ivory": {
+        "role": "neutral",
+        "displayName": "Muted Ivory",
+        "canonical": "#B3B0BF",
+        "oklch": "oklch(76.4% 0.021 295.1)",
+        "tonalRamp": [
+          "#0B0A0F",
+          "#25242B",
+          "#42404A",
+          "#625F6C",
+          "#83808D",
+          "#A5A3AF",
+          "#C9C8D1",
+          "#EFEDF5"
+        ],
+        "purpose": "Secondary text."
+      },
+      "faint": {
+        "role": "neutral",
+        "displayName": "Faint Lavender-Grey",
+        "canonical": "#8E8DA2",
+        "oklch": "oklch(65.1% 0.031 287.7)",
+        "tonalRamp": [
+          "#0B0A11",
+          "#24242E",
+          "#41404E",
+          "#605F71",
+          "#818093",
+          "#A4A3B4",
+          "#C8C7D6",
+          "#EDEDF8"
+        ],
+        "purpose": "Placeholders, inactive tabs, past and done."
+      },
+      "alarm-coral": {
+        "role": "secondary",
+        "displayName": "Alarm Coral",
+        "canonical": "#FF7A6B",
+        "oklch": "oklch(73.2% 0.165 28.3)",
+        "tonalRamp": [
+          "#240000",
+          "#4C0202",
+          "#781A15",
+          "#A7332A",
+          "#CE574B",
+          "#EB8476",
+          "#FFAFA3",
+          "#FFDBD0"
+        ],
+        "purpose": "Overdue and destructive only."
+      },
+      "urgent-amber": {
+        "role": "secondary",
+        "displayName": "Urgent Amber",
+        "canonical": "#F6B94A",
+        "oklch": "oklch(82.3% 0.143 79.1)",
+        "tonalRamp": [
+          "#1A0500",
+          "#3C1D00",
+          "#613800",
+          "#885500",
+          "#AC7700",
+          "#CA9C4D",
+          "#E9C384",
+          "#FFEABA"
+        ],
+        "purpose": "Urgent deadlines only."
+      },
+      "done-sage": {
+        "role": "secondary",
+        "displayName": "Done Sage",
+        "canonical": "#8FC1A0",
+        "oklch": "oklch(76.6% 0.071 155.5)",
+        "tonalRamp": [
+          "#010F05",
+          "#112B1B",
+          "#284B35",
+          "#416C51",
+          "#628E72",
+          "#8AB096",
+          "#B3D2BD",
+          "#DDF6E5"
+        ],
+        "purpose": "Completed tick."
+      },
+      "hour-night": {
+        "role": "primary",
+        "displayName": "Night Hour",
+        "canonical": "#A9B8F0",
+        "oklch": "oklch(79.1% 0.082 272.8)",
+        "tonalRamp": [
+          "#06091C",
+          "#1D233E",
+          "#373F64",
+          "#535E8C",
+          "#7380B0",
+          "#97A3CE",
+          "#BDC8EC",
+          "#E5EDFF"
+        ],
+        "purpose": "The hour accent at night; registered initial value of --hour."
+      },
+      "hour-dawn": {
+        "role": "primary",
+        "displayName": "Dawn Hour",
+        "canonical": "#F2B49A",
+        "oklch": "oklch(82.1% 0.081 43.8)",
+        "tonalRamp": [
+          "#180501",
+          "#391C0F",
+          "#5E3625",
+          "#85533D",
+          "#A9745D",
+          "#C89985",
+          "#E7BFAF",
+          "#FFE7D9"
+        ],
+        "purpose": "Hour accent at the 06:45 dawn keyframe."
+      },
+      "hour-midday": {
+        "role": "primary",
+        "displayName": "Midday Hour",
+        "canonical": "#F1CF82",
+        "oklch": "oklch(86.7% 0.103 86.5)",
+        "tonalRamp": [
+          "#140900",
+          "#332200",
+          "#553E00",
+          "#795D0E",
+          "#9B7E38",
+          "#BBA269",
+          "#DCC798",
+          "#FEEDC9"
+        ],
+        "purpose": "Hour accent at the 12:30 keyframe."
+      },
+      "hour-dusk": {
+        "role": "primary",
+        "displayName": "Dusk Hour",
+        "canonical": "#F0A06E",
+        "oklch": "oklch(77.4% 0.116 52.3)",
+        "tonalRamp": [
+          "#1C0300",
+          "#3F1800",
+          "#663208",
+          "#904D1E",
+          "#B46F41",
+          "#D3956F",
+          "#F1BC9D",
+          "#FFE5CC"
+        ],
+        "purpose": "Hour accent at the 18:45 keyframe."
+      },
+      "sky-zenith-night": {
+        "role": "tertiary",
+        "displayName": "Sky Zenith Night",
+        "canonical": "#0B1028",
+        "oklch": "oklch(18.4% 0.049 271.9)",
+        "tonalRamp": [
+          "#080A15",
+          "#202434",
+          "#3B4157",
+          "#58607C",
+          "#78819E",
+          "#9CA4BE",
+          "#C2C8DE",
+          "#E8EEFF"
+        ]
+      },
+      "sky-mid-night": {
+        "role": "tertiary",
+        "displayName": "Sky Mid Night",
+        "canonical": "#141B3D",
+        "oklch": "oklch(23.7% 0.065 271.8)",
+        "tonalRamp": [
+          "#070A19",
+          "#1E2439",
+          "#38405D",
+          "#555F84",
+          "#7581A7",
+          "#99A4C6",
+          "#BFC8E5",
+          "#E7EEFF"
+        ]
+      },
+      "sky-low-night": {
+        "role": "tertiary",
+        "displayName": "Sky Low Night",
+        "canonical": "#1C2350",
+        "oklch": "oklch(27.8% 0.082 273.2)",
+        "tonalRamp": [
+          "#06091C",
+          "#1D233E",
+          "#373F64",
+          "#535E8D",
+          "#737FB0",
+          "#98A3CE",
+          "#BEC8EC",
+          "#E5EDFF"
+        ]
+      },
+      "sky-horizon-night": {
+        "role": "tertiary",
+        "displayName": "Sky Horizon Night",
+        "canonical": "#36437E",
+        "oklch": "oklch(40.3% 0.100 271.9)",
+        "tonalRamp": [
+          "#05081F",
+          "#1A2244",
+          "#333E6B",
+          "#4F5D96",
+          "#6F7FBA",
+          "#93A3D7",
+          "#BAC7F4",
+          "#E2EDFF"
+        ]
+      },
+      "priority-high": {
+        "role": "tertiary",
+        "displayName": "Priority High",
+        "canonical": "#F3EEE6",
+        "oklch": "oklch(95.1% 0.012 79.8)",
+        "tonalRamp": [
+          "#0C0B08",
+          "#272521",
+          "#45413D",
+          "#65615A",
+          "#86827B",
+          "#A8A49F",
+          "#CCC9C4",
+          "#F0EEEA"
+        ]
+      },
+      "priority-medium": {
+        "role": "tertiary",
+        "displayName": "Priority Medium",
+        "canonical": "#A9A7B8",
+        "oklch": "oklch(73.5% 0.024 291.2)",
+        "tonalRamp": [
+          "#0B0A10",
+          "#25242C",
+          "#42404C",
+          "#615F6D",
+          "#82808F",
+          "#A5A3B0",
+          "#C9C8D3",
+          "#EEEDF6"
+        ]
+      },
+      "priority-low": {
+        "role": "tertiary",
+        "displayName": "Priority Low",
+        "canonical": "#6B6A80",
+        "oklch": "oklch(53.3% 0.034 287.3)",
+        "tonalRamp": [
+          "#0B0A12",
+          "#24242F",
+          "#414050",
+          "#605F73",
+          "#818095",
+          "#A3A3B5",
+          "#C8C7D7",
+          "#EDEDFA"
+        ]
+      },
+      "list-sage": {
+        "role": "tertiary",
+        "displayName": "List Sage",
+        "canonical": "#8FC1A0",
+        "oklch": "oklch(76.6% 0.071 155.5)",
+        "tonalRamp": [
+          "#010F05",
+          "#112B1B",
+          "#284B35",
+          "#416C51",
+          "#628E72",
+          "#8AB096",
+          "#B3D2BD",
+          "#DDF6E5"
+        ]
+      },
+      "list-teal": {
+        "role": "tertiary",
+        "displayName": "List Teal",
+        "canonical": "#74C3BD",
+        "oklch": "oklch(76.5% 0.079 189.4)",
+        "tonalRamp": [
+          "#00100F",
+          "#002D2A",
+          "#0A4C49",
+          "#236E6A",
+          "#48918B",
+          "#77B2AD",
+          "#A4D4D0",
+          "#D2F7F4"
+        ]
+      },
+      "list-sky": {
+        "role": "tertiary",
+        "displayName": "List Sky",
+        "canonical": "#7FB0EA",
+        "oklch": "oklch(74.5% 0.099 253.2)",
+        "tonalRamp": [
+          "#000B1F",
+          "#0B2643",
+          "#21436A",
+          "#396394",
+          "#5A85B8",
+          "#83A8D5",
+          "#ADCCF2",
+          "#D8F1FF"
+        ]
+      },
+      "list-periwinkle": {
+        "role": "tertiary",
+        "displayName": "List Periwinkle",
+        "canonical": "#9EA3F2",
+        "oklch": "oklch(74.2% 0.114 280.5)",
+        "tonalRamp": [
+          "#080622",
+          "#1F1F47",
+          "#3A3B70",
+          "#57599B",
+          "#777AC0",
+          "#9A9FDC",
+          "#C0C5F8",
+          "#E7EBFF"
+        ]
+      },
+      "list-lilac": {
+        "role": "tertiary",
+        "displayName": "List Lilac",
+        "canonical": "#C49DE8",
+        "oklch": "oklch(75.8% 0.113 307.7)",
+        "tonalRamp": [
+          "#12041D",
+          "#2F1A40",
+          "#4F3466",
+          "#71508F",
+          "#9371B3",
+          "#B496D0",
+          "#D6BDEE",
+          "#F9E5FF"
+        ]
+      },
+      "list-rose": {
+        "role": "tertiary",
+        "displayName": "List Rose",
+        "canonical": "#E89DC2",
+        "oklch": "oklch(78.0% 0.100 348.6)",
+        "tonalRamp": [
+          "#19030E",
+          "#3B162A",
+          "#602F49",
+          "#884A6A",
+          "#AC6B8B",
+          "#CB91AD",
+          "#EAB9D0",
+          "#FFE2F4"
+        ]
+      },
+      "list-clay": {
+        "role": "tertiary",
+        "displayName": "List Clay",
+        "canonical": "#D39A8C",
+        "oklch": "oklch(73.7% 0.072 34.3)",
+        "tonalRamp": [
+          "#170503",
+          "#381C16",
+          "#5C372E",
+          "#835348",
+          "#A67468",
+          "#C6998E",
+          "#E5BFB6",
+          "#FFE7DF"
+        ]
+      },
+      "list-sand": {
+        "role": "tertiary",
+        "displayName": "List Sand",
+        "canonical": "#D8B98A",
+        "oklch": "oklch(80.1% 0.072 77.8)",
+        "tonalRamp": [
+          "#130900",
+          "#312208",
+          "#523E1D",
+          "#765C34",
+          "#997E54",
+          "#B9A17E",
+          "#DAC6A9",
+          "#FCECD5"
+        ]
+      },
+      "list-straw": {
+        "role": "tertiary",
+        "displayName": "List Straw",
+        "canonical": "#D9CC86",
+        "oklch": "oklch(84.0% 0.091 99.0)",
+        "tonalRamp": [
+          "#100B00",
+          "#2C2500",
+          "#4C420C",
+          "#6D6222",
+          "#8F8345",
+          "#B0A672",
+          "#D2CA9F",
+          "#F6F0CE"
+        ]
+      },
+      "list-slate": {
+        "role": "tertiary",
+        "displayName": "List Slate",
+        "canonical": "#9DA9C2",
+        "oklch": "oklch(73.4% 0.039 265.1)",
+        "tonalRamp": [
+          "#070B13",
+          "#1F2531",
+          "#3A4252",
+          "#576176",
+          "#788299",
+          "#9CA5B9",
+          "#C1C9DA",
+          "#E8EFFC"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display (foil date)",
+        "purpose": "The day number on Home, filled with the hour's foil. One per screen."
+      },
+      "display-italic": {
+        "displayName": "Display Italic",
+        "purpose": "Weekday and month beside the day number."
+      },
+      "headline": {
+        "displayName": "Page Title",
+        "purpose": "Tasks, Calendar, Settings, a list's name, Login."
+      },
+      "title": {
+        "displayName": "Day Page Title",
+        "purpose": "\"Today\" or the long date on the day page."
+      },
+      "title-sheet": {
+        "displayName": "Sheet Title",
+        "purpose": "Bottom sheet titles and Calendar's day title."
+      },
+      "subtitle": {
+        "displayName": "Italic Subtitle",
+        "purpose": "Brygada italic line under each page title.",
+        "fontStyle": "italic"
+      },
+      "pressing": {
+        "displayName": "Pressing Title",
+        "purpose": "The one commitment under the sky."
+      },
+      "body-large": {
+        "displayName": "Body Large",
+        "purpose": "Greeting, list names, title input."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Task and timeline titles."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Options, buttons, toasts, Add."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels, meta lines, times."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Tab labels, weekday initials, badges."
+      }
+    },
+    "fonts": [
+      {
+        "family": "Mona Sans",
+        "variable": "--font-mona",
+        "source": "next/font/google",
+        "axes": [
+          "wdth"
+        ],
+        "role": "UI"
+      },
+      {
+        "family": "Brygada 1918",
+        "variable": "--font-display",
+        "source": "next/font/google",
+        "styles": [
+          "normal",
+          "italic"
+        ],
+        "role": "display, via font-serif"
+      }
+    ],
+    "liveProperties": {
+      "description": "Registered @property colours written once a minute from the user's timezone by sky.ts (keyframes blended in OKLab) and cross-faded over 60s linear once data-sky-live is set.",
+      "properties": [
+        "--sky-zenith",
+        "--sky-mid",
+        "--sky-low",
+        "--sky-horizon",
+        "--foil-1",
+        "--foil-2",
+        "--foil-3",
+        "--foil-4",
+        "--hour"
+      ],
+      "skyKeyframes": [
+        {
+          "at": "00:00\u201304:45",
+          "phase": "Night",
+          "zenith": "#0B1028",
+          "mid": "#141B3D",
+          "low": "#1C2350",
+          "horizon": "#36437E",
+          "foil": [
+            "#8E9CD0",
+            "#C8D2F4",
+            "#A9B6E6",
+            "#F2F5FF"
+          ],
+          "hour": "#A9B8F0"
+        },
+        {
+          "at": "05:45",
+          "phase": "Dawn",
+          "zenith": "#151A40",
+          "mid": "#2A2C5E",
+          "low": "#3A3769",
+          "horizon": "#8A6E9E",
+          "foil": [
+            "#B9A3D8",
+            "#E3D2F2",
+            "#CDB8E6",
+            "#F7F0FF"
+          ],
+          "hour": "#C9B6F0"
+        },
+        {
+          "at": "06:45",
+          "phase": "Dawn",
+          "zenith": "#2B2F5E",
+          "mid": "#433F7A",
+          "low": "#56487F",
+          "horizon": "#E3A693",
+          "foil": [
+            "#EDA58C",
+            "#F7CDBB",
+            "#FFE3D6",
+            "#FFF3EA"
+          ],
+          "hour": "#F2B49A"
+        },
+        {
+          "at": "08:30",
+          "phase": "Morning",
+          "zenith": "#1F3F72",
+          "mid": "#2B5690",
+          "low": "#2F5B93",
+          "horizon": "#E9C9A0",
+          "foil": [
+            "#E8C27F",
+            "#F6DFAE",
+            "#FBEBC8",
+            "#FFF8EA"
+          ],
+          "hour": "#F1D08E"
+        },
+        {
+          "at": "12:30",
+          "phase": "Midday",
+          "zenith": "#17406F",
+          "mid": "#22548C",
+          "low": "#285D97",
+          "horizon": "#9FC0DA",
+          "foil": [
+            "#EBC46A",
+            "#FBE7B4",
+            "#FFF1C9",
+            "#FFFDF4"
+          ],
+          "hour": "#F1CF82"
+        },
+        {
+          "at": "16:30",
+          "phase": "Afternoon",
+          "zenith": "#1E3866",
+          "mid": "#36477A",
+          "low": "#4A4877",
+          "horizon": "#EDB46E",
+          "foil": [
+            "#E9A85A",
+            "#F7CF94",
+            "#FCE2BC",
+            "#FFF4E2"
+          ],
+          "hour": "#F2BE72"
+        },
+        {
+          "at": "18:45",
+          "phase": "Dusk",
+          "zenith": "#231E4E",
+          "mid": "#3A2C68",
+          "low": "#4F3569",
+          "horizon": "#E08757",
+          "foil": [
+            "#EE915E",
+            "#FFC9A3",
+            "#FFDCC2",
+            "#FFF0E2"
+          ],
+          "hour": "#F0A06E"
+        },
+        {
+          "at": "19:50",
+          "phase": "Dusk",
+          "zenith": "#151634",
+          "mid": "#262250",
+          "low": "#33295B",
+          "horizon": "#8C4E6E",
+          "foil": [
+            "#D58FB0",
+            "#EDBCD3",
+            "#F6D6E4",
+            "#FFF0F6"
+          ],
+          "hour": "#E0A6C6"
+        },
+        {
+          "at": "21:00\u201324:00",
+          "phase": "Night",
+          "same_as": "Night"
+        }
+      ]
+    },
+    "gradients": [
+      {
+        "name": "sky-band",
+        "value": "linear-gradient(180deg, var(--sky-zenith) 0%, var(--sky-mid) 46%, var(--sky-low) 80%, var(--sky-horizon) 95%, var(--background) 100%)",
+        "purpose": "Home's sky band."
+      },
+      {
+        "name": "sky-wash",
+        "value": "linear-gradient(180deg, color-mix(in oklab, var(--sky-mid) 55%, var(--background)) 0, color-mix(in oklab, var(--sky-zenith) 22%, var(--background)) 7rem, var(--background) 14rem)",
+        "purpose": "The hour's trace at the top of every other page."
+      },
+      {
+        "name": "foil",
+        "value": "linear-gradient(105deg, var(--foil-1) 0%, var(--foil-2) 26%, var(--foil-4) 44%, var(--foil-3) 60%, var(--foil-1) 100%) / 240% 100%, background-clip: text",
+        "purpose": "The living date."
+      }
+    ],
+    "shapes": [
+      {
+        "name": "ribbon",
+        "value": "clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%)",
+        "purpose": "Today's bookmark over the day tab, 10x14px, in the hour."
+      }
+    ],
+    "shadows": [
+      {
+        "name": "sheet-lift",
+        "value": "0 -24px 60px -20px rgba(0,0,0,0.8)",
+        "purpose": "Bottom sheet top edge."
+      },
+      {
+        "name": "float-nav",
+        "value": "0 18px 40px -14px rgba(0,0,0,0.85)",
+        "purpose": "Tab bar."
+      },
+      {
+        "name": "float-toast",
+        "value": "0 18px 40px -12px rgba(0,0,0,0.7)",
+        "purpose": "Toasts."
+      },
+      {
+        "name": "float-search",
+        "value": "0 24px 60px -16px rgba(0,0,0,0.85)",
+        "purpose": "Search dialog."
+      },
+      {
+        "name": "thumb",
+        "value": "0 2px 6px rgba(0,0,0,0.35)",
+        "purpose": "Switch thumb."
+      },
+      {
+        "name": "sheet-footer-fade",
+        "value": "0 -14px 18px -6px var(--raised)",
+        "purpose": "Fades content under the sticky sheet footer."
+      },
+      {
+        "name": "shade",
+        "value": "rgba(0,0,0,0.6) + backdrop-filter: blur(2px)",
+        "purpose": "Scrim behind sheets."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Default ease for rises, toasts, switch thumb, settings expand, tick draw."
+      },
+      {
+        "name": "sky-crossfade",
+        "value": "60s linear",
+        "purpose": "Each minute's sky fades into the next."
+      },
+      {
+        "name": "foil-drift",
+        "value": "16s ease-in-out infinite alternate",
+        "purpose": "The date's sheen."
+      },
+      {
+        "name": "page-in",
+        "value": "260ms ease-out backwards (opacity only)",
+        "purpose": "Every route arrival."
+      },
+      {
+        "name": "rise",
+        "value": "520ms ease-out-expo backwards; translateY 10px + blur 4px; late variant +90ms",
+        "purpose": "Page headers and the hero."
+      },
+      {
+        "name": "sheet-spring",
+        "value": "spring damping 32 stiffness 340; exit 220ms cubic-bezier(0.4,0,1,1); dismiss past 110px or 650px/s",
+        "purpose": "Bottom sheet."
+      },
+      {
+        "name": "nav-spring",
+        "value": "spring stiffness 420 damping 34",
+        "purpose": "Active tab underline."
+      },
+      {
+        "name": "week-spring",
+        "value": "spring stiffness 420 damping 36",
+        "purpose": "Selected day tile."
+      },
+      {
+        "name": "swipe-spring",
+        "value": "spring stiffness 520 damping 42; snaps to -128px",
+        "purpose": "Task row actions."
+      },
+      {
+        "name": "toast-in",
+        "value": "320ms ease-out-expo, y 16px, blur 6px; exit 160ms",
+        "purpose": "Toasts."
+      },
+      {
+        "name": "now-breathe",
+        "value": "2.8s cubic-bezier(0.4,0,0.6,1) infinite",
+        "purpose": "Now dot pulse."
+      },
+      {
+        "name": "shimmer",
+        "value": "1.6s ease-in-out infinite",
+        "purpose": "Skeletons."
+      },
+      {
+        "name": "nav-pending",
+        "value": "1.1s ease-in-out 250ms delay infinite",
+        "purpose": "A tab waiting on its route."
+      },
+      {
+        "name": "stars-fade",
+        "value": "opacity 6s ease",
+        "purpose": "Stars by phase: night 1, dawn and dusk 0.35, day 0."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "no sky transition; foil frozen at 40%; pulse, pending and shimmer off; rise becomes a 200ms fade",
+        "purpose": "prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px",
+        "purpose": "Tab bar centres at 34rem max width."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one ivory action in a sheet or settings group.",
+      "html": "<button class=\"ds-btn-primary\">Add task</button> <button class=\"ds-btn-primary\" disabled>Add task</button>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-btn-primary{width:100%;height:3.25rem;border:0;border-radius:1.575rem;background:var(--foreground);color:var(--background);font:600 16px/1 inherit;font-family:inherit;transition:transform .2s,opacity .2s;margin-bottom:8px}.ds-btn-primary:active{transform:scale(.98)}.ds-btn-primary:focus-visible{outline:2px solid var(--hour);outline-offset:2px}.ds-btn-primary:disabled{background:var(--input);color:var(--faint);cursor:not-allowed}"
+    },
+    {
+      "name": "Hour Outline Button",
+      "kind": "button",
+      "refersTo": "button-hour-outline",
+      "description": "Add on an empty day, in the hour's colour.",
+      "html": "<button class=\"ds-btn-hour\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M5 12h14M12 5v14\"/></svg>Add a task</button>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-btn-hour{width:100%;height:48px;border-radius:1.575rem;border:1px solid color-mix(in oklab,var(--hour) 50%,transparent);background:transparent;color:var(--hour);font:500 15px/1 inherit;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;transition:background .15s}.ds-btn-hour:hover,.ds-btn-hour:active{background:color-mix(in oklab,var(--hour) 10%,transparent)}.ds-btn-hour:focus-visible{outline:2px solid var(--hour);outline-offset:2px}"
+    },
+    {
+      "name": "Option Chips",
+      "kind": "chip",
+      "refersTo": "option",
+      "description": "A row of choices; selected is a lit edge, not a fill.",
+      "html": "<div class=\"ds-opts\"><button class=\"ds-opt\"><span class=\"ds-dot\" style=\"background:#6B6A80\"></span>Low</button><button class=\"ds-opt\" aria-pressed=\"true\"><span class=\"ds-dot\" style=\"background:#A9A7B8\"></span>Medium</button><button class=\"ds-opt\"><span class=\"ds-dot\" style=\"background:#F3EEE6\"></span>High</button></div>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-opts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:var(--raised);padding:16px}.ds-opt{min-height:44px;border-radius:1.225rem;border:1px solid var(--border);background:transparent;color:var(--muted-foreground);font:400 15px/1 inherit;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;transition:border-color .15s,background .15s,color .15s}.ds-opt:hover{color:var(--foreground)}.ds-opt[aria-pressed=true]{border-color:color-mix(in oklab,var(--foreground) 70%,transparent);background:color-mix(in oklab,var(--foreground) 7%,transparent);color:var(--foreground);font-weight:500}.ds-opt:focus-visible{outline:2px solid var(--hour);outline-offset:2px}.ds-dot{width:8px;height:8px;border-radius:50%}"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Labelled input on a sheet; focus lights the edge in the hour.",
+      "html": "<label class=\"ds-field\"><span>Title</span><input placeholder=\"What needs doing?\"></label>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-field{display:block;background:var(--raised);padding:16px}.ds-field span{display:block;margin-bottom:8px;font-size:13px;font-weight:500;color:var(--muted-foreground)}.ds-field input{box-sizing:border-box;width:100%;height:56px;padding:0 16px;border-radius:1.575rem;border:1px solid var(--input);background:color-mix(in oklab,var(--background) 70%,transparent);color:var(--foreground);font:400 17px inherit;font-family:inherit;caret-color:var(--hour);outline:none;transition:border-color .15s}.ds-field input::placeholder{color:var(--faint)}.ds-field input:focus{border-color:color-mix(in oklab,var(--hour) 70%,transparent)}"
+    },
+    {
+      "name": "Tab Bar",
+      "kind": "nav",
+      "refersTo": "nav-bar",
+      "description": "Floating raised bar; the active tab carries the hour's underline.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-tab\" aria-current=\"page\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M3 10l9-7 9 7v10a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z\"/></svg><span>Home</span><i></i></a><a class=\"ds-tab\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"><path d=\"M13 5h8M13 12h8M13 19h8M3 6l2 2 4-4M3 17l2 2 4-4\"/></svg><span>Tasks</span></a><a class=\"ds-tab\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"18\" rx=\"2\"/><path d=\"M16 2v4M8 2v4M3 10h18\"/></svg><span>Calendar</span></a><a class=\"ds-tab\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><circle cx=\"12\" cy=\"12\" r=\"9\"/></svg><span>Settings</span></a></nav>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-nav{display:grid;grid-template-columns:repeat(4,1fr);height:64px;padding:0 6px;background:var(--raised);border:1px solid var(--border);border-radius:1.375rem;box-shadow:0 18px 40px -14px rgba(0,0,0,.85)}.ds-tab{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--faint);font-size:12px;font-weight:500;cursor:pointer;transition:color .2s,transform .15s}.ds-tab:hover{color:var(--muted-foreground)}.ds-tab:active{transform:scale(.95)}.ds-tab[aria-current=page]{color:var(--foreground);font-weight:600}.ds-tab i{position:absolute;bottom:6px;width:20px;height:3px;border-radius:9999px;background:var(--hour)}"
+    },
+    {
+      "name": "Day Page",
+      "kind": "card",
+      "refersTo": "page-card",
+      "description": "The selected day as a diary page, with the timeline rail and the Now line.",
+      "html": "<section class=\"ds-page\"><h2>Today</h2><div class=\"ds-rail\"><div class=\"ds-row\"><span class=\"ds-t\">9:00 AM</span><span class=\"ds-d\" style=\"background:#7FB0EA\"></span><span><b>Standup</b><small>Work</small></span></div><div class=\"ds-now\"><span class=\"ds-t\">10:12 AM</span><span class=\"ds-nd\"></span><span class=\"ds-nl\"></span></div><div class=\"ds-row\"><span class=\"ds-t\">2:00 PM</span><span class=\"ds-d\" style=\"background:#D39A8C\"></span><span><b>Submit essay</b><small>Uni</small></span><em>Today</em></div></div></section>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-page{background:var(--card);border-radius:1.5rem;padding:20px 20px 12px}.ds-page h2{margin:0 0 8px;font:600 1.75rem/1.25 'Brygada 1918','Mona Sans',ui-sans-serif,system-ui,sans-serif}.ds-rail{position:relative}.ds-rail:before{content:'';position:absolute;left:calc(4rem - .5px);top:.5rem;bottom:.5rem;width:1px;background:var(--border)}.ds-row,.ds-now{display:flex;align-items:flex-start;gap:12px;padding:10px 0}.ds-now{align-items:center;padding:4px 0}.ds-t{width:3rem;flex:none;text-align:right;font-size:13px;color:var(--muted-foreground);font-variant-numeric:tabular-nums}.ds-now .ds-t{font-size:12px;font-weight:600;color:var(--hour)}.ds-d{position:relative;width:8px;height:8px;margin-top:6px;flex:none;border-radius:50%;box-shadow:0 0 0 4px var(--card)}.ds-nd{position:relative;width:10px;height:10px;margin:0 -1px;flex:none;border-radius:50%;background:var(--hour);animation:ds-breathe 2.8s cubic-bezier(.4,0,.6,1) infinite}.ds-nl{flex:1;height:1px;background:color-mix(in oklab,var(--hour) 50%,transparent)}.ds-row b{display:block;font-size:16px;font-weight:500}.ds-row small{font-size:13px;color:var(--muted-foreground)}.ds-row em{margin-left:auto;font-style:normal;font-size:12px;font-weight:500;padding:2px 8px;border-radius:.7rem;color:var(--urgent);background:color-mix(in oklab,var(--urgent) 12%,transparent)}@keyframes ds-breathe{0%,100%{box-shadow:0 0 0 0 color-mix(in oklab,var(--hour) 50%,transparent)}50%{box-shadow:0 0 0 7px transparent}}@media (prefers-reduced-motion:reduce){.ds-nd{animation:none}}"
+    },
+    {
+      "name": "Task Row",
+      "kind": "custom",
+      "refersTo": "task-row",
+      "description": "A task with its tick ring; rows ruled from the text column in.",
+      "html": "<div class=\"ds-list\"><div class=\"ds-task\"><button class=\"ds-tick\" aria-label=\"Mark done\"></button><span><b>Book dentist</b><small><span class=\"ds-over\">Overdue \u00b7 Nov 17</span> <span class=\"ds-hi\">High</span></small></span></div><div class=\"ds-task\"><button class=\"ds-tick ds-done\" aria-label=\"Mark not done\"><svg viewBox=\"0 0 24 24\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"#0E1220\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12.5l4.2 4.2L19 7\"/></svg></button><span><b class=\"ds-struck\">Pay rent</b></span></div></div>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-list{background:var(--card);border-radius:1.5rem;overflow:hidden}.ds-task{position:relative;display:flex;align-items:flex-start;gap:14px;padding:14px 16px;min-height:56px;box-sizing:border-box}.ds-task+.ds-task:before{content:'';position:absolute;top:0;left:56px;right:0;height:1px;background:var(--border)}.ds-tick{flex:none;width:22px;height:22px;margin-top:2px;padding:0;border-radius:50%;border:1.5px solid var(--faint);background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .3s,border-color .3s,transform .15s}.ds-tick:hover{border-color:var(--hour)}.ds-tick:active{transform:scale(.9)}.ds-tick:focus-visible{outline:2px solid var(--hour);outline-offset:2px}.ds-done{background:var(--done);border-color:var(--done)}.ds-task b{display:block;font-size:16px;font-weight:400;line-height:1.375}.ds-task small{display:block;margin-top:2px;font-size:13px;color:var(--muted-foreground)}.ds-over{color:var(--alarm);font-weight:500}.ds-hi{color:var(--foreground);font-weight:500;margin-left:6px}.ds-struck{color:var(--faint);text-decoration:line-through;text-decoration-color:var(--faint)}"
+    },
+    {
+      "name": "Sky Hero",
+      "kind": "custom",
+      "refersTo": "sky-hero",
+      "description": "The sky band with the foil date, at the night keyframe.",
+      "html": "<header class=\"ds-sky\"><p>Night \u00b7 11:40 PM</p><h1><span class=\"ds-foil\">19</span><span class=\"ds-wd\">Thursday,<br>November</span></h1><p class=\"ds-greet\">Good evening, <b>Sam</b></p></header>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-sky{padding:12px 24px 56px;background:linear-gradient(180deg,var(--sky-zenith) 0%,var(--sky-mid) 46%,var(--sky-low) 80%,var(--sky-horizon) 95%,var(--background) 100%)}.ds-sky p{margin:0;font-size:14px;color:color-mix(in oklab,var(--foreground) 85%,transparent);font-variant-numeric:tabular-nums}.ds-sky h1{display:flex;align-items:flex-end;gap:16px;margin:20px 0 16px}.ds-foil{font:600 8.75rem/.8 'Brygada 1918','Mona Sans',ui-sans-serif,system-ui,sans-serif;letter-spacing:-.03em;padding-bottom:8px;background:linear-gradient(105deg,var(--foil-1) 0%,var(--foil-2) 26%,var(--foil-4) 44%,var(--foil-3) 60%,var(--foil-1) 100%);background-size:240% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ds-foil 16s ease-in-out infinite alternate}.ds-wd{font:italic 500 1.75rem/1.06 'Brygada 1918','Mona Sans',ui-sans-serif,system-ui,sans-serif;padding-bottom:16px}.ds-sky .ds-greet{font-size:17px;color:var(--foreground)}@keyframes ds-foil{from{background-position:0% 50%}to{background-position:100% 50%}}@media (prefers-reduced-motion:reduce){.ds-foil{animation:none;background-position:40% 50%}}"
+    },
+    {
+      "name": "Switch",
+      "kind": "custom",
+      "refersTo": "switch-on",
+      "description": "On takes the hour's colour.",
+      "html": "<button class=\"ds-sw\" role=\"switch\" aria-checked=\"true\" aria-label=\"Reminders\"><i></i></button> <button class=\"ds-sw\" role=\"switch\" aria-checked=\"false\" aria-label=\"Digest\"><i></i></button>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-sw{position:relative;width:3.25rem;height:2rem;border:0;padding:0;border-radius:9999px;background:var(--input);cursor:pointer;transition:background .2s}.ds-sw[aria-checked=true]{background:var(--hour)}.ds-sw i{position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:50%;background:var(--foreground);box-shadow:0 2px 6px rgba(0,0,0,.35);transition:transform .3s cubic-bezier(.16,1,.3,1),background .3s}.ds-sw[aria-checked=true] i{transform:translateX(20px);background:var(--background)}.ds-sw:focus-visible{outline:2px solid var(--hour);outline-offset:2px}"
+    },
+    {
+      "name": "Undo Toast",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "A delete becomes a toast with Undo in the hour.",
+      "html": "<div class=\"ds-toast\"><span>Deleted \u201cPay rent\u201d</span><button>Undo</button></div>",
+      "css": ":host{--background:#0E1220;--card:#161B2B;--raised:#1C2234;--secondary:#1E2436;--border:#262D42;--input:#303852;--foreground:#F3EEE6;--muted-foreground:#B3B0BF;--faint:#8E8DA2;--alarm:#FF7A6B;--urgent:#F6B94A;--done:#8FC1A0;--hour:#A9B8F0;--sky-zenith:#0B1028;--sky-mid:#141B3D;--sky-low:#1C2350;--sky-horizon:#36437E;--foil-1:#8E9CD0;--foil-2:#C8D2F4;--foil-3:#A9B6E6;--foil-4:#F2F5FF;font-family:'Mona Sans',ui-sans-serif,system-ui,sans-serif;color:var(--foreground)} .ds-toast{max-width:24rem;min-height:48px;box-sizing:border-box;display:flex;align-items:center;gap:12px;padding:6px 6px 6px 16px;border-radius:1.575rem;background:var(--raised);border:1px solid var(--border);box-shadow:0 18px 40px -12px rgba(0,0,0,.7);font-size:15px}.ds-toast span{flex:1}.ds-toast button{height:40px;padding:0 16px;border:0;border-radius:1.225rem;background:transparent;color:var(--hour);font:600 15px inherit;font-family:inherit;cursor:pointer;transition:background .15s}.ds-toast button:hover,.ds-toast button:active{background:color-mix(in oklab,var(--foreground) 10%,transparent)}.ds-toast button:focus-visible{outline:2px solid var(--hour);outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Bound Diary Under a Living Sky",
+    "overview": "Calcapone's Mini App is the bot's diary, bound in night ink and lit by the sky over the user's day. The top of Home is a sky band that cross-fades minute by minute through the keyframed skies of the user's saved timezone: night indigo, dawn rose, morning and midday blue, afternoon gold, dusk copper and violet. The date is set large in a foil of the hour's colours whose sheen drifts across the glyphs. Every other page keeps a faint trace of that sky as a wash at its top. Below the sky, the diary takes over: dark pages one tonal step above the ground, ivory type, Brygada 1918 for the date and titles, Mona Sans for everything you touch.\n\nThe density is that of a pocket diary read one-handed: one page per screen section, generous 24px gutters, 44px targets, nothing that reads as a dashboard tile. Colour is scarce and has a job. The hour owns a single accent that moves through the day and is lent to a handful of \"this is live\" marks. Coral and amber belong to deadlines. Lists keep muted hues. Priority has no hue at all; it is brightness. Surfaces are told apart by tonal steps and hairline seams, never by white boxes or borders around every card.\n\nThere is one palette, dark, with no theme picker. The world refuses the category default of a light card dashboard with icon tiles and stat cards.",
+    "keyCharacteristics": [
+      "Night-ink ground (#0E1220), page one step lighter, floating layers one step more.",
+      "A live sky band and drifting foil date, driven by the user's timezone, not the device.",
+      "One moving accent, the hour, used only on live marks.",
+      "Hue reserved for meaning: deadlines, lists, the hour. Priority as brightness.",
+      "Brygada 1918 display voice over Mona Sans UI.",
+      "Hairline seams and tonal layering; soft shadows only under floating layers.",
+      "Spring-loaded sheets, rising headers and Undo instead of confirm dialogs."
+    ],
+    "rules": [
+      {
+        "name": "The Hue Has a Job Rule",
+        "body": "Hue is spoken for by deadlines (coral, amber), lists (muted dots) and the hour. Nothing else gets a colour. Only overdue and urgent are tinted; \"soon\" and \"upcoming\" stay neutral, so colour keeps meaning \"act now\".",
+        "section": "colors"
+      },
+      {
+        "name": "The Priority Is Brightness Rule",
+        "body": "High is ivory (`priority-high`), medium is `priority-medium`, low is `priority-low`. Never a red \"high\": it reads as overdue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Hour Lends Its Colour Rule",
+        "body": "The hour's accent goes only to live marks (today, now, the active tab, focus, on, in progress, Undo). It is never a fill for a large surface outside the sky itself.",
+        "section": "colors"
+      },
+      {
+        "name": "The Display Voice Rule",
+        "body": "Brygada sets the date, page titles, sheet titles, day numbers and counts, and italic subtitles. It never sets controls, meta or body.",
+        "section": "typography"
+      },
+      {
+        "name": "The 16px Floor Rule",
+        "body": "Every input's text is at least 16px, so iOS never zooms the page on focus.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Time Rule",
+        "body": "Times, day numbers and counts use tabular figures.",
+        "section": "typography"
+      },
+      {
+        "name": "The Seam, Not Box Rule",
+        "body": "Resting surfaces are separated by tone and 1px hairlines, never by outlined cards or shadows. Within a page, rows are ruled by inset hairlines. The one deliberate exception is the Tasks screen, where each list is its own borderless page with a 12px gap between them (owner's preference: lists read as separate, not one connected box).",
+        "section": "elevation"
+      },
+      {
+        "name": "The Only Floating Things Cast Shadows Rule",
+        "body": "A shadow means the layer floats above the page. Nothing at rest casts one.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** read the time of day from the user's saved timezone, and drive the sky, foil and hour from it through the registered `--sky-*`, `--foil-*` and `--hour` properties.",
+      "**Do** separate resting surfaces with tone and 1px hairlines, ink to page to raised.",
+      "**Do** give the hour's accent only to live marks: today, now, the active tab, focus, on, in progress and Undo.",
+      "**Do** show priority as brightness (ivory, `priority-medium`, `priority-low`).",
+      "**Do** tint only overdue (coral) and urgent (amber) deadlines.",
+      "**Do** paint list colours through the display remap so legacy saturated colours land muted.",
+      "**Do** keep every target at least 44px and every input at least 16px.",
+      "**Do** open forms in the bottom sheet and turn deletes into an Undo toast; keep a confirm only where the backend cannot undo.",
+      "**Do** honour reduced motion: freeze the foil at 40%, stop the pulse, shimmer and breathing, drop the sky cross-fade, and let headers fade instead of rise."
+    ],
+    "donts": [
+      "**Don't** add a light theme or a theme picker; there is one dark palette.",
+      "**Don't** build light card dashboards, icon tiles or stat cards.",
+      "**Don't** colour priority, or any state other than overdue and urgent, with hue.",
+      "**Don't** put outlines or shadows on resting cards; shadows are for floating layers only, and they stay soft.",
+      "**Don't** set controls, meta or body text in Brygada.",
+      "**Don't** put a transform or filter animation on a route wrapper, or use `both` fill on route animations; it traps fixed elements and sheets.",
+      "**Don't** add uppercase tracked kicker labels above titles; titles stand on their own with an italic subtitle beneath."
+    ]
+  }
+}

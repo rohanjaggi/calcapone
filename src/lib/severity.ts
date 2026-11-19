@@ -8,8 +8,8 @@ import type { Severity } from "@/lib/services/escalation";
  * dashboard would be amber most of the time and the colour would stop meaning anything.
  */
 export const SEVERITY_STYLES: Record<Severity, { text: string; bg: string; dot: string }> = {
-  overdue: { text: "text-destructive", bg: "bg-destructive/10", dot: "bg-destructive" },
-  urgent: { text: "text-amber-600", bg: "bg-amber-500/10", dot: "bg-amber-500" },
-  soon: { text: "text-muted-foreground", bg: "bg-secondary", dot: "bg-muted-foreground/60" },
-  upcoming: { text: "text-muted-foreground", bg: "bg-secondary", dot: "bg-muted-foreground/40" },
+  overdue: { text: "text-alarm", bg: "bg-alarm/12", dot: "bg-alarm" },
+  urgent: { text: "text-urgent", bg: "bg-urgent/12", dot: "bg-urgent" },
+  soon: { text: "text-muted-foreground", bg: "bg-secondary", dot: "bg-muted-foreground/70" },
+  upcoming: { text: "text-muted-foreground", bg: "bg-secondary", dot: "bg-faint/60" },
 };

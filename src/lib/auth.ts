@@ -1,9 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
-import { authenticateRequest } from "@/lib/telegram-auth";
 
 type User = NonNullable<Awaited<ReturnType<typeof prisma.user.findUnique>>>;
 
@@ -46,20 +44,4 @@ export async function requireUser(): Promise<User> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   return user;
-}
-
-/**
- * For JSON route handlers: session cookie first, then the legacy `x-telegram-init-data`
- * header (Telegram Web opens Mini Apps in a cross-site iframe where cookies don't flow).
- */
-export async function getRequestUser(request: NextRequest): Promise<User | null> {
-  const userId = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
-  if (userId) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user) return user;
-  }
-  const viaHeader = await authenticateRequest(request);
-  if (viaHeader) return viaHeader;
-  if (devBypassEnabled()) return devBypassUser();
-  return null;
 }

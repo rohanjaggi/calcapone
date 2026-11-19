@@ -1,8 +1,11 @@
 import { requireUser } from "@/lib/auth";
-import { listItemsForBoard } from "@/lib/services/item";
+import { listItemsForBoard, toClientItem } from "@/lib/services/item";
 import { prisma } from "@/lib/prisma";
+import { listCategories } from "@/lib/services/category";
 import { CategoryDetailClient } from "@/components/category-detail/category-detail-client";
 import { notFound } from "next/navigation";
+import { SkyStyle } from "@/components/sky/sky-style";
+import { todayInTz } from "@/lib/tz";
 
 export const dynamic = "force-dynamic";
 
@@ -15,26 +18,22 @@ export default async function CategoryDetailPage({ params }: { params: Promise<{
   });
   if (!category) notFound();
 
-  const items = await listItemsForBoard(user.id, { days: 14, take: 50, categoryId });
+  const [items, allCategories] = await Promise.all([
+    listItemsForBoard(user.id, { days: 14, take: 50, categoryId }),
+    listCategories(user.id),
+  ]);
 
-  const serializedItems = items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    description: item.description,
-    status: item.status,
-    priority: item.priority,
-    category: { id: category.id, name: category.name, color: category.color ?? "#92785C" },
-    dueDate: item.dueDate,
-    dueTime: item.dueTime,
-    remindAt: item.remindAt?.toISOString() ?? null,
-    recurring: item.recurring,
-    googleEventId: item.googleEventId ?? null,
-  }));
+  const serializedItems = items.map((item) => toClientItem(item, user.timezone));
 
   return (
-    <CategoryDetailClient
-      category={{ id: category.id, name: category.name, color: category.color ?? "#92785C" }}
-      items={serializedItems}
-    />
+    <>
+      <SkyStyle timezone={user.timezone} />
+      <CategoryDetailClient
+        category={{ id: category.id, name: category.name, color: category.color ?? "#92785C" }}
+        items={serializedItems}
+        today={todayInTz(user.timezone)}
+        lists={allCategories.map((c) => ({ id: c.id, name: c.name, color: c.color ?? "#92785C" }))}
+      />
+    </>
   );
 }

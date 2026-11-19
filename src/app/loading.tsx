@@ -1,43 +1,24 @@
-function Shimmer({ className }: { className?: string }) {
-  return (
-    <div
-      className={`rounded-lg bg-muted/60 ${className ?? ""}`}
-      style={{
-        backgroundImage: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 50%, transparent 100%)",
-        backgroundSize: "200% 100%",
-        animation: "shimmer 1.5s ease-in-out infinite",
-      }}
-    />
-  );
-}
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function DashboardLoading() {
   return (
-    <main className="safe-bottom pb-8">
-      {/* Greeting */}
-      <div className="px-5 pt-6 pb-4">
-        <Shimmer className="h-3 w-24 mb-2" />
-        <Shimmer className="h-9 w-48" />
+    <main className="safe-bottom" aria-busy="true" aria-label="Loading your day">
+      {/* The sky arrives first, so the wait already looks like the page. */}
+      <div className="sky-band px-6 pt-3 pb-14">
+        <div className="h-11" />
+        <div className="mt-5 flex items-end gap-4">
+          <Skeleton className="h-28 w-32 rounded-2xl" />
+          <Skeleton className="h-14 w-36 mb-4 rounded-xl" />
+        </div>
+        <Skeleton className="h-5 w-52 mt-5" />
       </div>
-
-      {/* Stats row */}
-      <div className="px-5 pb-4 flex gap-3">
-        <Shimmer className="h-16 flex-1 rounded-xl" />
-        <Shimmer className="h-16 flex-1 rounded-xl" />
-        <Shimmer className="h-16 flex-1 rounded-xl" />
+      <div className="px-4 mt-6 grid grid-cols-7 gap-1">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <Skeleton key={i} className="h-[4.5rem] rounded-2xl" />
+        ))}
       </div>
-
-      {/* AI Input */}
-      <div className="px-5 pb-4">
-        <Shimmer className="h-12 w-full rounded-xl" />
-      </div>
-
-      {/* Timeline */}
-      <div className="px-5 space-y-3">
-        <Shimmer className="h-4 w-28 mb-2" />
-        <Shimmer className="h-14 w-full rounded-xl" />
-        <Shimmer className="h-14 w-full rounded-xl" />
-        <Shimmer className="h-14 w-full rounded-xl" />
+      <div className="px-4 mt-2">
+        <Skeleton className="h-48 w-full rounded-[1.5rem]" />
       </div>
     </main>
   );

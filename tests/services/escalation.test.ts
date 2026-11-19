@@ -42,6 +42,24 @@ describe("nextEscalation", () => {
   });
 });
 
+describe("nextEscalation: rungs the item never needed", () => {
+  // "/todo call bank today" at 10:00 used to ping "Due" a minute later.
+  it("skips a rung the item was already inside when it was created", () => {
+    expect(nextEscalation(14, 0, { hoursAtCreation: 14 })).toBeNull();
+  });
+
+  it("still fires the rungs the item was created before", () => {
+    expect(nextEscalation(0, 0, { hoursAtCreation: 14 })).toEqual({ stage: 3, label: "Overdue" });
+    expect(nextEscalation(23, 0, { hoursAtCreation: 72 })).toEqual({ stage: 1, label: "Due" });
+  });
+
+  // "Due soon (in 120 min)" at 21:59 means nothing for a task with no time.
+  it("never sends the 2-hour rung for a task with no time", () => {
+    expect(nextEscalation(1.5, 1, { untimed: true })).toBeNull();
+    expect(nextEscalation(0, 1, { untimed: true })).toEqual({ stage: 3, label: "Overdue" });
+  });
+});
+
 describe("deadlineUrgency", () => {
   const SG = "Asia/Singapore";
   const combine = (d: string, t: string) => combineDateTimeInTz(d, t, SG);

@@ -5,7 +5,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { prisma } from "@/lib/prisma";
-import { checkAndConsumeTrialQuota, getTrialDailyLimit } from "@/lib/services/trial";
+import { checkAndConsumeTrialQuota, getTrialDailyLimit, trialCallsLeft } from "@/lib/services/trial";
 
 const base = { id: "u1", telegramId: BigInt(42), timezone: "Asia/Singapore", aiApiKey: null, aiCallsDate: null, aiCallsCount: 0 };
 const now = new Date("2026-08-20T02:00:00Z"); // 10:00 SGT on 2026-08-20
@@ -43,6 +43,15 @@ describe("trial quota", () => {
     vi.mocked(prisma.user.updateMany).mockResolvedValue({ count: 0 });
     const r = await checkAndConsumeTrialQuota({ ...base, aiCallsDate: "2026-08-20", aiCallsCount: 30 }, now);
     expect(r).toEqual({ allowed: false, limit: 30 });
+  });
+
+  // Shown in Settings, so people see the limit before the bot refuses them.
+  it("reports what's left today, a full allowance on a new day, and null when exempt", () => {
+    expect(trialCallsLeft({ ...base, aiCallsDate: "2026-08-20", aiCallsCount: 12 }, now)).toBe(18);
+    expect(trialCallsLeft({ ...base, aiCallsDate: "2026-08-19", aiCallsCount: 30 }, now)).toBe(30);
+    expect(trialCallsLeft({ ...base, aiCallsDate: "2026-08-20", aiCallsCount: 45 }, now)).toBe(0);
+    expect(trialCallsLeft({ ...base, aiApiKey: "enc" }, now)).toBeNull();
+    expect(trialCallsLeft({ ...base, telegramId: BigInt(999) }, now)).toBeNull();
   });
 
   it("honours TRIAL_DAILY_LIMIT", () => {

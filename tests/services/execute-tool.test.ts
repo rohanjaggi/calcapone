@@ -4,6 +4,7 @@ const mockListCategories = vi.hoisted(() => vi.fn());
 const mockCreateCategory = vi.hoisted(() => vi.fn());
 const mockCreateItem = vi.hoisted(() => vi.fn());
 const mockListItems = vi.hoisted(() => vi.fn());
+const mockGetItem = vi.hoisted(() => vi.fn());
 const mockUpdateItem = vi.hoisted(() => vi.fn());
 const mockDeleteItem = vi.hoisted(() => vi.fn());
 const mockListSeries = vi.hoisted(() => vi.fn());
@@ -36,6 +37,7 @@ vi.mock("@/lib/services/category", () => ({
 vi.mock("@/lib/services/item", () => ({
   createItem: mockCreateItem,
   listItems: mockListItems,
+  getItem: mockGetItem,
   updateItem: mockUpdateItem,
   OPEN_STATUSES: ["pending", "in_progress"],
   deleteItem: mockDeleteItem,
@@ -91,13 +93,12 @@ type ItemFixture = {
   dueDate: string | null;
   dueTime: string | null;
   remindAt: Date | null;
-  recurring: string;
   recurrenceRule: string | null;
   recurrenceEnd: Date | null;
-  googleEventId: string | null;
   parentId: string | null;
   notificationStage: number;
   seriesId: string | null;
+  subtasks: ItemFixture[];
 };
 
 function makeItem(overrides: Partial<ItemFixture> & { id: string; title: string }): ItemFixture {
@@ -109,18 +110,16 @@ function makeItem(overrides: Partial<ItemFixture> & { id: string; title: string 
     dueDate: null,
     dueTime: null,
     remindAt: null,
-    recurring: "none",
     recurrenceRule: null,
     recurrenceEnd: null,
-    googleEventId: null,
     parentId: null,
     notificationStage: 0,
     seriesId: null,
+    subtasks: [],
     ...overrides,
   };
 }
 
-const gcalUser = { googleRefreshToken: "tok", googleCalendarId: "cal-1", timezone: "UTC" };
 
 type SearchResultFixture = {
   id: string;
@@ -251,8 +250,6 @@ describe("executeToolCall", () => {
       const [created] = mockCreateItem.mock.calls[0];
       expect(created.recurrenceRule).toContain("DTSTART:20260821T000000Z");
       expect(created.recurrenceRule).toContain("COUNT=3");
-      // The dashboard badge reads the legacy enum, not the rule
-      expect(created.recurring).toBe("weekly");
     });
 
     it("rejects a malformed due date and marks the call as failed", async () => {
@@ -390,19 +387,6 @@ describe("executeToolCall", () => {
       expect(result.echo).toBe(true);
     });
 
-    it("clears googleEventId on the undo snapshot even though the deleted item had one", async () => {
-      mockListItems.mockResolvedValue([makeItem({ id: "i1", title: "Team sync", googleEventId: "gcal-123" })]);
-      mockDeleteItem.mockResolvedValue({});
-
-      const result = await executeToolCall("delete_item", { title: "Team sync" }, "u1", baseUser);
-
-      expect(result.undo?.inverse).toEqual({
-        op: "recreate_item",
-        itemId: "i1",
-        data: expect.objectContaining({ googleEventId: null }),
-      });
-    });
-
     it("keeps seriesId in the snapshot so undo re-attaches the occurrence to its run", async () => {
       mockListItems.mockResolvedValue([makeItem({ id: "i1", title: "Standup", seriesId: "s1" })]);
       mockDeleteItem.mockResolvedValue({});
@@ -416,37 +400,6 @@ describe("executeToolCall", () => {
       });
     });
 
-    it("deletes every member's Google event when the scope is the whole series", async () => {
-      const first = makeItem({ id: "i1", title: "Standup", seriesId: "s1", recurrenceRule: "FREQ=DAILY", googleEventId: "g1" });
-      mockListItems.mockResolvedValue([first]);
-      mockListSeries.mockResolvedValue([
-        first,
-        makeItem({ id: "i2", title: "Standup", seriesId: "s1", googleEventId: "g2" }),
-        makeItem({ id: "i3", title: "Standup", seriesId: "s1" }),
-      ]);
-      mockDeleteSeries.mockResolvedValue(3);
-
-      const result = await executeToolCall("delete_item", { title: "Standup", scope: "series" }, "u1", gcalUser);
-
-      expect(mockDeleteEvent).toHaveBeenCalledTimes(2);
-      expect(mockDeleteEvent).toHaveBeenNthCalledWith(1, "tok", "cal-1", "g1");
-      expect(mockDeleteEvent).toHaveBeenNthCalledWith(2, "tok", "cal-1", "g2");
-      expect(mockDeleteSeries).toHaveBeenCalledWith("s1", "u1");
-      expect(result.text).toBe("Deleted all 3 occurrences of <b>Standup</b>");
-    });
-
-    it("still drops the series rows when a member's calendar delete fails", async () => {
-      const first = makeItem({ id: "i1", title: "Standup", seriesId: "s1", googleEventId: "g1" });
-      mockListItems.mockResolvedValue([first]);
-      mockListSeries.mockResolvedValue([first]);
-      mockDeleteSeries.mockResolvedValue(1);
-      mockDeleteEvent.mockRejectedValue(new Error("404 not found"));
-
-      const result = await executeToolCall("delete_item", { title: "Standup", scope: "series" }, "u1", gcalUser);
-
-      expect(mockDeleteSeries).toHaveBeenCalledWith("s1", "u1");
-      expect(result.text).toBe("Deleted all 1 occurrences of <b>Standup</b>");
-    });
   });
 
   describe("update_item", () => {
@@ -511,10 +464,8 @@ describe("executeToolCall", () => {
         dueDate: "2026-05-10",
         dueTime: "09:00",
         remindAt,
-        recurring: "weekly",
         recurrenceRule: "FREQ=WEEKLY",
         recurrenceEnd,
-        googleEventId: "gcal-9",
         parentId: null,
         notificationStage: 1,
         seriesId: "s1",
@@ -541,10 +492,8 @@ describe("executeToolCall", () => {
           dueDate: "2026-05-10",
           dueTime: "09:00",
           remindAt: remindAt.toISOString(),
-          recurring: "weekly",
           recurrenceRule: "FREQ=WEEKLY",
           recurrenceEnd: recurrenceEnd.toISOString(),
-          googleEventId: "gcal-9",
           parentId: null,
           notificationStage: 1,
           seriesId: "s1",
@@ -556,101 +505,6 @@ describe("executeToolCall", () => {
       expect(typeof inverse.fields.recurrenceEnd).toBe("string");
     });
 
-    it("pairs the database revert with a calendar revert when the change was synced", async () => {
-      mockListItems.mockResolvedValue([
-        makeItem({ id: "i1", title: "Dentist", googleEventId: "g1", dueDate: "2026-05-10", dueTime: "09:00" }),
-      ]);
-      mockUpdateItem.mockResolvedValue({ id: "i1", title: "Dentist" });
-
-      const result = await executeToolCall("update_item", { query: "Dentist", due_date: "2026-05-12" }, "u1", gcalUser);
-
-      expect(mockUpdateEvent).toHaveBeenCalledWith(
-        "tok",
-        "cal-1",
-        "g1",
-        { startTime: "2026-05-12T09:00:00", endTime: "2026-05-12T10:00:00" },
-        "UTC"
-      );
-      expect(result.undo?.inverse).toEqual({
-        op: "sequence",
-        ops: [
-          { op: "restore_item", itemId: "i1", fields: expect.objectContaining({ dueDate: "2026-05-10", dueTime: "09:00" }) },
-          {
-            op: "patch_event",
-            calendarId: "cal-1",
-            eventId: "g1",
-            fields: { startTime: "2026-05-10T09:00:00", endTime: "2026-05-10T10:00:00" },
-          },
-        ],
-      });
-    });
-
-    it("leaves the undo a plain restore when nothing reached the calendar", async () => {
-      mockListItems.mockResolvedValue([makeItem({ id: "i1", title: "Dentist", googleEventId: "g1" })]);
-      mockUpdateItem.mockResolvedValue({ id: "i1", title: "Dentist" });
-
-      const result = await executeToolCall("update_item", { query: "Dentist", priority: "high" }, "u1", gcalUser);
-
-      expect(mockUpdateEvent).not.toHaveBeenCalled();
-      expect((result.undo?.inverse as { op: string }).op).toBe("restore_item");
-    });
-
-    it("moves every linked Google event when the scope is the whole series", async () => {
-      const first = makeItem({
-        id: "i1",
-        title: "Standup",
-        seriesId: "s1",
-        recurrenceRule: "FREQ=DAILY",
-        googleEventId: "g1",
-        dueDate: "2026-05-10",
-        dueTime: "09:00",
-      });
-      const second = makeItem({
-        id: "i2",
-        title: "Standup",
-        seriesId: "s1",
-        googleEventId: "g2",
-        dueDate: "2026-05-11",
-        dueTime: "09:00",
-      });
-      mockListItems.mockResolvedValue([first]);
-      mockUpdateSeries.mockResolvedValue([first, second]);
-
-      const result = await executeToolCall(
-        "update_item",
-        { query: "Standup", scope: "series", due_time: "10:00" },
-        "u1",
-        gcalUser
-      );
-
-      expect(mockUpdateSeries).toHaveBeenCalledWith("s1", "u1", { dueTime: "10:00" });
-      expect(mockUpdateEvent).toHaveBeenNthCalledWith(
-        1,
-        "tok",
-        "cal-1",
-        "g1",
-        { startTime: "2026-05-10T10:00:00", endTime: "2026-05-10T11:00:00" },
-        "UTC"
-      );
-      expect(mockUpdateEvent).toHaveBeenNthCalledWith(
-        2,
-        "tok",
-        "cal-1",
-        "g2",
-        { startTime: "2026-05-11T10:00:00", endTime: "2026-05-11T11:00:00" },
-        "UTC"
-      );
-      expect(result.text).toBe("Updated all 2 occurrences of <b>Standup</b>");
-
-      const ops = (result.undo?.inverse as { op: string; ops: Array<{ op: string; eventId?: string }> }).ops;
-      expect(ops.map((op) => op.op)).toEqual(["restore_item", "patch_event", "restore_item", "patch_event"]);
-      expect(ops[1]).toEqual({
-        op: "patch_event",
-        calendarId: "cal-1",
-        eventId: "g1",
-        fields: { startTime: "2026-05-10T09:00:00", endTime: "2026-05-10T10:00:00" },
-      });
-    });
   });
 
   describe("get_calendar", () => {
@@ -744,26 +598,15 @@ describe("executeToolCall", () => {
 
       await executeToolCall("create_calendar_event", args, "u1", gcalUser);
 
-      expect(mockMirrorEvent).toHaveBeenCalledTimes(1);
-      const [userId, calendarId, event] = mockMirrorEvent.mock.calls[0];
-      expect(userId).toBe("u1");
-      expect(calendarId).toBe("primary");
-      expect(event).toMatchObject({ googleEventId: "gcal-9", title: "Lunch" });
-      expect(event.startsAt.toISOString()).toBe("2026-08-21T04:00:00.000Z");
-      expect(event.endsAt.toISOString()).toBe("2026-08-21T05:00:00.000Z");
+      // Google's own response goes to the mirror (which is best-effort; see calendar-sync tests).
+      expect(mockMirrorEvent).toHaveBeenCalledWith("u1", "primary", {
+        id: "gcal-9",
+        title: "Lunch",
+        startTime: args.start_time,
+        endTime: args.end_time,
+      });
     });
 
-    it("still reports success when the mirror write fails, since Google already has the event", async () => {
-      mockGetEvents.mockResolvedValue([]);
-      mockListItems.mockResolvedValue([]);
-      mockCreateEvent.mockResolvedValue({ id: "gcal-9", title: "Lunch", startTime: args.start_time, endTime: args.end_time });
-      mockMirrorEvent.mockRejectedValue(new Error("db down"));
-
-      const result = await executeToolCall("create_calendar_event", args, "u1", gcalUser);
-
-      expect(result.text).toContain("Created calendar event: <b>Lunch</b>");
-      expect(result.failed).toBeFalsy();
-    });
   });
 
   /**
@@ -809,21 +652,6 @@ describe("executeToolCall", () => {
       expect(new Date(fields.endTime).toISOString()).toBe("2026-09-01T13:00:00.000Z");
     });
 
-    // The same partial-patch hazard on the branch that goes through a linked task, where the
-    // app's own window convention (dueWindowToGcal) supplies the duration.
-    it("carries a linked task's window onto a new start when no end is given", async () => {
-      mockListItems.mockResolvedValue([
-        makeItem({ id: "i1", title: "Dinner", googleEventId: "g1", dueDate: "2026-08-25", dueTime: "20:00" }),
-      ]);
-      mockUpdateItem.mockResolvedValue(makeItem({ id: "i1", title: "Dinner", googleEventId: "g1" }));
-
-      await executeToolCall("update_calendar_event", { query: "dinner", start_time: "2026-09-01T20:00:00+08:00" }, "u1", gcalUser);
-
-      const fields = mockUpdateEvent.mock.calls[0][3];
-      expect(new Date(fields.startTime).toISOString()).toBe("2026-09-01T12:00:00.000Z");
-      expect(new Date(fields.endTime).toISOString()).toBe("2026-09-01T13:00:00.000Z");
-    });
-
     it("does not invent an end when only the title changes", async () => {
       await executeToolCall("update_calendar_event", { query: "dinner", title: "Supper" }, "u1", gcalUser);
 
@@ -845,27 +673,14 @@ describe("executeToolCall", () => {
 
       await executeToolCall("update_calendar_event", { query: "lunch", title: "Brunch" }, "u1", gcalUser);
 
-      expect(mockMirrorEvent).toHaveBeenCalledTimes(1);
-      const [userId, calendarId, event] = mockMirrorEvent.mock.calls[0];
-      expect(userId).toBe("u1");
-      expect(calendarId).toBe("primary");
-      expect(event).toMatchObject({ googleEventId: "g1", title: "Brunch" });
-      expect(event.startsAt.toISOString()).toBe("2026-08-21T03:00:00.000Z");
+      expect(mockMirrorEvent).toHaveBeenCalledWith("u1", "primary", {
+        id: "g1",
+        title: "Brunch",
+        startTime: "2026-08-21T11:00:00+08:00",
+        endTime: "2026-08-21T12:00:00+08:00",
+      });
     });
 
-    // An all-day event comes back from Google with `date`, not `dateTime`, which updateEvent
-    // surfaces as "". Mirroring NaN dates would poison the row the dashboard reads.
-    it("skips the mirror write when Google returns no parseable window", async () => {
-      mockListItems.mockResolvedValue([]);
-      mockGetEvents.mockResolvedValue([
-        { id: "g1", title: "Lunch", startTime: "2026-08-21T12:00:00+08:00", endTime: "2026-08-21T13:00:00+08:00", description: null, allDay: false, transparency: "opaque" },
-      ]);
-      mockUpdateEvent.mockResolvedValue({ id: "g1", title: "Brunch", startTime: "", endTime: "" });
-
-      await executeToolCall("update_calendar_event", { query: "lunch", title: "Brunch" }, "u1", gcalUser);
-
-      expect(mockMirrorEvent).not.toHaveBeenCalled();
-    });
   });
 
   describe("delete_calendar_event write-through", () => {
@@ -884,6 +699,97 @@ describe("executeToolCall", () => {
     });
   });
 
+  // Picking the first fuzzy match deleted the wrong event: "delete the meeting" with both a
+  // team and a client meeting on the calendar removed whichever came first, without asking.
+  describe("which calendar event a query means", () => {
+    const gcalUser = { googleRefreshToken: "enc", googleCalendarId: "primary", timezone: "Asia/Singapore" };
+    const ev = (id: string, title: string, day: string) => ({
+      id,
+      title,
+      startTime: `2026-08-${day}T12:00:00+08:00`,
+      endTime: `2026-08-${day}T13:00:00+08:00`,
+      description: null,
+      allDay: false,
+      transparency: "opaque" as const,
+    });
+
+    it("refuses and names the candidates when several different events match", async () => {
+      mockGetEvents.mockResolvedValue([ev("g1", "Team meeting", "21"), ev("g2", "Client meeting", "22")]);
+
+      const result = await executeToolCall("delete_calendar_event", { query: "meeting" }, "u1", gcalUser);
+
+      expect(mockDeleteEvent).not.toHaveBeenCalled();
+      expect(result.failed).toBe(true);
+      expect(result.text).toContain("Team meeting");
+      expect(result.text).toContain("Client meeting");
+    });
+
+    it("acts on the next occurrence when the matches are one repeating event", async () => {
+      mockGetEvents.mockResolvedValue([ev("g1", "Standup", "21"), ev("g2", "Standup", "22")]);
+      mockDeleteEvent.mockResolvedValue(undefined);
+
+      await executeToolCall("delete_calendar_event", { query: "standup" }, "u1", gcalUser);
+
+      expect(mockDeleteEvent).toHaveBeenCalledWith("enc", "primary", "g1");
+    });
+
+    it("does not match an event just because its title appears inside the query", async () => {
+      mockGetEvents.mockResolvedValue([ev("g1", "Gym", "21")]);
+
+      const result = await executeToolCall("delete_calendar_event", { query: "gym with Sam on Friday" }, "u1", gcalUser);
+
+      expect(mockDeleteEvent).not.toHaveBeenCalled();
+      expect(result.failed).toBe(true);
+    });
+  });
+
+  // Dropping an unreadable reminder time made a plain task (create) or deleted the existing
+  // reminder (update), and reported success either way.
+  describe("unreadable remind_at", () => {
+    it("create_item refuses instead of creating a task with no reminder", async () => {
+      mockListCategories.mockResolvedValue([{ id: "c1", name: "Work" }]);
+
+      const result = await executeToolCall("create_item", { title: "Meds", remind_at: "tomorrow 9am" }, "u1", baseUser);
+
+      expect(mockCreateItem).not.toHaveBeenCalled();
+      expect(result.failed).toBe(true);
+    });
+
+    it("update_item refuses instead of clearing the reminder", async () => {
+      mockListItems.mockResolvedValue([makeItem({ id: "i1", title: "Meds", remindAt: new Date("2026-08-21T01:00:00Z") })]);
+
+      const result = await executeToolCall("update_item", { query: "Meds", remind_at: "tomorrow 9am" }, "u1", baseUser);
+
+      expect(mockUpdateItem).not.toHaveBeenCalled();
+      expect(result.failed).toBe(true);
+    });
+
+    it("update_item still clears the reminder on an explicit null", async () => {
+      mockListItems.mockResolvedValue([makeItem({ id: "i1", title: "Meds", remindAt: new Date("2026-08-21T01:00:00Z") })]);
+      mockUpdateItem.mockResolvedValue({ id: "i1", title: "Meds" });
+
+      await executeToolCall("update_item", { query: "Meds", remind_at: null }, "u1", baseUser);
+
+      expect(mockUpdateItem).toHaveBeenCalledWith("i1", "u1", { remindAt: null });
+    });
+  });
+
+  it("names the skipped-to day in the user's own zone, not UTC", async () => {
+    // Monday 07:00 in Singapore is Sunday 23:00 UTC.
+    const remindAt = new Date("2026-08-23T23:00:00Z");
+    mockListItems.mockResolvedValue([makeItem({ id: "i1", title: "Gym", remindAt, recurrenceRule: "FREQ=WEEKLY" })]);
+    mockUpdateItem.mockResolvedValue({});
+
+    const result = await executeToolCall(
+      "update_item",
+      { query: "Gym", skip_next: true },
+      "u1",
+      { ...baseUser, timezone: "Asia/Singapore" }
+    );
+
+    expect(result.text).toContain("2026-08-31");
+  });
+
   describe("create_category", () => {
     it("creates a category and echoes the receipt to the user", async () => {
       mockCreateCategory.mockResolvedValue({ id: "c9", name: "Fitness" });
@@ -894,17 +800,6 @@ describe("executeToolCall", () => {
       expect(result.text).toBe("Created category: <b>Fitness</b>");
       expect(result.echo).toBe(true);
       expect(result.undo?.inverse).toEqual({ op: "delete_category", categoryId: "c9" });
-    });
-  });
-
-  describe("list_categories", () => {
-    it("returns categories with echo:false", async () => {
-      mockListCategories.mockResolvedValue([{ id: "c1", name: "Work" }, { id: "c2", name: "Personal" }]);
-
-      const result = await executeToolCall("list_categories", {}, "u1", baseUser);
-
-      expect(result.echo).toBe(false);
-      expect(result.text).toBe("- Work\n- Personal");
     });
   });
 
@@ -986,65 +881,6 @@ describe("executeToolCall", () => {
         expect(line).toBe(`${i + 1}. 📋 ○ ${results[i].title} — Work`);
         expect(result.itemIds?.[i]).toBe(results[i].id);
       });
-    });
-  });
-
-  describe("suggest_schedule", () => {
-    it("returns schedule suggestion when calendar connected", async () => {
-      const userWithCalendar = {
-        googleRefreshToken: "enc-token",
-        googleCalendarId: "primary",
-        timezone: "UTC",
-      };
-      mockListItems.mockResolvedValue([
-        { id: "i1", title: "Write report", priority: "high", dueDate: "2026-05-18", status: "pending", remindAt: null },
-      ]);
-      mockGetEvents.mockResolvedValue([
-        { title: "Standup", startTime: "2026-05-18T10:00:00Z", endTime: "2026-05-18T10:30:00Z" },
-      ]);
-
-      const result = await executeToolCall("suggest_schedule", {}, "u1", userWithCalendar);
-
-      expect(mockListItems).toHaveBeenCalledWith("u1", { status: "pending" });
-      expect(result.text).toContain("Write report");
-      expect(result.echo).toBe(false);
-    });
-
-    it("analyses the week from an explicit date instead of always using today", async () => {
-      mockListItems.mockResolvedValue([
-        { id: "i1", title: "Write report", priority: "high", dueDate: "2099-01-06", status: "pending", remindAt: null },
-      ]);
-      mockGetEvents.mockResolvedValue([]);
-
-      const result = await executeToolCall("suggest_schedule", { date: "2099-01-05" }, "u1", gcalUser);
-
-      const [, , start, end] = mockGetEvents.mock.calls[0];
-      expect(start.toISOString()).toBe("2099-01-05T00:00:00.000Z");
-      expect(end.toISOString()).toBe("2099-01-12T00:00:00.000Z");
-      expect(result.text).toContain("2099-01-05");
-      expect(result.text).toContain("2099-01-11");
-    });
-
-    it("refuses a date it can't read rather than silently answering for today", async () => {
-      mockListItems.mockResolvedValue([
-        { id: "i1", title: "Write report", priority: "high", dueDate: null, status: "pending", remindAt: null },
-      ]);
-
-      const result = await executeToolCall("suggest_schedule", { date: "next Tuesday-ish" }, "u1", gcalUser);
-
-      expect(mockGetEvents).not.toHaveBeenCalled();
-      expect(result.failed).toBe(true);
-    });
-
-    it("returns helpful message when calendar not connected", async () => {
-      mockListItems.mockResolvedValue([
-        { id: "i1", title: "Write report", priority: "high", dueDate: "2026-05-18", status: "pending", remindAt: null },
-      ]);
-
-      const result = await executeToolCall("suggest_schedule", {}, "u1", baseUser);
-
-      expect(result.text).toContain("Write report");
-      expect(result.text).toContain("connect Google Calendar");
     });
   });
 
@@ -1173,6 +1009,7 @@ describe("executeToolCall", () => {
 
     it("bypasses title matching and acts on exactly the forced item, even when the title is ambiguous", async () => {
       mockListItems.mockResolvedValue(openCallItems);
+      mockGetItem.mockResolvedValue(openCallItems[1]);
       mockUpdateItem.mockResolvedValue({ id: "2", title: "Call dentist" });
 
       const result = await executeToolCall(
@@ -1189,6 +1026,7 @@ describe("executeToolCall", () => {
 
     it("reports a forced id that isn't a candidate as gone, rather than acting on the wrong item", async () => {
       mockListItems.mockResolvedValue(openCallItems);
+      mockGetItem.mockResolvedValue(null);
 
       const result = await executeToolCall(
         "complete_item",
@@ -1233,5 +1071,91 @@ describe("executeToolCall", () => {
       ).rejects.toThrow("503 backend error");
       expect(mockMarkDisconnected).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("which item a request means, and reminder times", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const now = Date.now();
+  const future = (mins: number) => new Date(now + mins * 60_000).toISOString().slice(0, 19);
+
+  it("refuses a reminder time that has already passed instead of firing it at once", async () => {
+    mockListCategories.mockResolvedValue([{ id: "c1", name: "General" }]);
+    const result = await executeToolCall("create_item", { title: "Trash", remind_at: "2020-01-01T07:00:00" }, "u1", baseUser);
+    expect(mockCreateItem).not.toHaveBeenCalled();
+    expect(result.failed).toBe(true);
+  });
+
+  // "move my 9am meds to 8am" changed only the alarm, so the old 9am start kept firing too.
+  it("restarts a repeating reminder's rule when its time moves", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem({ id: "m1", title: "Meds", remindAt: new Date(now + 3600_000), recurrenceRule: "DTSTART:20261118T010000Z\nRRULE:FREQ=DAILY" }),
+    ]);
+    mockUpdateItem.mockResolvedValue({ id: "m1", title: "Meds" });
+
+    await executeToolCall("update_item", { query: "Meds", remind_at: future(120) }, "u1", baseUser);
+
+    const written = mockUpdateItem.mock.calls[0][2];
+    expect(written.recurrenceRule).not.toContain("DTSTART:20261118T010000Z");
+    expect(written.recurrenceRule).toContain("FREQ=DAILY");
+  });
+
+  it("re-arms a reminder that already rang when it's moved by reply", async () => {
+    mockGetItem.mockResolvedValue(makeItem({ id: "r1", title: "Call bank", status: "done" }));
+    mockUpdateItem.mockResolvedValue({ id: "r1", title: "Call bank" });
+
+    await executeToolCall("update_item", { query: "Call bank", remind_at: future(60), [FORCED_ITEM_ID]: "r1" }, "u1", baseUser);
+
+    expect(mockUpdateItem).toHaveBeenCalledWith("r1", "u1", expect.objectContaining({ status: "pending" }));
+  });
+
+  it("says a reminder that already rang is already done, rather than completing tomorrow's copy", async () => {
+    mockGetItem.mockResolvedValue(makeItem({ id: "r1", title: "Take meds", status: "done" }));
+
+    const result = await executeToolCall("complete_item", { title: "Take meds", [FORCED_ITEM_ID]: "r1" }, "u1", baseUser);
+
+    expect(mockUpdateItem).not.toHaveBeenCalled();
+    expect(result.text).toBe("<b>Take meds</b> is already done.");
+  });
+
+  it("can delete a task that was already ticked off", async () => {
+    const done = makeItem({ id: "d1", title: "Dentist", status: "done" });
+    mockListItems.mockImplementation(async (_userId: string, filters: { status?: unknown } = {}) => (filters.status ? [] : [done]));
+    mockDeleteItem.mockResolvedValue({});
+
+    await executeToolCall("delete_item", { title: "Dentist" }, "u1", baseUser);
+
+    expect(mockDeleteItem).toHaveBeenCalledWith("d1", "u1");
+  });
+
+  it("puts each candidate's date on its button, so repeats can be told apart", async () => {
+    mockListItems.mockResolvedValue([
+      makeItem({ id: "a", title: "Take meds", dueDate: "2026-11-19" }),
+      makeItem({ id: "b", title: "Take meds", dueDate: "2026-11-20" }),
+    ]);
+
+    const result = await executeToolCall("complete_item", { title: "meds" }, "u1", baseUser);
+
+    expect(result.choose?.candidates.map((c) => c.title)).toEqual(["Take meds · 2026-11-19", "Take meds · 2026-11-20"]);
+  });
+
+  it("can complete a subtask, which only lives under its parent", async () => {
+    const sub = makeItem({ id: "s1", title: "Make slides" });
+    mockListItems.mockResolvedValue([makeItem({ id: "p1", title: "Presentation prep", subtasks: [sub] })]);
+    mockUpdateItem.mockResolvedValue({ id: "s1", title: "Make slides" });
+
+    await executeToolCall("complete_item", { title: "make slides" }, "u1", baseUser);
+
+    expect(mockUpdateItem).toHaveBeenCalledWith("s1", "u1", { status: "done" });
+  });
+
+  it("list_items shows open work by default and refuses a category the user doesn't have", async () => {
+    mockListItems.mockResolvedValue([]);
+    await executeToolCall("list_items", {}, "u1", baseUser);
+    expect(mockListItems).toHaveBeenCalledWith("u1", expect.objectContaining({ status: ["pending", "in_progress"] }));
+
+    mockListCategories.mockResolvedValue([{ id: "c1", name: "General" }]);
+    const result = await executeToolCall("list_items", { category: "Work" }, "u1", baseUser);
+    expect(result.failed).toBe(true);
   });
 });

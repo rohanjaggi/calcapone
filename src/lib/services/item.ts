@@ -1,8 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import type { ItemStatus, Priority, RecurringType } from "@/generated/prisma/enums";
-import { getNextOccurrence } from "@/lib/services/recurrence";
+import type { ItemStatus, Priority } from "@/generated/prisma/enums";
+import { getNextOccurrence, describeRecurrence } from "@/lib/services/recurrence";
 import { buildEmbeddingText, scheduleItemEmbedding } from "@/lib/services/embeddings";
 import { MAX_ESCALATION_STAGE } from "@/lib/services/escalation";
+import { formatDateInTz } from "@/lib/tz";
+import { formatInTimeZone } from "date-fns-tz";
+import type { Item as ClientItem } from "@/lib/types";
+
+const DEFAULT_CATEGORY_COLOR = "#92785C";
 
 type CreateItemInput = {
   userId: string;
@@ -13,10 +18,8 @@ type CreateItemInput = {
   dueDate?: string | null;
   dueTime?: string | null;
   remindAt?: Date | null;
-  recurring?: RecurringType;
   recurrenceRule?: string | null;
   recurrenceEnd?: Date | null;
-  googleEventId?: string | null;
   parentId?: string | null;
   seriesId?: string | null;
 };
@@ -31,12 +34,6 @@ type ItemFilters = {
 /** Everything that isn't finished — what "my tasks" means to a user. */
 export const OPEN_STATUSES: ItemStatus[] = ["pending", "in_progress"];
 
-const LEGACY_RULES: Record<string, string> = {
-  daily: "FREQ=DAILY",
-  weekly: "FREQ=WEEKLY",
-  monthly: "FREQ=MONTHLY",
-};
-
 type UpdateItemInput = {
   title?: string;
   description?: string | null;
@@ -46,12 +43,41 @@ type UpdateItemInput = {
   dueDate?: string | null;
   dueTime?: string | null;
   remindAt?: Date | null;
-  recurring?: RecurringType;
   recurrenceRule?: string | null;
   recurrenceEnd?: Date | null;
-  googleEventId?: string | null;
-  calendarSyncedAt?: Date | null;
 };
+
+type ItemWithCategory = {
+  id: string;
+  title: string;
+  description: string | null;
+  status: ItemStatus;
+  priority: Priority;
+  dueDate: string | null;
+  dueTime: string | null;
+  remindAt: Date | null;
+  recurrenceRule: string | null;
+  category: { id: string; name: string; color: string | null };
+  subtasks?: ItemWithCategory[];
+};
+
+/** The shape every page hands to its client component. */
+export function toClientItem(item: ItemWithCategory, tz: string): ClientItem {
+  return {
+    id: item.id,
+    title: item.title,
+    description: item.description,
+    status: item.status,
+    priority: item.priority,
+    category: { id: item.category.id, name: item.category.name, color: item.category.color ?? DEFAULT_CATEGORY_COLOR },
+    dueDate: item.dueDate,
+    dueTime: item.dueTime,
+    remindAt: item.remindAt?.toISOString() ?? null,
+    remindLocal: item.remindAt ? formatInTimeZone(item.remindAt, tz, "yyyy-MM-dd'T'HH:mm") : null,
+    repeat: item.recurrenceRule ? describeRecurrence(item.recurrenceRule) : null,
+    ...(item.subtasks ? { subtasks: item.subtasks.map((sub) => toClientItem(sub, tz)) } : {}),
+  };
+}
 
 export async function createItem(data: CreateItemInput) {
   const item = await prisma.item.create({
@@ -124,14 +150,6 @@ export async function listItemsForBoard(
   return [...open, ...done];
 }
 
-export async function listSubtasks(parentId: string, userId: string) {
-  return prisma.item.findMany({
-    where: { parentId, userId },
-    include: { category: true },
-    orderBy: { createdAt: "asc" },
-  });
-}
-
 export async function updateItem(id: string, userId: string, data: UpdateItemInput) {
   const payload: UpdateItemInput & { notificationStage?: number } = { ...data };
 
@@ -177,6 +195,14 @@ export async function updateItem(id: string, userId: string, data: UpdateItemInp
 
   if (completed && before) {
     await rollForwardDatedSeries(before);
+    // Ticked off before it rang: the cron never fires a done item, so the next one is made here.
+    if (before.remindAt && before.recurrenceRule) {
+      const owner = await prisma.user.findUnique({ where: { id: userId }, select: { timezone: true } });
+      await createNextReminder(before, owner?.timezone ?? "UTC", new Date());
+    }
+  }
+  if (before && mayReopen && before.status === "done" && before.recurrenceRule) {
+    await dropAutoSuccessor(before);
   }
 
   if (data.title !== undefined || data.description !== undefined || data.categoryId !== undefined) {
@@ -241,13 +267,7 @@ export async function restoreDueReminder(
   return result.count === 1;
 }
 
-/**
- * A repeating task with a *due date* rolls forward when it is completed, not when a reminder
- * fires — a weekly reading with no alarm attached would otherwise vanish the first time it
- * was ticked off. Reminder-driven recurrence is advanced by the cron instead, so items with
- * a `remindAt` are left alone here to avoid creating the next occurrence twice.
- */
-async function rollForwardDatedSeries(before: {
+type Occurrence = {
   id: string;
   userId: string;
   categoryId: string;
@@ -258,17 +278,44 @@ async function rollForwardDatedSeries(before: {
   dueDate: string | null;
   dueTime: string | null;
   remindAt: Date | null;
-  recurring: RecurringType;
   recurrenceRule: string | null;
   recurrenceEnd: Date | null;
-}): Promise<void> {
-  if (before.remindAt || !before.dueDate) return;
-  const rule = before.recurrenceRule || LEGACY_RULES[before.recurring];
-  if (!rule) return;
+  createdAt: Date;
+};
 
-  const nextDate = nextDueDate(before.dueDate, rule);
+/**
+ * Has this occurrence's successor already been made? A snoozed reminder fires again, and an
+ * un-done task gets completed again, after it was — without this check each of those made a
+ * second successor, and the run doubled from then on.
+ *
+ * "An open occurrence created after this one" is exactly "my successor": every successor is
+ * created after its predecessor, and a snoozed older copy never is, so it can't block the run.
+ */
+async function hasSuccessor(item: Occurrence): Promise<boolean> {
+  const count = await prisma.item.count({
+    where: {
+      userId: item.userId,
+      seriesId: item.seriesId ?? item.id,
+      id: { not: item.id },
+      status: { not: "done" },
+      createdAt: { gt: item.createdAt },
+    },
+  });
+  return count > 0;
+}
+
+/**
+ * A repeating task with a due date and no alarm rolls forward when it is completed — a weekly
+ * reading would otherwise vanish the first time it was ticked off. Items with a `remindAt`
+ * roll forward through `createNextReminder` instead (when they fire, or are ticked off first).
+ */
+async function rollForwardDatedSeries(before: Occurrence): Promise<void> {
+  if (before.remindAt || !before.dueDate || !before.recurrenceRule) return;
+
+  const nextDate = nextDueDate(before.dueDate, before.recurrenceRule);
   if (!nextDate) return;
   if (before.recurrenceEnd && startOfUtcDay(nextDate) > before.recurrenceEnd) return;
+  if (await hasSuccessor(before)) return;
 
   await createItem({
     userId: before.userId,
@@ -279,9 +326,59 @@ async function rollForwardDatedSeries(before: {
     priority: before.priority,
     dueDate: nextDate,
     dueTime: before.dueTime,
-    recurring: before.recurring,
     recurrenceRule: before.recurrenceRule,
     recurrenceEnd: before.recurrenceEnd,
+  });
+}
+
+/**
+ * The cron's half of recurrence: when a repeating reminder fires, make its next occurrence
+ * (collapsing any missed ones to the next future slot), unless the run already has one.
+ */
+export async function createNextReminder(item: Occurrence, tz: string, now: Date): Promise<void> {
+  if (!item.recurrenceRule || !item.remindAt) return;
+  const next = getNextOccurrence(item.recurrenceRule, item.remindAt, now, tz);
+  if (!next || (item.recurrenceEnd && next > item.recurrenceEnd)) return;
+  if (await hasSuccessor(item)) return;
+
+  await createItem({
+    userId: item.userId,
+    categoryId: item.categoryId,
+    seriesId: item.seriesId ?? item.id,
+    title: item.title,
+    description: item.description,
+    priority: item.priority,
+    // A dated reminder keeps its date in step with the alarm, read in the user's own zone.
+    dueDate: item.dueDate ? formatDateInTz(next, tz) : null,
+    dueTime: item.dueTime,
+    remindAt: next,
+    recurrenceRule: item.recurrenceRule,
+    recurrenceEnd: item.recurrenceEnd,
+  });
+}
+
+/**
+ * Undo a completion's side effect: ticking a repeating item made its next copy moments later,
+ * and reopening it would otherwise leave both open. Only a copy made by that same completion
+ * (created within a minute of it) is removed. When the cron fired the original, its successor
+ * is a reminder that belongs to the run, so then only date-only copies qualify.
+ */
+export async function dropAutoSuccessor(before: {
+  id: string;
+  userId: string;
+  seriesId: string | null;
+  remindAt: Date | null;
+  updatedAt: Date;
+}): Promise<void> {
+  await prisma.item.deleteMany({
+    where: {
+      userId: before.userId,
+      seriesId: before.seriesId ?? before.id,
+      id: { not: before.id },
+      status: { not: "done" },
+      ...(before.remindAt ? {} : { remindAt: null }),
+      createdAt: { gte: before.updatedAt, lte: new Date(before.updatedAt.getTime() + 60_000) },
+    },
   });
 }
 
@@ -335,22 +432,6 @@ export async function snoozeReminder(id: string, userId: string, remindAt: Date)
 /** Single item scoped to its owner — used by the reminder action buttons. */
 export async function getItem(id: string, userId: string) {
   return prisma.item.findFirst({ where: { id, userId } });
-}
-
-/**
- * Next occurrence after `current` (and after `now`, if given, so a backlog of missed
- * occurrences collapses to the next future one). Legacy daily/weekly/monthly items are
- * routed through rrule too, which handles month-end correctly.
- */
-export function createNextOccurrence(
-  current: Date,
-  recurring: RecurringType,
-  recurrenceRule?: string | null,
-  now?: Date
-): Date | null {
-  const rule = recurrenceRule || LEGACY_RULES[recurring];
-  if (!rule) return null;
-  return getNextOccurrence(rule, current, now);
 }
 
 export async function getEscalationCandidates() {

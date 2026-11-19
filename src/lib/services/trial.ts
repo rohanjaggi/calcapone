@@ -31,6 +31,13 @@ export type TrialCheck =
   | { allowed: true; remaining: number | null }
   | { allowed: false; limit: number };
 
+/** Free AI requests left today, or null when the user isn't on the trial (own key, or the owner). */
+export function trialCallsLeft(user: Omit<TrialUser, "id">, now: Date = new Date()): number | null {
+  if (user.aiApiKey || isOwner(user.telegramId)) return null;
+  const used = user.aiCallsDate === todayInTz(user.timezone, now) ? user.aiCallsCount : 0;
+  return Math.max(0, getTrialDailyLimit() - used);
+}
+
 /**
  * Users on the shared default key ("trial") get `TRIAL_DAILY_LIMIT` AI calls per
  * day (in their own timezone). The owner and BYOK users are exempt.
@@ -87,5 +94,5 @@ export async function chargeExtraTrialCalls(
 export const IMAGE_CALL_SURCHARGE = 2;
 
 export function trialLimitMessage(limit: number): string {
-  return `You've used today's ${limit} free trial messages. Add your own API key in Settings to keep going, or try again tomorrow.`;
+  return `You've used today's free AI allowance (${limit} requests — longer chats and photos use more than one). /note, /list, /today and /done still work. Add your own API key in Open Calcapone → Settings to keep going, or try again tomorrow.`;
 }

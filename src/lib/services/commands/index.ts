@@ -9,6 +9,7 @@ import {
   handleNote,
   handleSearch,
 } from "./handlers";
+import { esc } from "@/lib/services/telegram";
 
 export type ParsedCommand = {
   command: string;
@@ -66,7 +67,7 @@ export function isAiHintCommand(command: string): boolean {
 
 const AI_HINTS: Record<string, string> = {
   todo: "Create a todo item (not a reminder, no remind_at):",
-  remind: "Set a reminder (MUST include remind_at). If user says daily/weekly/monthly, set recurring:",
+  remind: "Set a reminder (MUST include remind_at). If it repeats, also set recurrence:",
   event: "Create a calendar event:",
 };
 
@@ -95,7 +96,23 @@ export const HELP_TEXT = `<b>Calcapone</b> — your task &amp; calendar assistan
 /alerts 15 — ping me 15 min before an event starts
 /timezone — show or change your timezone
 
+<b>Settings</b> — tap <b>Open Calcapone</b> next to the message box, then Settings: Google Calendar, morning briefing, weekly digest, quiet hours.
+
 Or just type naturally — I'll figure out the rest.`;
+
+/**
+ * The first thing a new user reads. Everyone starts on the default timezone and nothing else
+ * would tell them, so a London user's "remind me at 9" quietly rang at 2am.
+ */
+function welcomeText(timezone: string): string {
+  return [
+    `<b>Hi, I'm Calcapone.</b> Tell me what you need in your own words — "remind me to call mom at 6", "dentist Friday 3pm" — or send a voice note or a photo of a poster.`,
+    "",
+    `🕒 I'm using <b>${esc(timezone)}</b> time. If that's not where you are, send <code>/timezone Europe/London</code> with your own city.`,
+    "",
+    HELP_TEXT,
+  ].join("\n");
+}
 
 export async function handleCommand(
   parsed: ParsedCommand,
@@ -121,6 +138,7 @@ export async function handleCommand(
     case "search":
       return handleSearch(parsed.body, ctx);
     case "start":
+      return { text: welcomeText(ctx.user.timezone) };
     case "help":
       return { text: HELP_TEXT };
     default:

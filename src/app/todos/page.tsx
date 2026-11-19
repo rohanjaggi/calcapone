@@ -1,7 +1,9 @@
 import { requireUser } from "@/lib/auth";
-import { listItemsForBoard } from "@/lib/services/item";
+import { listItemsForBoard, toClientItem } from "@/lib/services/item";
 import { listCategories } from "@/lib/services/category";
 import { TodosClient } from "@/components/todos/todos-client";
+import { SkyStyle } from "@/components/sky/sky-style";
+import { todayInTz } from "@/lib/tz";
 
 export const dynamic = "force-dynamic";
 
@@ -12,19 +14,7 @@ export default async function TodosPage() {
     listCategories(user.id),
   ]);
 
-  const serializedItems = items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    description: item.description,
-    status: item.status,
-    priority: item.priority,
-    category: { id: item.category.id, name: item.category.name, color: item.category.color ?? "#92785C" },
-    dueDate: item.dueDate,
-    dueTime: item.dueTime,
-    remindAt: item.remindAt?.toISOString() ?? null,
-    recurring: item.recurring,
-    googleEventId: item.googleEventId ?? null,
-  }));
+  const serializedItems = items.map((item) => toClientItem(item, user.timezone));
 
   const serializedCategories = categories.map((c) => ({
     id: c.id,
@@ -32,5 +22,10 @@ export default async function TodosPage() {
     color: c.color ?? "#92785C",
   }));
 
-  return <TodosClient items={serializedItems} categories={serializedCategories} />;
+  return (
+    <>
+      <SkyStyle timezone={user.timezone} />
+      <TodosClient items={serializedItems} categories={serializedCategories} today={todayInTz(user.timezone)} />
+    </>
+  );
 }

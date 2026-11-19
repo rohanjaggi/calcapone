@@ -5,6 +5,24 @@ export type TelegramWebApp = {
   expand?: () => void;
   openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
   showConfirm?: (message: string, callback: (confirmed: boolean) => void) => void;
+  isVersionAtLeast?: (version: string) => boolean;
+  setHeaderColor?: (color: string) => void;
+  setBackgroundColor?: (color: string) => void;
+  setBottomBarColor?: (color: string) => void;
+  disableVerticalSwipes?: () => void;
+  onEvent?: (event: string, cb: () => void) => void;
+  offEvent?: (event: string, cb: () => void) => void;
+  BackButton?: {
+    show: () => void;
+    hide: () => void;
+    onClick: (cb: () => void) => void;
+    offClick: (cb: () => void) => void;
+  };
+  HapticFeedback?: {
+    impactOccurred: (style: "light" | "medium" | "heavy" | "rigid" | "soft") => void;
+    notificationOccurred: (type: "error" | "success" | "warning") => void;
+    selectionChanged: () => void;
+  };
 };
 
 declare global {
@@ -15,6 +33,15 @@ declare global {
 
 export function telegramWebApp(): TelegramWebApp | undefined {
   return typeof window === "undefined" ? undefined : window.Telegram?.WebApp;
+}
+
+/**
+ * Whether the client running us supports a Bot API version. Outside Telegram the SDK still
+ * loads and reports 6.0, and logs a warning for every newer method called on it.
+ */
+export function telegramSupports(version: string): boolean {
+  const app = telegramWebApp();
+  return !!app?.initData && !!app.isVersionAtLeast?.(version);
 }
 
 /**
@@ -31,6 +58,22 @@ export function openExternal(url: string): void {
     return;
   }
   window.location.href = url;
+}
+
+/**
+ * A tap of physical feedback for a completed action. Silent outside Telegram and on clients
+ * too old to have haptics (the bridge throws on unsupported methods there).
+ */
+export function haptic(kind: "success" | "warning" | "select" | "light"): void {
+  const feedback = telegramWebApp()?.HapticFeedback;
+  if (!feedback || !telegramSupports("6.1")) return;
+  try {
+    if (kind === "select") feedback.selectionChanged();
+    else if (kind === "light") feedback.impactOccurred("light");
+    else feedback.notificationOccurred(kind);
+  } catch {
+    // Older clients: no haptics, nothing to do.
+  }
 }
 
 /**

@@ -31,8 +31,6 @@ function row(o: Record<string, unknown>) {
     dueDate: null,
     dueTime: null,
     remindAt: null,
-    recurring: "none",
-    googleEventId: null,
     ...o,
   };
 }
@@ -130,11 +128,27 @@ describe("getAgenda ahead list", () => {
     mockListItems.mockResolvedValue([
       row({ id: "later", title: "Later", dueDate: "2026-08-25", dueTime: "12:00" }),
       row({ id: "past", title: "Past", dueDate: "2026-08-18", dueTime: "12:00" }),
-      row({ id: "soon", title: "Soon", dueDate: ANCHOR, dueTime: "18:00" }),
+      row({ id: "soon", title: "Soon", dueDate: "2026-08-21", dueTime: "18:00" }),
     ]);
     const agenda = await getAgenda("u1", SG, ANCHOR, 7, NOW);
     expect(agenda.ahead.map((a) => a.id)).toEqual(["past", "soon", "later"]);
     expect(agenda.ahead[0].urgency.severity).toBe("overdue");
+  });
+
+  // The Today card lists today's deadlines; repeating them here pushed later ones off a phone screen.
+  it("leaves today's deadlines out, unless one is the most pressing", async () => {
+    mockListItems.mockResolvedValue([
+      row({ id: "later", title: "Later", dueDate: "2026-08-25", dueTime: "12:00" }),
+      row({ id: "past", title: "Past", dueDate: "2026-08-18", dueTime: "12:00" }),
+      row({ id: "today", title: "Today", dueDate: ANCHOR, dueTime: "18:00" }),
+    ]);
+    expect((await getAgenda("u1", SG, ANCHOR, 7, NOW)).ahead.map((a) => a.id)).toEqual(["past", "later"]);
+
+    mockListItems.mockResolvedValue([
+      row({ id: "later", title: "Later", dueDate: "2026-08-25", dueTime: "12:00" }),
+      row({ id: "today", title: "Today", dueDate: ANCHOR, dueTime: "18:00" }),
+    ]);
+    expect((await getAgenda("u1", SG, ANCHOR, 7, NOW)).ahead.map((a) => a.id)).toEqual(["today", "later"]);
   });
 
   it("reaches past the seven-day window", async () => {
@@ -145,6 +159,8 @@ describe("getAgenda ahead list", () => {
     // Nothing in the strip, but it is still the next thing due.
     expect(Object.values(agenda.byDay).flat()).toEqual([]);
     expect(agenda.ahead.map((a) => a.id)).toEqual(["far"]);
+    // Outside the week strip, so the row needs its list to link to.
+    expect(agenda.ahead[0].categoryId).toBe("c1");
   });
 
   it("excludes undated items and reminders", async () => {

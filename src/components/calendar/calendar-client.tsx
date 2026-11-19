@@ -1,710 +1,404 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, useEffect } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "motion/react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  CalendarDays,
-  Calendar,
-  CheckCircle2,
-  Bell,
-  LinkIcon,
-  Pencil,
-  Trash2,
-  X,
-} from "lucide-react";
-import { editItem, removeItemWithGcalSync, deleteGoogleCalendarEvent, editGoogleCalendarEvent, getCalendarMonth } from "@/app/actions";
-import { priorityColors, priorityLabels } from "@/lib/task-constants";
-import { useStreamed } from "@/lib/use-streamed";
-import type { Item } from "@/lib/mock-data";
-import type { Category } from "@/lib/mock-data";
-import type { Priority } from "@/generated/prisma/enums";
+import { ChevronLeft, ChevronRight, Calendar, CheckCircle2, Bell, Trash2 } from "lucide-react";
+import { deleteGoogleCalendarEvent, editGoogleCalendarEvent, getCalendarMonth } from "@/app/actions";
+import { EditItemSheet } from "@/components/todos/edit-item-sheet";
+import { useOptimisticItems } from "@/components/todos/use-optimistic-items";
+import { BottomSheet, Field, SheetFooter, fieldClass, submitClass, titleInputClass } from "@/components/ui/bottom-sheet";
+import { useToast } from "@/components/ui/toast";
+import { confirmAction, haptic } from "@/lib/telegram-webapp";
+import { EVENT_COLOR, listColor } from "@/lib/list-colors";
+import type { Item, Category } from "@/lib/types";
 
-type GoogleEvent = { id: string; title: string; startTime: string; endTime: string };
+type GoogleEvent = { id: string; title: string; startTime: string; endTime: string; allDay: boolean };
 
-/** Normalised "YYYY-M" key; month may overflow past 11 and is carried into the year. */
-function monthKey(year: number, month: number): string {
-  return `${year + Math.floor(month / 12)}-${((month % 12) + 12) % 12}`;
-}
+type Row = {
+  id: string;
+  title: string;
+  /** "HH:mm" in the user's zone; null for all-day events and undated-time tasks. */
+  time: string | null;
+  color: string;
+  subtitle: string;
+  isReminder: boolean;
+  item?: Item;
+  event?: GoogleEvent;
+};
 
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
 
-function getDaysInMonth(year: number, month: number) {
-  return new Date(year, month + 1, 0).getDate();
-}
-
-function getFirstDayOfMonth(year: number, month: number) {
-  return new Date(year, month, 1).getDay();
-}
-
-function isSameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-}
-
-export type GoogleCalendarFeed = {
-  events: GoogleEvent[];
-  /** False once we've learned the Google grant is dead — the reconnect prompt keys off this. */
-  connected: boolean;
+// Everything here is keyed by "YYYY-MM-DD" in the user's own zone. Reading days off the
+// browser clock made the server render (UTC) and the phone disagree, and put events near
+// midnight on the wrong day.
+const pad = (n: number) => String(n).padStart(2, "0");
+/** Built from parts: `toLocaleDateString("en-CA")` depends on the browser's CLDR data. */
+const dayKey = (iso: string, tz: string) => {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" })
+      .formatToParts(new Date(iso))
+      .map((part) => [part.type, part.value])
+  );
+  return `${p.year}-${p.month}-${p.day}`;
 };
+const hhmm = (iso: string, tz: string) =>
+  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: tz });
+const utcDate = (key: string) => new Date(`${key}T00:00:00Z`);
+const nextDay = (key: string) => new Date(utcDate(key).getTime() + 86_400_000).toISOString().slice(0, 10);
+
+function to12h(time: string): string {
+  const [h, m] = time.split(":").map(Number);
+  return `${h % 12 || 12}:${pad(m)} ${h < 12 ? "AM" : "PM"}`;
+}
 
 type Props = {
   items: Item[];
-  /** Streams in after the first paint so Google can't hold up the grid. */
-  googleFeedPromise: Promise<GoogleCalendarFeed>;
-  /** What we believe before the feed lands: the user has a stored refresh token. */
-  hasGoogleCalendar: boolean;
   categories: Category[];
+  hasGoogleCalendar: boolean;
+  timezone: string;
+  /** Today in the user's zone, from the server, so both renders agree. */
+  today: string;
 };
 
-export function CalendarClient({ items, googleFeedPromise, hasGoogleCalendar, categories }: Props) {
-  const feed = useStreamed(googleFeedPromise, { events: [], connected: hasGoogleCalendar });
+export function CalendarClient({ items: serverItems, categories, hasGoogleCalendar, timezone: tz, today }: Props) {
+  const { notify } = useToast();
+  const { items, remove } = useOptimisticItems(serverItems);
+  const [viewYear, setViewYear] = useState(Number(today.slice(0, 4)));
+  const [viewMonth, setViewMonth] = useState(Number(today.slice(5, 7)) - 1);
+  /** Which way the last month change went, so the grid slides the right way. */
+  const [direction, setDirection] = useState(0);
+  const [selected, setSelected] = useState(today);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
+  const [editingEvent, setEditingEvent] = useState<GoogleEvent | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const today = new Date();
-  const [viewYear, setViewYear] = useState(today.getFullYear());
-  const [viewMonth, setViewMonth] = useState(today.getMonth());
-  const [selectedDate, setSelectedDate] = useState(today);
-
-  /**
-   * The server prefetches this month and the next. Any month the user navigates to beyond
-   * that is fetched on demand and remembered, so the grid isn't simply empty out there.
-   */
-  const [fetchedEvents, setFetchedEvents] = useState<GoogleEvent[]>([]);
-  const requestedMonths = useRef<Set<string>>(
-    new Set([monthKey(today.getFullYear(), today.getMonth()), monthKey(today.getFullYear(), today.getMonth() + 1)])
-  );
-
+  // Google events for the month on screen, fetched on navigation and again after any change,
+  // so nothing shown can be older than the last edit.
+  const [events, setEvents] = useState<GoogleEvent[]>([]);
+  const [connected, setConnected] = useState(hasGoogleCalendar);
+  const [reload, setReload] = useState(0);
   useEffect(() => {
-    if (!feed.connected) return;
-    const key = monthKey(viewYear, viewMonth);
-    if (requestedMonths.current.has(key)) return;
-    requestedMonths.current.add(key);
-
+    if (!hasGoogleCalendar) return;
     let cancelled = false;
     getCalendarMonth(viewYear, viewMonth)
       .then((result) => {
-        if (!cancelled) setFetchedEvents((prev) => [...prev, ...result.events]);
+        if (cancelled) return;
+        setEvents(result.events);
+        setConnected(result.connected);
       })
       .catch(() => {
-        requestedMonths.current.delete(key); // let a later visit retry
+        if (!cancelled) notify("Couldn't load your Google Calendar — try again in a moment.");
       });
     return () => {
       cancelled = true;
     };
-  }, [viewYear, viewMonth, feed.connected]);
+  }, [viewYear, viewMonth, reload, hasGoogleCalendar, notify]);
 
-  const googleEvents = useMemo(() => {
-    const byId = new Map<string, GoogleEvent>();
-    for (const event of [...feed.events, ...fetchedEvents]) byId.set(event.id, event);
-    return [...byId.values()];
-  }, [feed.events, fetchedEvents]);
+  const rowsByDay = useMemo(() => {
+    const byDay = new Map<string, Row[]>();
+    const add = (key: string, row: Row) => byDay.set(key, [...(byDay.get(key) ?? []), row]);
 
-  const router = useRouter();
-  const [editingItem, setEditingItem] = useState<Item | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const [editTitle, setEditTitle] = useState("");
-  const [editDescription, setEditDescription] = useState("");
-  const [editDueDate, setEditDueDate] = useState("");
-  const [editDueTime, setEditDueTime] = useState("");
-  const [editPriority, setEditPriority] = useState<Priority>("medium");
-  const [editCategoryId, setEditCategoryId] = useState("");
-  const [editSaving, setEditSaving] = useState(false);
-
-  const [editingGcalEvent, setEditingGcalEvent] = useState<GoogleEvent | null>(null);
-  const [gcalTitle, setGcalTitle] = useState("");
-  const [gcalDate, setGcalDate] = useState("");
-  const [gcalStartTime, setGcalStartTime] = useState("");
-  const [gcalEndTime, setGcalEndTime] = useState("");
-  const [gcalSaving, setGcalSaving] = useState(false);
-
-  const openEdit = (item: Item) => {
-    setEditTitle(item.title);
-    setEditDescription(item.description ?? "");
-    setEditDueDate(item.dueDate ?? "");
-    setEditDueTime(item.dueTime ?? "");
-    setEditPriority(item.priority as Priority);
-    setEditCategoryId(item.category.id);
-    setEditingItem(item);
-  };
-
-  const openGcalEdit = (event: GoogleEvent) => {
-    setGcalTitle(event.title);
-    setGcalDate(event.startTime.slice(0, 10));
-    setGcalStartTime(event.startTime.slice(11, 16));
-    setGcalEndTime(event.endTime.slice(11, 16));
-    setEditingGcalEvent(event);
-  };
-
-  const handleGcalEditSave = async () => {
-    if (!editingGcalEvent || !gcalTitle.trim()) return;
-    setGcalSaving(true);
-    await editGoogleCalendarEvent(editingGcalEvent.id, {
-      title: gcalTitle.trim(),
-      startTime: `${gcalDate}T${gcalStartTime}:00`,
-      endTime: `${gcalDate}T${gcalEndTime}:00`,
-    });
-    setGcalSaving(false);
-    setEditingGcalEvent(null);
-    router.refresh();
-  };
-
-  const handleEditSave = async () => {
-    if (!editingItem || !editTitle.trim()) return;
-    setEditSaving(true);
-    await editItem(editingItem.id, {
-      title: editTitle.trim(),
-      description: editDescription.trim() || null,
-      dueDate: editDueDate || null,
-      dueTime: editDueTime || null,
-      priority: editPriority,
-      categoryId: editCategoryId,
-    });
-    setEditSaving(false);
-    setEditingItem(null);
-    router.refresh();
-  };
-
-  const handleDelete = async (itemId: string) => {
-    setDeletingId(itemId);
-    await removeItemWithGcalSync(itemId);
-    setDeletingId(null);
-    router.refresh();
-  };
-
-  const handleDeleteGcalEvent = async (eventId: string) => {
-    setDeletingId(eventId);
-    await deleteGoogleCalendarEvent(eventId);
-    setDeletingId(null);
-    router.refresh();
-  };
-
-  const daysInMonth = getDaysInMonth(viewYear, viewMonth);
-  const firstDay = getFirstDayOfMonth(viewYear, viewMonth);
-
-  const datesWithItems = useMemo(() => {
-    const dates = new Set<string>();
-    for (const item of items) {
-      if (item.dueDate) {
-        // dueDate is "YYYY-MM-DD" string — parse it
-        const [y, m, d] = item.dueDate.split("-").map(Number);
-        dates.add(`${y}-${m - 1}-${d}`); // month is 0-indexed in our key
+    for (const e of events) {
+      if (e.allDay) {
+        add(e.startTime, { id: e.id, title: e.title, time: null, color: EVENT_COLOR, subtitle: "All day", isReminder: false, event: e });
+        continue;
       }
-      if (item.remindAt) {
-        const dt = new Date(item.remindAt);
-        dates.add(`${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`);
-      }
-    }
-    const linkedIds = new Set(
-      items.filter((item) => item.googleEventId).map((item) => item.googleEventId!)
-    );
-    for (const e of googleEvents) {
-      if (linkedIds.has(e.id)) continue;
-      const d = new Date(e.startTime);
-      dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
-    }
-    return dates;
-  }, [items, googleEvents]);
-
-  const selectedItems = useMemo(() => {
-    const result: Array<{
-      id: string;
-      type: "event" | "item";
-      title: string;
-      time: string | null;
-      color: string;
-      subtitle: string;
-      isReminder: boolean;
-      itemData: Item | null;
-      eventData: GoogleEvent | null;
-    }> = [];
-
-    // Collect googleEventIds from in-app items so we can deduplicate
-    const linkedGcalIds = new Set(
-      items.filter((item) => item.googleEventId).map((item) => item.googleEventId!)
-    );
-
-    for (const e of googleEvents) {
-      // Skip Google Calendar events that have a linked in-app item (shown below with edit/delete)
-      if (linkedGcalIds.has(e.id)) continue;
-
-      if (isSameDay(new Date(e.startTime), selectedDate)) {
-        const start = new Date(e.startTime);
-        const end = new Date(e.endTime);
-        const duration = Math.round((end.getTime() - start.getTime()) / 60000);
-        result.push({
-          id: e.id, type: "event", title: e.title, time: e.startTime,
-          color: "#4A6FA5", subtitle: `${duration} min`, isReminder: false,
-          itemData: null, eventData: e,
-        });
-      }
+      const minutes = Math.round((Date.parse(e.endTime) - Date.parse(e.startTime)) / 60000);
+      add(dayKey(e.startTime, tz), {
+        id: e.id,
+        title: e.title,
+        time: hhmm(e.startTime, tz),
+        color: EVENT_COLOR,
+        subtitle: `${minutes} min`,
+        isReminder: false,
+        event: e,
+      });
     }
 
     for (const item of items) {
-      let matchesDay = false;
-      let itemTime: string | null = null;
-
-      if (item.dueDate) {
-        const [y, m, d] = item.dueDate.split("-").map(Number);
-        if (isSameDay(new Date(y, m - 1, d), selectedDate)) {
-          matchesDay = true;
-          if (item.dueTime) {
-            itemTime = `${item.dueDate}T${item.dueTime}:00`;
-          }
-        }
-      }
-
-      if (item.remindAt && isSameDay(new Date(item.remindAt), selectedDate)) {
-        matchesDay = true;
-        itemTime = item.remindAt;
-      }
-
-      if (matchesDay) {
-        result.push({
-          id: item.id, type: "item", title: item.title, time: itemTime,
-          color: item.category.color, subtitle: `${item.category.name} · ${item.priority}`,
-          isReminder: !!item.remindAt,
-          itemData: item, eventData: null,
-        });
-      }
+      // The board's item set includes two weeks of completed work; a calendar of what's ahead
+      // listed ticked-off tasks as if still open, dot and all.
+      if (item.status === "done") continue;
+      const row = (time: string | null): Row => ({
+        id: item.id,
+        title: item.title,
+        time,
+        color: listColor(item.category.color),
+        subtitle: `${item.category.name} · ${item.priority}`,
+        isReminder: !!item.remindAt,
+        item,
+      });
+      const reminderDay = item.remindAt ? dayKey(item.remindAt, tz) : null;
+      if (item.remindAt && reminderDay) add(reminderDay, row(hhmm(item.remindAt, tz)));
+      if (item.dueDate && item.dueDate !== reminderDay) add(item.dueDate, row(item.dueTime));
     }
 
-    result.sort((a, b) => {
-      if (!a.time) return 1;
-      if (!b.time) return -1;
-      return new Date(a.time).getTime() - new Date(b.time).getTime();
-    });
+    for (const rows of byDay.values()) {
+      rows.sort((a, b) => (a.time === b.time ? 0 : a.time === null ? 1 : b.time === null ? -1 : a.time < b.time ? -1 : 1));
+    }
+    return byDay;
+  }, [events, items, tz]);
 
-    return result;
-  }, [items, googleEvents, selectedDate]);
+  const selectedRows = rowsByDay.get(selected) ?? [];
 
-  const prevMonth = () => {
-    if (viewMonth === 0) { setViewYear(viewYear - 1); setViewMonth(11); }
-    else setViewMonth(viewMonth - 1);
+  const handleDeleteEvent = async (event: GoogleEvent) => {
+    // Deleting an event you organised cancels it for every attendee, and Google has no undo,
+    // so this one asks first.
+    if (!(await confirmAction(`Delete "${event.title}" from Google Calendar?`))) return;
+    setDeletingId(event.id);
+    try {
+      await deleteGoogleCalendarEvent(event.id);
+      haptic("warning");
+      setReload((n) => n + 1);
+    } catch {
+      notify("Couldn't delete that event — please try again.");
+    } finally {
+      setDeletingId(null);
+    }
   };
 
-  const nextMonth = () => {
-    if (viewMonth === 11) { setViewYear(viewYear + 1); setViewMonth(0); }
-    else setViewMonth(viewMonth + 1);
+  const monthStart = `${viewYear}-${pad(viewMonth + 1)}-01`;
+  const firstDay = utcDate(monthStart).getUTCDay();
+  const daysInMonth = new Date(Date.UTC(viewYear, viewMonth + 1, 0)).getUTCDate();
+  const cellKey = (day: number) => `${viewYear}-${pad(viewMonth + 1)}-${pad(day)}`;
+  const showingToday = today.startsWith(`${viewYear}-${pad(viewMonth + 1)}`) && selected === today;
+
+  const shiftMonth = (by: 1 | -1) => {
+    haptic("select");
+    setDirection(by);
+    const m = viewMonth + by;
+    setViewYear(viewYear + Math.floor(m / 12));
+    setViewMonth(((m % 12) + 12) % 12);
   };
 
-  const isToday = (day: number) => isSameDay(new Date(viewYear, viewMonth, day), today);
-  const isSelected = (day: number) => isSameDay(new Date(viewYear, viewMonth, day), selectedDate);
-  const hasItemsOnDay = (day: number) => datesWithItems.has(`${viewYear}-${viewMonth}-${day}`);
+  const goToday = () => {
+    haptic("select");
+    setDirection(0);
+    setViewYear(Number(today.slice(0, 4)));
+    setViewMonth(Number(today.slice(5, 7)) - 1);
+    setSelected(today);
+  };
+
+  const openRow = (row: Row) => {
+    if (row.item) setEditingItem(row.item);
+    else if (row.event && !row.event.allDay) setEditingEvent(row.event);
+  };
 
   return (
-    <main className="safe-bottom pb-8">
-      <motion.header
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-        className="px-5 pt-6 pb-2"
-      >
-        <div className="flex items-center gap-2.5">
-          <CalendarDays className="w-6 h-6 text-primary shrink-0" />
-          <h1 className="font-serif text-[2rem] leading-tight font-bold text-foreground tracking-tight">
-            Calendar
-          </h1>
-        </div>
-      </motion.header>
-
-      {/* Month navigation */}
-      <motion.div
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.08 }}
-        className="px-5 mt-4"
-      >
-        <div className="bg-card border border-border/50 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
-            <button onClick={prevMonth} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-secondary transition-colors active:scale-90">
-              <ChevronLeft className="w-4 h-4 text-muted-foreground" />
-            </button>
-            <span className="font-serif text-base font-semibold text-foreground">
-              {MONTH_NAMES[viewMonth]} {viewYear}
-            </span>
-            <button onClick={nextMonth} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-secondary transition-colors active:scale-90">
-              <ChevronRight className="w-4 h-4 text-muted-foreground" />
-            </button>
-          </div>
-
-          {/* Weekday headers */}
-          <div className="grid grid-cols-7 px-3 pt-3 pb-1">
-            {WEEKDAYS.map((d) => (
-              <div key={d} className="text-center text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
-                {d}
-              </div>
-            ))}
-          </div>
-
-          {/* Calendar grid */}
-          <div className="grid grid-cols-7 px-3 pb-3 gap-y-0.5">
-            {Array.from({ length: firstDay }).map((_, i) => (
-              <div key={`empty-${i}`} />
-            ))}
-            {Array.from({ length: daysInMonth }).map((_, i) => {
-              const day = i + 1;
-              const selected = isSelected(day);
-              const todayMark = isToday(day);
-              const hasItem = hasItemsOnDay(day);
-
-              return (
-                <button
-                  key={day}
-                  onClick={() => setSelectedDate(new Date(viewYear, viewMonth, day))}
-                  className={`relative w-full aspect-square flex flex-col items-center justify-center rounded-lg text-xs transition-all duration-150 active:scale-90 ${
-                    selected
-                      ? "bg-primary text-primary-foreground font-medium"
-                      : todayMark
-                      ? "bg-primary/8 text-primary font-medium"
-                      : "text-foreground hover:bg-secondary/50"
-                  }`}
-                >
-                  {day}
-                  {hasItem && (
-                    <span className={`absolute bottom-0.5 w-1 h-1 rounded-full ${
-                      selected ? "bg-primary-foreground/60" : "bg-primary/50"
-                    }`} />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Selected day items */}
-      <motion.div
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
-        className="px-5 mt-5"
-      >
-        <h2 className="font-serif text-lg font-semibold text-foreground mb-3">
-          {isSameDay(selectedDate, today)
-            ? "Today"
-            : selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-        </h2>
-
-        {selectedItems.length === 0 ? (
-          <div className="bg-card border border-border/50 rounded-xl p-6 text-center shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-            <p className="text-sm text-muted-foreground">Nothing scheduled</p>
-          </div>
-        ) : (
-          <div className="bg-card border border-border/50 rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-            {selectedItems.map((item, i) => {
-              const Icon = item.type === "event" ? Calendar : item.isReminder ? Bell : CheckCircle2;
-              const canEdit = item.type === "item" && item.itemData;
-              const canDeleteGcal = item.type === "event";
-              return (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1], delay: i * 0.04 + 0.25 }}
-                  className={`flex items-start gap-3 px-4 py-3 ${i > 0 ? "border-t border-border/30" : ""}`}
-                >
-                  <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center mt-0.5 shrink-0"
-                    style={{ backgroundColor: `${item.color}12` }}
-                  >
-                    <Icon className="w-3.5 h-3.5" style={{ color: item.color }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">{item.title}</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      {item.time && (
-                        <span className="text-[11px] text-muted-foreground">{formatTime(item.time)}</span>
-                      )}
-                      {item.subtitle && (
-                        <>
-                          <span className="text-[11px] text-muted-foreground/30">·</span>
-                          <span className="text-[11px] text-muted-foreground capitalize">{item.subtitle}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {canEdit && (
-                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                      <button
-                        onClick={() => openEdit(item.itemData!)}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(item.id)}
-                        disabled={deletingId === item.id}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all disabled:opacity-40"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                  {canDeleteGcal && (
-                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
-                      <button
-                        onClick={() => item.eventData && openGcalEdit(item.eventData)}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteGcalEvent(item.id)}
-                        disabled={deletingId === item.id}
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all disabled:opacity-40"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </motion.div>
-              );
-            })}
-          </div>
+    <main className="safe-bottom sky-wash">
+      <header className="rise px-6 pt-7 flex items-end justify-between gap-3">
+        <h1 className="font-serif text-[2.5rem] leading-none font-semibold text-foreground">Calendar</h1>
+        {!showingToday && (
+          <button onClick={goToday} className="h-11 -mr-2 px-3 rounded-full text-[15px] font-semibold text-hour active:bg-hour/10">
+            Today
+          </button>
         )}
-      </motion.div>
+      </header>
 
-      {/* Google Calendar prompt */}
-      {!feed.connected && (
-        <motion.div
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.35 }}
-          className="px-5 mt-5"
-        >
-          <div className="bg-card border border-border/50 rounded-xl p-4 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
-            <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-xl bg-sage-light flex items-center justify-center shrink-0">
-                <LinkIcon className="w-4 h-4 text-sage" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-foreground">Connect Google Calendar</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  See your events alongside tasks and reminders
-                </p>
-                <a href="/settings" className="inline-flex items-center gap-1 text-xs text-primary font-medium mt-2 hover:opacity-80 transition-opacity">
-                  Go to Settings
-                  <ChevronRight className="w-3 h-3" />
-                </a>
-              </div>
+      {/* One page: the month above, the chosen day ruled off beneath it. */}
+      <section className="rise-late mx-4 mt-6 bg-card rounded-[1.5rem] overflow-hidden" aria-label="Month">
+        <div className="flex items-center justify-between px-2 pt-2">
+          <button onClick={() => shiftMonth(-1)} aria-label="Previous month" className="w-11 h-11 rounded-full flex items-center justify-center text-muted-foreground active:bg-foreground/10">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <span className="font-serif text-xl font-semibold text-foreground" aria-live="polite">
+            {utcDate(monthStart).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })}
+          </span>
+          <button onClick={() => shiftMonth(1)} aria-label="Next month" className="w-11 h-11 rounded-full flex items-center justify-center text-muted-foreground active:bg-foreground/10">
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-7 px-3 pt-2 pb-1" aria-hidden="true">
+          {WEEKDAYS.map((d) => (
+            <div key={d} className="text-center text-xs text-faint">
+              {d}
             </div>
-          </div>
-        </motion.div>
+          ))}
+        </div>
+
+        <div className="relative overflow-hidden">
+          <AnimatePresence initial={false} mode="popLayout" custom={direction}>
+            <motion.div
+              key={monthStart}
+              custom={direction}
+              initial={{ opacity: 0, x: direction * 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: direction * -40 }}
+              transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+              className="grid grid-cols-7 px-3 pb-3 gap-y-1"
+            >
+              {Array.from({ length: firstDay }).map((_, i) => (
+                <div key={`empty-${i}`} />
+              ))}
+              {Array.from({ length: daysInMonth }).map((_, i) => {
+                const key = cellKey(i + 1);
+                const isSelected = key === selected;
+                const isToday = key === today;
+                const count = rowsByDay.get(key)?.length ?? 0;
+
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setSelected(key)}
+                    aria-pressed={isSelected}
+                    aria-label={`${utcDate(key).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}${isToday ? ", today" : ""}${count ? `, ${count} item${count === 1 ? "" : "s"}` : ""}`}
+                    className={`relative mx-auto w-11 h-11 flex flex-col items-center justify-center rounded-full font-serif text-[17px] transition-colors duration-200 active:scale-90 ${
+                      isSelected && isToday
+                        ? "bg-hour text-background font-semibold"
+                        : isSelected
+                        ? "bg-primary text-primary-foreground font-semibold"
+                        : isToday
+                        ? "text-hour font-semibold ring-1 ring-inset ring-hour/60"
+                        : "text-foreground"
+                    }`}
+                  >
+                    {i + 1}
+                    {count > 0 && (
+                      <span className={`absolute bottom-1 w-1 h-1 rounded-full ${isSelected ? "bg-background/70" : "bg-muted-foreground"}`} />
+                    )}
+                  </button>
+                );
+              })}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+        <section className="border-t border-border px-5 pt-5 pb-2" aria-label="Selected day">
+          <h2 className="font-serif text-[1.625rem] leading-tight font-semibold text-foreground">
+            {selected === today
+              ? "Today"
+              : utcDate(selected).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}
+          </h2>
+
+          {selectedRows.length === 0 ? (
+            <p className="pt-2 pb-4 text-[15px] text-muted-foreground">Nothing scheduled.</p>
+          ) : (
+            <ul className="mt-2">
+              {selectedRows.map((row, i) => {
+                const Icon = row.event ? Calendar : row.isReminder ? Bell : CheckCircle2;
+                const event = row.event;
+                const item = row.item;
+                const editable = !!item || (!!event && !event.allDay);
+                return (
+                  <li key={row.id} className={`flex items-center gap-1 ${i > 0 ? "border-t border-border" : ""}`}>
+                    <button
+                      type="button"
+                      onClick={() => openRow(row)}
+                      disabled={!editable}
+                      aria-label={editable ? `Edit ${row.title}` : undefined}
+                      className="flex-1 min-w-0 min-h-14 py-2.5 flex items-start gap-3 text-left active:opacity-70 disabled:active:opacity-100"
+                    >
+                      <span className="w-14 shrink-0 pt-0.5 text-[13px] text-muted-foreground tabular-nums">{row.time ? to12h(row.time) : "All day"}</span>
+                      <span className="w-2 h-2 mt-2 shrink-0 rounded-full" style={{ backgroundColor: row.color }} aria-hidden="true" />
+                      <span className="flex-1 min-w-0">
+                        <span className="flex items-center gap-2">
+                          <Icon className="w-3.5 h-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          <span className="text-base text-foreground truncate">{row.title}</span>
+                        </span>
+                        <span className="block text-[13px] text-muted-foreground mt-0.5 capitalize">{row.subtitle}</span>
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => (item ? remove(item.id) : handleDeleteEvent(event!))}
+                      disabled={deletingId === row.id}
+                      aria-label={`Delete ${row.title}`}
+                      className="shrink-0 w-11 h-11 -mr-2 rounded-full flex items-center justify-center text-faint active:text-alarm active:bg-alarm/10 disabled:opacity-40"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      </section>
+
+      {!connected && (
+        <section className="mx-6 mt-6">
+          <p className="text-[15px] font-medium text-foreground">Connect Google Calendar</p>
+          <p className="text-[15px] text-muted-foreground mt-1">See your events here alongside tasks and reminders.</p>
+          <Link href="/settings" className="inline-flex items-center gap-1 min-h-11 text-[15px] font-semibold text-hour">
+            Open Settings
+            <ChevronRight className="w-4 h-4" aria-hidden="true" />
+          </Link>
+        </section>
       )}
 
-      {/* Edit item sheet */}
-      <AnimatePresence>
-        {editingItem && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[55]"
-              onClick={() => setEditingItem(null)}
-            />
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 28, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 z-[60] bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
-            >
-              <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
-              <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
-                <div className="flex items-center justify-between mb-5">
-                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Event</h3>
-                  <button onClick={() => setEditingItem(null)} className="text-muted-foreground hover:text-foreground">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
+      <EditItemSheet item={editingItem} categories={categories} onClose={() => setEditingItem(null)} onDelete={remove} />
 
-                <div className="space-y-4">
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    placeholder="Event title"
-                    autoFocus
-                    className="w-full h-12 px-4 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                  />
-
-                  <textarea
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Description (optional)"
-                    rows={2}
-                    className="w-full px-4 py-3 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all resize-none"
-                  />
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Priority</label>
-                    <div className="flex gap-2">
-                      {(["low", "medium", "high"] as const).map((p) => (
-                        <button
-                          key={p}
-                          onClick={() => setEditPriority(p)}
-                          className={`flex-1 h-9 rounded-lg text-xs font-medium border transition-all duration-150 flex items-center justify-center gap-1.5 ${
-                            editPriority === p
-                              ? "border-primary bg-primary/5 text-foreground"
-                              : "border-border/50 text-muted-foreground"
-                          }`}
-                        >
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: priorityColors[p] }} />
-                          {priorityLabels[p]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Category</label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {categories.map((c) => (
-                        <button
-                          key={c.id}
-                          onClick={() => setEditCategoryId(c.id)}
-                          className={`px-3 py-1.5 rounded-lg text-xs border transition-all duration-150 flex items-center gap-1.5 ${
-                            editCategoryId === c.id
-                              ? "border-primary bg-primary/5 text-foreground font-medium"
-                              : "border-border/50 text-muted-foreground"
-                          }`}
-                        >
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color }} />
-                          {c.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Date</label>
-                    <input
-                      type="date"
-                      value={editDueDate}
-                      onChange={(e) => setEditDueDate(e.target.value)}
-                      className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                    />
-                  </div>
-
-                  {editDueDate && (
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-2">Time</label>
-                      <input
-                        type="time"
-                        value={editDueTime}
-                        onChange={(e) => setEditDueTime(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleEditSave}
-                    disabled={!editTitle.trim() || editSaving}
-                    className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {editSaving ? "Saving..." : "Save Changes"}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </>
+      <BottomSheet open={!!editingEvent} title="Edit event" onClose={() => setEditingEvent(null)}>
+        {editingEvent && (
+          <EventForm
+            key={editingEvent.id}
+            event={editingEvent}
+            tz={tz}
+            onSaved={() => {
+              setEditingEvent(null);
+              setReload((n) => n + 1);
+            }}
+          />
         )}
-      </AnimatePresence>
-
-      {/* Edit gcal event sheet */}
-      <AnimatePresence>
-        {editingGcalEvent && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[55]"
-              onClick={() => setEditingGcalEvent(null)}
-            />
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 28, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 z-[60] bg-card rounded-t-2xl border-t border-border/50 shadow-[0_-8px_32px_rgba(0,0,0,0.12)] max-h-[90dvh] flex flex-col"
-            >
-              <div className="w-10 h-1 rounded-full bg-border mx-auto mt-3 shrink-0" />
-              <div className="overflow-y-auto px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1.5rem)]">
-                <div className="flex items-center justify-between mb-5">
-                  <h3 className="font-serif text-xl font-semibold text-foreground">Edit Event</h3>
-                  <button onClick={() => setEditingGcalEvent(null)} className="text-muted-foreground hover:text-foreground">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  <input
-                    type="text"
-                    value={gcalTitle}
-                    onChange={(e) => setGcalTitle(e.target.value)}
-                    placeholder="Event title"
-                    autoFocus
-                    className="w-full h-12 px-4 rounded-xl border border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                  />
-
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-2">Date</label>
-                    <input
-                      type="date"
-                      value={gcalDate}
-                      onChange={(e) => setGcalDate(e.target.value)}
-                      className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-2">Start</label>
-                      <input
-                        type="time"
-                        value={gcalStartTime}
-                        onChange={(e) => setGcalStartTime(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground block mb-2">End</label>
-                      <input
-                        type="time"
-                        value={gcalEndTime}
-                        onChange={(e) => setGcalEndTime(e.target.value)}
-                        className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30 focus:border-primary/50 transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={handleGcalEditSave}
-                    disabled={!gcalTitle.trim() || !gcalDate || !gcalStartTime || !gcalEndTime || gcalSaving}
-                    className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {gcalSaving ? "Saving..." : "Save Changes"}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
+      </BottomSheet>
     </main>
+  );
+}
+
+function EventForm({ event, tz, onSaved }: { event: GoogleEvent; tz: string; onSaved: () => void }) {
+  const { notify } = useToast();
+  const [title, setTitle] = useState(event.title);
+  const [date, setDate] = useState(dayKey(event.startTime, tz));
+  const [start, setStart] = useState(hhmm(event.startTime, tz));
+  const [end, setEnd] = useState(hhmm(event.endTime, tz));
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    try {
+      await editGoogleCalendarEvent(event.id, {
+        title: title.trim(),
+        startTime: `${date}T${start}:00`,
+        // An end at or before the start means the event runs past midnight.
+        endTime: `${end <= start ? nextDay(date) : date}T${end}:00`,
+      });
+      haptic("success");
+      onSaved();
+    } catch {
+      notify("Couldn't save that event — please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <input
+        type="text"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Event title"
+        aria-label="Event title"
+        autoFocus
+        className={titleInputClass}
+      />
+      <Field label="Date">
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={fieldClass} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Starts">
+          <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className={fieldClass} />
+        </Field>
+        <Field label="Ends">
+          <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={fieldClass} />
+        </Field>
+      </div>
+      <SheetFooter>
+        <button onClick={save} disabled={!title.trim() || !date || !start || !end || saving} className={submitClass}>
+          {saving ? "Saving…" : "Save changes"}
+        </button>
+      </SheetFooter>
+    </>
   );
 }

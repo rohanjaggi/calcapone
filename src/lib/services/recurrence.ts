@@ -1,4 +1,5 @@
 import { RRule, Weekday } from "rrule";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 
 export type RecurrenceParams = {
   frequency: "daily" | "weekly" | "monthly" | "yearly";
@@ -59,28 +60,52 @@ export function dueDateAnchor(dueDate: string): Date {
 }
 
 /**
+ * rrule does its weekday and month-day arithmetic in UTC. "Every Tuesday 07:00" in Singapore
+ * is Monday 23:00 UTC, so evaluated as-is it lands on Wednesdays, and a London daily 09:00
+ * shifts an hour at each DST change. The fix is rrule's documented "floating" mode: hand it
+ * the user's wall-clock time dressed as UTC, then read the answer back as wall-clock in `tz`.
+ */
+const toFloating = (instant: Date, tz: string) => new Date(`${formatInTimeZone(instant, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS")}Z`);
+const fromFloating = (floating: Date, tz: string) => fromZonedTime(floating.toISOString().slice(0, 23), tz);
+
+/**
  * Next occurrence strictly after `after`, anchored to `after` as DTSTART when the stored
  * rule has none (rrule would otherwise default DTSTART to *now* and return "now" for
  * every daily rule). If `notBefore` is given, skips occurrences that are already in the past.
+ * `tz` is the zone the rule's times mean; date-only rules (see `nextDueDate`) stay in UTC.
  */
-export function getNextOccurrence(rruleStr: string, after: Date, notBefore?: Date): Date | null {
+export function getNextOccurrence(rruleStr: string, after: Date, notBefore?: Date, tz = "UTC"): Date | null {
   let options: Partial<ConstructorParameters<typeof RRule>[0]>;
   try {
     options = RRule.parseString(rruleStr);
   } catch {
     return null;
   }
-  const rule = new RRule({ ...options, dtstart: options.dtstart ?? after } as ConstructorParameters<typeof RRule>[0]);
+  const rule = new RRule({
+    ...options,
+    dtstart: toFloating(options.dtstart ?? after, tz),
+    ...(options.until ? { until: toFloating(options.until, tz) } : {}),
+  } as ConstructorParameters<typeof RRule>[0]);
 
-  let next = rule.after(after, false);
+  let next = rule.after(toFloating(after, tz), false);
   if (notBefore) {
+    const floor = toFloating(notBefore, tz);
     let guard = 0;
-    while (next && next <= notBefore && guard < 1000) {
+    while (next && next <= floor && guard < 1000) {
       next = rule.after(next, false);
       guard++;
     }
   }
-  return next;
+  return next ? fromFloating(next, tz) : null;
+}
+
+/** The same rule restarted at `dtstart` — used when a repeating reminder is moved to a new time. */
+export function reanchorRule(rruleStr: string, dtstart: Date): string | null {
+  try {
+    return new RRule({ ...RRule.parseString(rruleStr), dtstart } as ConstructorParameters<typeof RRule>[0]).toString();
+  } catch {
+    return null;
+  }
 }
 
 export function describeRecurrence(rruleStr: string): string {

@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { Home, ListTodo, CalendarDays, Settings } from "lucide-react";
 import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
+import { haptic } from "@/lib/telegram-webapp";
 
 const navItems = [
   { icon: Home, label: "Home", href: "/" },
@@ -13,12 +14,20 @@ const navItems = [
   { icon: Settings, label: "Settings", href: "/settings" },
 ];
 
+/** Pages that render outside the app: no tabs to go to from there. */
+const BARE_ROUTES = ["/login", "/google/done"];
+
+/** A tab owns its whole branch, so a list page under /todos still lights Tasks. */
+function isActive(pathname: string, href: string) {
+  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+}
+
 /**
  * The tab's icon and label. Lives inside the <Link> because `useLinkStatus` only reports on
  * the link it's rendered under.
  *
  * The tab you tapped lights up the moment you tap it rather than when the server answers —
- * the pill itself still waits for the route to commit, so the highlight arrives with the
+ * the hour-coloured underline still waits for the route to commit, so it arrives with the
  * page instead of racing ahead of it. If the wait runs long the tab breathes; that's delayed
  * in CSS, so a quick navigation lands before it ever shows.
  */
@@ -27,22 +36,18 @@ function NavItemContent({
   label,
   isActive,
 }: {
-  icon: ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string; strokeWidth?: number }>;
   label: string;
   isActive: boolean;
 }) {
   const { pending } = useLinkStatus();
-  const tint = isActive || pending ? "text-primary" : "text-muted-foreground";
+  const tint = isActive || pending ? "text-foreground" : "text-faint";
   const breathe = pending ? "nav-pending" : "";
 
   return (
     <>
-      <Icon className={`w-[18px] h-[18px] relative z-10 transition-colors duration-200 ${tint} ${breathe}`} />
-      <span
-        className={`text-[10px] relative z-10 transition-colors duration-200 ${tint} ${
-          isActive || pending ? "font-medium" : ""
-        } ${breathe}`}
-      >
+      <Icon strokeWidth={isActive ? 2 : 1.6} className={`w-5 h-5 relative transition-colors duration-200 ${tint} ${breathe}`} />
+      <span className={`text-xs relative transition-colors duration-200 ${tint} ${isActive ? "font-semibold" : "font-medium"} ${breathe}`}>
         {label}
       </span>
     </>
@@ -51,47 +56,36 @@ function NavItemContent({
 
 export function NavBar() {
   const pathname = usePathname();
-  if (pathname === "/login") return null;
+  if (BARE_ROUTES.some((route) => pathname.startsWith(route))) return null;
 
   return (
-    <motion.nav
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.5,
-        ease: [0.22, 1, 0.36, 1],
-        delay: 0.7,
-      }}
-      className="fixed bottom-0 left-0 right-0 z-50"
-    >
-      <div className="mx-4 mb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)]">
-        <div className="bg-card/80 backdrop-blur-xl border border-border/50 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] px-2 py-1.5 flex items-center justify-around">
+    <nav aria-label="Main" className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none">
+      <div className="mx-4 sm:mx-auto sm:max-w-[34rem] mb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pointer-events-auto">
+        <div className="bg-raised border border-border rounded-[1.375rem] shadow-[0_18px_40px_-14px_rgba(0,0,0,0.85)] px-1.5 h-16 grid grid-cols-4">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
-
+            const active = isActive(pathname, item.href);
             return (
               <Link
                 key={item.label}
                 href={item.href}
-                className="relative flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-colors duration-200 active:scale-95"
+                aria-current={active ? "page" : undefined}
+                onClick={() => !active && haptic("select")}
+                className="relative flex flex-col items-center justify-center gap-1 rounded-2xl active:scale-95 transition-transform duration-150"
               >
-                {isActive && (
-                  <motion.div
+                {active && (
+                  <motion.span
                     layoutId="nav-active"
-                    className="absolute inset-0 bg-primary/8 rounded-xl"
-                    transition={{
-                      type: "spring",
-                      stiffness: 400,
-                      damping: 30,
-                    }}
+                    aria-hidden="true"
+                    className="absolute bottom-1.5 h-[3px] w-5 rounded-full bg-hour"
+                    transition={{ type: "spring", stiffness: 420, damping: 34 }}
                   />
                 )}
-                <NavItemContent icon={item.icon} label={item.label} isActive={isActive} />
+                <NavItemContent icon={item.icon} label={item.label} isActive={active} />
               </Link>
             );
           })}
         </div>
       </div>
-    </motion.nav>
+    </nav>
   );
 }
