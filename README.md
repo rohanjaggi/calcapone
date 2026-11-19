@@ -21,10 +21,9 @@ A Telegram-first task and calendar assistant. Manage todos, reminders, and Googl
 - **Positional and reply targeting** — `/done 3` uses the numbering `/list` printed, and replying "done" or "move it to Friday" to any bot message targets whatever that message was about
 
 ### Calendar
-- **Google Calendar sync** — create, update, delete events; conflict detection; agenda view
-- **Two-way sync** — incremental `syncToken` polling pulls Google's edits back; when both sides changed since they last agreed you get *Keep mine / Take Google's* buttons rather than a silent overwrite
+- **Google Calendar sync** — create, update, delete events; overlap warnings before booking; agenda view
+- **Local calendar mirror** — incremental `syncToken` polling keeps a -7/+90-day copy of your calendar, so the dashboard and event-start reminders never wait on Google
 - **Event-start reminders** — "📅 Standup starts in 15 min", from a local mirror of your calendar so events created in Google are covered too
-- **Schedule suggestions** — AI recommends optimal time slots based on your calendar
 
 ### Notifications
 - **Recurring reminders** — daily, weekly, monthly or any RRULE, with automatic rescheduling
@@ -54,7 +53,7 @@ bad at. Everything below is direct manipulation, no model involved.
 - **Tasks** — categories are colored cards; tap a card's header to open it
 - **Complete** — tap the circle icon on any task
 - **Edit / delete** — swipe a task left to reveal both
-- **Reorder** — enter edit mode from the header to drag categories, or drag a task between categories
+- **Reorder** — enter edit mode from the header to drag lists; move a task to another list from its edit sheet
 - **Calendar** — a month grid with dots on days that have something; tap a day to see it
 - **Search** — the icon on the home screen, or `Cmd+K` / `Ctrl+K`; results filter as you type
 
@@ -147,7 +146,7 @@ Set `GOOGLE_REDIRECT_URI` to `https://your-domain/api/settings/google/callback` 
 ```
 Telegram update
   → /api/telegram (webhook, deduped on update_id, always 200)
-  → callback_query? → button handler (done / snooze / undo / pick / calendar conflict)
+  → callback_query? → button handler (done / snooze / undo / pick)
   → Voice?          → transcription → "🎤 Heard: …" echo → text
   → Photo?          → downloaded, sent to the model as an image
   → Slash command?  → DB-direct handler (no AI call, no trial quota)
@@ -195,6 +194,12 @@ double-send. GitHub is the backstop rather than the primary because it throttles
 scheduled runs under load, and **disables scheduled workflows entirely after 60 days without
 a commit** — if reminders stop, check the Actions tab for a disabled workflow first.
 
+Separately, `vercel.json` runs a daily Vercel Cron against `/api/cron/keepalive`, which does
+one cheap query. Supabase pauses free projects after 7 days without activity, and that
+happened in Oct 2026: GitHub disabled the backstop on day 60, nothing else was running, and
+the paused database broke sign-in. Vercel Cron has no inactivity cut-off. It needs
+`CRON_SECRET` set in the Vercel project, which the other endpoints already require.
+
 There is no tick-gap self-monitoring: a threshold low enough to catch a dead scheduler also
 fires on every run whenever the `*/15` backstop is the one carrying, which is exactly when the
 primary is already down — so it alerted hardest in the case it was meant to report calmly.
@@ -227,7 +232,7 @@ You can also just type naturally — "move my dentist appointment to 3pm", "brea
 
 The model sees the result of every tool it calls and may chain up to 3 rounds per message, so it can look something up and then act on what it found. Read-only results go to the model only (you get its summary); changes print their own receipt with an ↩️ Undo button.
 
-The 14 tools:
+The 12 tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -240,9 +245,7 @@ The 14 tools:
 | `create_calendar_event` | Create Google Calendar event |
 | `update_calendar_event` | Update calendar event |
 | `delete_calendar_event` | Delete calendar event |
-| `suggest_schedule` | Find optimal time slots |
 | `create_category` | Create a new category |
-| `list_categories` | List categories |
 | `search_items` | Search tasks by keyword or meaning |
 | `decompose_task` | Break task into subtasks |
 
